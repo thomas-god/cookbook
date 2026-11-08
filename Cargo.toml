@@ -1,12 +1,25 @@
-[package]
-name = "cookbook"
+[workspace]
+resolver = "3"
+members = [
+    "crates/cookbook-domain",
+    "crates/cookbook-infra",
+]
+
+[workspace.package]
 version = "0.1.0"
 edition = "2024"
 
-[dependencies]
+[workspace.dependencies]
 anyhow = "1.0.104"
 derive_more = { version = "2.1.1", features = ["add", "constructor"] }
-tokio = { version = "1", features = ["macros", "rt"] }
-
-[dev-dependencies]
 mockall = "0.15"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+
+cookbook-domain = { path = "crates/cookbook-domain" }
+cookbook-infra = { path = "crates/cookbook-infra" }
+
+[profile.dev.package."*"]
+debug = false
+
+[profile.test.package."*"]
+debug = false

@@ -1,0 +1,11 @@
+[package]
+name = "cookbook-infra"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+cookbook-domain.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true

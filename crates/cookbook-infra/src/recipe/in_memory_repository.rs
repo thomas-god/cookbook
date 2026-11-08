@@ -3,8 +3,8 @@ use std::sync::{Arc, RwLock};
 
 use anyhow::anyhow;
 
-use crate::domain::recipe::models::{Recipe, RecipeId};
-use crate::domain::recipe::ports::{
+use cookbook_domain::recipe::models::{Recipe, RecipeId};
+use cookbook_domain::recipe::ports::{
     GetRecipeError, ListRecipesError, RecipeRepository, SaveRecipeError,
 };
 
@@ -55,7 +55,7 @@ mod tests {
     use std::collections::HashMap;
 
     use super::*;
-    use crate::domain::recipe::models::{RecipeId, RecipeMetadata, RecipeTitle};
+    use cookbook_domain::recipe::models::{RecipeId, RecipeMetadata, RecipeTitle};
 
     fn recipe(id: &str) -> Recipe {
         Recipe::new(

@@ -1,0 +1,11 @@
+[package]
+name = "cookbook-domain"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+derive_more.workspace = true
+
+[dev-dependencies]
+mockall.workspace = true

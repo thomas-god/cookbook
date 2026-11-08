@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::fmt;
 use std::future::Future;
 
-use crate::domain::recipe::models::{
+use crate::recipe::models::{
     IngredientName, Quantity, Recipe, RecipeId, RecipeMetadata, RecipeStep, RecipeTitle,
 };
 
