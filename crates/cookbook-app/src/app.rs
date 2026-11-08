@@ -1,3 +1,5 @@
+use cookbook_domain::recipe::service::RecipeServiceImpl;
+use cookbook_infra::recipe::InMemoryRecipeRepository;
 use topcoat::{
     Result,
     context::Cx,
@@ -7,8 +9,12 @@ use topcoat::{
 
 mod recipes;
 
+pub(crate) type AppRecipeService = RecipeServiceImpl<InMemoryRecipeRepository>;
+
 pub fn router() -> topcoat::router::Router {
-    module_router!().build()
+    let recipe_service = AppRecipeService::new(InMemoryRecipeRepository::new());
+
+    module_router!().app_context(recipe_service).build()
 }
 
 #[layout]
@@ -42,5 +48,12 @@ pub async fn page(cx: &Cx) -> Result<impl View> {
     Ok(view! {
         <h2>"Recipes"</h2>
         <p>"Welcome to the family cookbook."</p>
+        <form method="post" action="/recipes">
+            <label>
+                "Title"
+                <input type="text" name="title" required="">
+            </label>
+            <button type="submit">"Add recipe"</button>
+        </form>
     })
 }

@@ -15,7 +15,9 @@ edition = "2024"
 anyhow = "1.0.104"
 derive_more = { version = "2.1.1", features = ["add", "constructor"] }
 mockall = "0.15"
+serde = { version = "1", features = ["derive"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+uuid = { version = "1.29.0", features = ["v4"] }
 
 cookbook-domain = { path = "crates/cookbook-domain" }
 cookbook-infra = { path = "crates/cookbook-infra" }

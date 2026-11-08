@@ -7,5 +7,6 @@ default-run = "cookbook-app"
 [dependencies]
 cookbook-domain.workspace = true
 cookbook-infra.workspace = true
+serde.workspace = true
 tokio.workspace = true
 topcoat = "0.11"

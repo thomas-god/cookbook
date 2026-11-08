@@ -15,6 +15,10 @@ impl Recipe {
     pub fn id(&self) -> &RecipeId {
         &self.id
     }
+
+    pub fn title(&self) -> &RecipeTitle {
+        &self.title
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Constructor)]
@@ -22,6 +26,12 @@ pub struct RecipeId(String);
 
 #[derive(Debug, Clone, Constructor)]
 pub struct RecipeTitle(String);
+
+impl RecipeTitle {
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
 
 #[derive(Debug, Clone, Constructor)]
 pub struct RecipeMetadata {
