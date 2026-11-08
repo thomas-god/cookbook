@@ -13,10 +13,18 @@ use topcoat::{
         error::{SeeOther, see_other},
         page, route,
     },
-    view::{View, view},
+    view::{View, attributes, element_id, view},
 };
 
-use crate::app::AppRecipeService;
+use crate::{
+    app::AppRecipeService,
+    components::{
+        button::button,
+        card::{card, card_content, card_description, card_header, card_title},
+        field::{field, field_label},
+        input::input,
+    },
+};
 
 #[derive(Deserialize)]
 struct CreateRecipeForm {
@@ -29,20 +37,40 @@ pub async fn page(cx: &Cx) -> Result<impl View> {
     let recipes = recipe_service.get_recipes().await?;
 
     Ok(view! {
-        <h2>"Recipe list"</h2>
-        <form method="post" action="/recipes">
-            <label>
-                "Title"
-                <input type="text" name="title" required="">
-            </label>
-            <button type="submit">"Add recipe"</button>
-        </form>
+        let title_id = element_id(cx);
+
+        <h2 class="mb-6 text-2xl font-semibold">"Recipe list"</h2>
+        card(
+            card_header(
+                card_title("Add a recipe")
+                card_description("Give your recipe a title to get started.")
+            )
+            card_content(
+                <form method="post" action="/recipes" class="flex flex-col gap-4">
+                    field(
+                        field_label(attrs: attributes! { for=(&title_id) }, "Title")
+                        input(attrs: attributes! {
+                            id=(&title_id)
+                            name="title"
+                            type="text"
+                            placeholder="Grandma's apple pie"
+                            required=""
+                        })
+                    )
+                    <div class="flex justify-end">
+                        button(attrs: attributes! { type="submit" }, "Add recipe")
+                    </div>
+                </form>
+            )
+        )
         if recipes.is_empty() {
-            <p>"No recipes yet."</p>
+            <p class="mt-8 text-sm text-muted-foreground">"No recipes yet."</p>
         } else {
-            <ul>
+            <ul class="mt-8 flex flex-col gap-2">
                 for recipe in &recipes {
-                    <li>(recipe.title().as_str())</li>
+                    <li class="rounded-lg border border-border bg-card px-4 py-3 text-sm shadow-sm">
+                        (recipe.title().as_str())
+                    </li>
                 }
             </ul>
         }
@@ -50,12 +78,12 @@ pub async fn page(cx: &Cx) -> Result<impl View> {
 }
 
 #[route(POST)]
-pub async fn create(cx: &Cx, Form(input): Form<CreateRecipeForm>) -> Result<SeeOther> {
+pub async fn create(cx: &Cx, Form(form): Form<CreateRecipeForm>) -> Result<SeeOther> {
     let recipe_service: &AppRecipeService = app_context(cx);
 
     recipe_service
         .create_recipe(CreateRecipeRequest {
-            title: RecipeTitle::new(input.title),
+            title: RecipeTitle::new(form.title),
             metadata: RecipeMetadata::new(None, None, None),
             ingredients: HashMap::new(),
             steps: Vec::new(),

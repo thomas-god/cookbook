@@ -1,4 +1,5 @@
 mod app;
+mod components;
 
 #[tokio::main]
 async fn main() {
