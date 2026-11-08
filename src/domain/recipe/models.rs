@@ -11,7 +11,13 @@ pub struct Recipe {
     steps: Vec<RecipeStep>,
 }
 
-#[derive(Debug, Clone, Constructor)]
+impl Recipe {
+    pub fn id(&self) -> &RecipeId {
+        &self.id
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Constructor)]
 pub struct RecipeId(String);
 
 #[derive(Debug, Clone, Constructor)]

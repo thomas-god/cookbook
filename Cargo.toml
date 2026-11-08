@@ -6,3 +6,7 @@ edition = "2024"
 [dependencies]
 anyhow = "1.0.104"
 derive_more = { version = "2.1.1", features = ["add", "constructor"] }
+tokio = { version = "1", features = ["macros", "rt"] }
+
+[dev-dependencies]
+mockall = "0.15"
