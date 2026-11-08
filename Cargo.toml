@@ -3,7 +3,9 @@ resolver = "3"
 members = [
     "crates/cookbook-domain",
     "crates/cookbook-infra",
+    "crates/cookbook-app",
 ]
+default-members = ["crates/cookbook-app"]
 
 [workspace.package]
 version = "0.1.0"

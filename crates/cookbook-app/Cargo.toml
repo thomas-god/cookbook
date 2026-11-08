@@ -1,0 +1,11 @@
+[package]
+name = "cookbook-app"
+version.workspace = true
+edition.workspace = true
+default-run = "cookbook-app"
+
+[dependencies]
+cookbook-domain.workspace = true
+cookbook-infra.workspace = true
+tokio.workspace = true
+topcoat = "0.11"
