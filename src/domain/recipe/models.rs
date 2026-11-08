@@ -4,11 +4,15 @@ use derive_more::Constructor;
 
 #[derive(Debug, Clone, Constructor)]
 pub struct Recipe {
+    id: RecipeId,
     title: RecipeTitle,
     metadata: RecipeMetadata,
     ingredients: HashMap<IngredientName, Quantity>,
     steps: Vec<RecipeStep>,
 }
+
+#[derive(Debug, Clone, Constructor)]
+pub struct RecipeId(String);
 
 #[derive(Debug, Clone, Constructor)]
 pub struct RecipeTitle(String);
