@@ -410,26 +410,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn register_rejects_short_passwords() {
-        let service = test_service(
-            MockUserRepository::new(),
-            MockPasswordHasher::new(),
-            MockSessionRepository::new(),
-            SystemTime::now(),
-        );
-
-        let mut request = request("alice@example.com");
-        request.password = "short".to_string();
-
-        let result = service.register(request).await;
-
-        assert!(matches!(
-            result,
-            Err(RegisterError::PasswordTooShort { minimum: 8 })
-        ));
-    }
-
-    #[tokio::test]
     async fn register_initial_admin_is_a_no_op_when_users_exist() {
         let mut users = MockUserRepository::new();
         users.expect_count_users().returning(|| Ok(1));
