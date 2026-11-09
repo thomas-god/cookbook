@@ -3,8 +3,10 @@ app_name = Cookbook
 language_label = Langue
 language_apply = Appliquer
 
+recipe_list = Recettes
+new_recipe = Nouvelle recette
 recipes_heading = Recettes
-recipes_welcome = Bienvenue dans le livre de recettes de la famille.
+recipes_welcome = Bienvenue dans votre livre de recettes familial.
 recipes_list_heading = Liste des recettes
 recipes_empty = Aucune recette pour le moment.
 

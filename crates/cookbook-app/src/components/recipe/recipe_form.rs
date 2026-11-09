@@ -16,7 +16,7 @@ use topcoat::{
 };
 
 use crate::{
-    components::{
+    components::base::{
         button::{ButtonSize, ButtonVariant, button},
         field::{field, field_label, field_legend, field_set},
         input::input,
@@ -142,21 +142,26 @@ pub async fn recipe_form(cx: &Cx) -> Result<impl View> {
     let cooking_id = element_id(cx);
 
     Ok(view! {
-        <form method="post" action="/recipes" class="flex flex-col gap-6">
+        <form method="post" action="/recipe/new" class="flex flex-col gap-6">
             field_set(
                 field(
-                    input(attrs: attributes! {
-                        id=(&title_id)
-                        name=(TITLE_FIELD)
-                        type="text"
-                        placeholder=(t!(form_title.placeholder))
-                        required=""
-                        :value=$(title.get())
-                        @input=$(|e: Event| title.set(e.target.value))
-                    })
+                    input(
+                        attrs: attributes! {
+                            id=(&title_id)
+                            name=(TITLE_FIELD)
+                            type="text"
+                            placeholder=(t!(form_title.placeholder))
+                            required=""
+                            :value=$(title.get())
+                            @input=$(|e: Event| title.set(e.target.value))
+                        }
+                    )
                 )
                 field(
-                    field_label(attrs: attributes! { for=(&description_id) }, (t!(form_description)))
+                    field_label(
+                        attrs: attributes! { for=(&description_id) },
+                        (t!(form_description))
+                    )
                     <textarea
                         id=(&description_id)
                         name=(DESCRIPTION_FIELD)
@@ -169,43 +174,58 @@ pub async fn recipe_form(cx: &Cx) -> Result<impl View> {
                 )
                 <div class="grid gap-4 sm:grid-cols-3">
                     field(
-                        field_label(attrs: attributes! { for=(&preparation_id) }, (t!(form_preparation)))
-                        input(attrs: attributes! {
-                            id=(&preparation_id)
-                            name=(PREPARATION_FIELD)
-                            type="number"
-                            min="0"
-                            step="1"
-                            placeholder="15"
-                            :value=$(preparation.get())
-                            @input=$(|e: Event| preparation.set(e.target.value))
-                        })
+                        field_label(
+                            attrs: attributes! { for=(&preparation_id) },
+                            (t!(form_preparation))
+                        )
+                        input(
+                            attrs: attributes! {
+                                id=(&preparation_id)
+                                name=(PREPARATION_FIELD)
+                                type="number"
+                                min="0"
+                                step="1"
+                                placeholder="15"
+                                :value=$(preparation.get())
+                                @input=$(|e: Event| preparation.set(e.target.value))
+                            }
+                        )
                     )
                     field(
-                        field_label(attrs: attributes! { for=(&rest_id) }, (t!(form_rest)))
-                        input(attrs: attributes! {
-                            id=(&rest_id)
-                            name=(REST_FIELD)
-                            type="number"
-                            min="0"
-                            step="1"
-                            placeholder="30"
-                            :value=$(rest.get())
-                            @input=$(|e: Event| rest.set(e.target.value))
-                        })
+                        field_label(
+                            attrs: attributes! { for=(&rest_id) },
+                            (t!(form_rest))
+                        )
+                        input(
+                            attrs: attributes! {
+                                id=(&rest_id)
+                                name=(REST_FIELD)
+                                type="number"
+                                min="0"
+                                step="1"
+                                placeholder="30"
+                                :value=$(rest.get())
+                                @input=$(|e: Event| rest.set(e.target.value))
+                            }
+                        )
                     )
                     field(
-                        field_label(attrs: attributes! { for=(&cooking_id) }, (t!(form_cooking)))
-                        input(attrs: attributes! {
-                            id=(&cooking_id)
-                            name=(COOKING_FIELD)
-                            type="number"
-                            min="0"
-                            step="1"
-                            placeholder="45"
-                            :value=$(cooking.get())
-                            @input=$(|e: Event| cooking.set(e.target.value))
-                        })
+                        field_label(
+                            attrs: attributes! { for=(&cooking_id) },
+                            (t!(form_cooking))
+                        )
+                        input(
+                            attrs: attributes! {
+                                id=(&cooking_id)
+                                name=(COOKING_FIELD)
+                                type="number"
+                                min="0"
+                                step="1"
+                                placeholder="45"
+                                :value=$(cooking.get())
+                                @input=$(|e: Event| cooking.set(e.target.value))
+                            }
+                        )
                     )
                 </div>
             )
@@ -281,28 +301,38 @@ async fn ingredient_row(cx: &Cx, row: usize) -> Result<impl View> {
             class="m-0 grid min-w-0 gap-3 rounded-lg border border-border p-4 sm:grid-cols-[minmax(0,1fr)_8rem_10rem_auto] sm:items-end"
         >
             field(
-                field_label(attrs: attributes! { for=(&name_id) }, (t!(form_ingredient)))
-                input(attrs: attributes! {
-                    id=(&name_id)
-                    name=(name_field)
-                    type="text"
-                    placeholder=(t!(form_ingredient.placeholder))
-                    :value=$(name.get())
-                    @input=$(|e: Event| name.set(e.target.value))
-                })
+                field_label(
+                    attrs: attributes! { for=(&name_id) },
+                    (t!(form_ingredient))
+                )
+                input(
+                    attrs: attributes! {
+                        id=(&name_id)
+                        name=(name_field)
+                        type="text"
+                        placeholder=(t!(form_ingredient.placeholder))
+                        :value=$(name.get())
+                        @input=$(|e: Event| name.set(e.target.value))
+                    }
+                )
             )
             field(
-                field_label(attrs: attributes! { for=(&quantity_id) }, (t!(form_quantity)))
-                input(attrs: attributes! {
-                    id=(&quantity_id)
-                    name=(quantity_field)
-                    type="number"
-                    min="0"
-                    step="any"
-                    placeholder=(t!(form_quantity.placeholder))
-                    :value=$(quantity.get())
-                    @input=$(|e: Event| quantity.set(e.target.value))
-                })
+                field_label(
+                    attrs: attributes! { for=(&quantity_id) },
+                    (t!(form_quantity))
+                )
+                input(
+                    attrs: attributes! {
+                        id=(&quantity_id)
+                        name=(quantity_field)
+                        type="number"
+                        min="0"
+                        step="any"
+                        placeholder=(t!(form_quantity.placeholder))
+                        :value=$(quantity.get())
+                        @input=$(|e: Event| quantity.set(e.target.value))
+                    }
+                )
             )
             field(
                 field_label(attrs: attributes! { for=(&unit_id) }, (t!(form_unit)))
@@ -322,10 +352,7 @@ async fn ingredient_row(cx: &Cx, row: usize) -> Result<impl View> {
                 button(
                     variant: ButtonVariant::Ghost,
                     size: ButtonSize::Sm,
-                    attrs: attributes! {
-                        type="button"
-                        @click=$(|_e: Event| removed.set(true))
-                    },
+                    attrs: attributes! { type="button" @click=$(|_e: Event| removed.set(true)) },
                     (t!(form_remove))
                 )
             </div>
@@ -355,18 +382,26 @@ async fn step_row(cx: &Cx, row: usize) -> Result<impl View> {
             class="m-0 flex min-w-0 flex-col gap-3 rounded-lg border border-border p-4"
         >
             field(
-                field_label(attrs: attributes! { for=(&title_id) }, (t!(form_step_title)))
-                input(attrs: attributes! {
-                    id=(&title_id)
-                    name=(title_field)
-                    type="text"
-                    placeholder=(t!(form_step_title.placeholder))
-                    :value=$(title.get())
-                    @input=$(|e: Event| title.set(e.target.value))
-                })
+                field_label(
+                    attrs: attributes! { for=(&title_id) },
+                    (t!(form_step_title))
+                )
+                input(
+                    attrs: attributes! {
+                        id=(&title_id)
+                        name=(title_field)
+                        type="text"
+                        placeholder=(t!(form_step_title.placeholder))
+                        :value=$(title.get())
+                        @input=$(|e: Event| title.set(e.target.value))
+                    }
+                )
             )
             field(
-                field_label(attrs: attributes! { for=(&instruction_id) }, (t!(form_instruction)))
+                field_label(
+                    attrs: attributes! { for=(&instruction_id) },
+                    (t!(form_instruction))
+                )
                 <textarea
                     id=(&instruction_id)
                     name=(instruction_field)
@@ -379,7 +414,10 @@ async fn step_row(cx: &Cx, row: usize) -> Result<impl View> {
                 ></textarea>
             )
             field(
-                field_label(attrs: attributes! { for=(&ingredients_id) }, (t!(form_step_ingredients)))
+                field_label(
+                    attrs: attributes! { for=(&ingredients_id) },
+                    (t!(form_step_ingredients))
+                )
                 <textarea
                     id=(&ingredients_id)
                     name=(ingredients_field)
@@ -394,10 +432,7 @@ async fn step_row(cx: &Cx, row: usize) -> Result<impl View> {
                 button(
                     variant: ButtonVariant::Ghost,
                     size: ButtonSize::Sm,
-                    attrs: attributes! {
-                        type="button"
-                        @click=$(|_e: Event| removed.set(true))
-                    },
+                    attrs: attributes! { type="button" @click=$(|_e: Event| removed.set(true)) },
                     (t!(form_remove))
                 )
             </div>

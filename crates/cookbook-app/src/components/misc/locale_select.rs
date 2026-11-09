@@ -7,7 +7,7 @@ use topcoat::{
 };
 
 use crate::{
-    components::button::{ButtonSize, ButtonVariant, button},
+    components::base::button::{ButtonSize, ButtonVariant, button},
     t,
 };
 
