@@ -3,12 +3,14 @@ use std::fmt;
 use std::future::Future;
 
 use crate::recipe::models::{
-    IngredientName, Quantity, Recipe, RecipeId, RecipeMetadata, RecipeStep, RecipeTitle,
+    IngredientName, Quantity, Recipe, RecipeDescription, RecipeId, RecipeMetadata, RecipeStep,
+    RecipeTitle,
 };
 
 #[derive(Debug, Clone)]
 pub struct CreateRecipeRequest {
     pub title: RecipeTitle,
+    pub description: Option<RecipeDescription>,
     pub metadata: RecipeMetadata,
     pub ingredients: HashMap<IngredientName, Quantity>,
     pub steps: Vec<RecipeStep>,

@@ -6,6 +6,7 @@ use derive_more::Constructor;
 pub struct Recipe {
     id: RecipeId,
     title: RecipeTitle,
+    description: Option<RecipeDescription>,
     metadata: RecipeMetadata,
     ingredients: HashMap<IngredientName, Quantity>,
     steps: Vec<RecipeStep>,
@@ -19,6 +20,10 @@ impl Recipe {
     pub fn title(&self) -> &RecipeTitle {
         &self.title
     }
+
+    pub fn description(&self) -> Option<&RecipeDescription> {
+        self.description.as_ref()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Constructor)]
@@ -28,6 +33,15 @@ pub struct RecipeId(String);
 pub struct RecipeTitle(String);
 
 impl RecipeTitle {
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+#[derive(Debug, Clone, Constructor)]
+pub struct RecipeDescription(String);
+
+impl RecipeDescription {
     pub fn as_str(&self) -> &str {
         &self.0
     }

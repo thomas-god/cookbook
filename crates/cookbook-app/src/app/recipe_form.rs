@@ -2,7 +2,8 @@ use std::collections::{BTreeMap, HashMap};
 
 use cookbook_domain::recipe::{
     models::{
-        DurationMinutes, IngredientName, Quantity, RecipeMetadata, RecipeStep, RecipeTitle, Unit,
+        DurationMinutes, IngredientName, Quantity, RecipeDescription, RecipeMetadata, RecipeStep,
+        RecipeTitle, Unit,
     },
     ports::CreateRecipeRequest,
 };
@@ -25,6 +26,7 @@ const TEXTAREA_CLASS: &str = "min-h-24 w-full rounded-lg border border-border bg
 const SELECT_CLASS: &str = "h-9 w-full rounded-lg border border-border bg-transparent px-3 text-sm transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background";
 
 const TITLE_FIELD: &str = "title";
+const DESCRIPTION_FIELD: &str = "description";
 const PREPARATION_FIELD: &str = "preparation";
 const REST_FIELD: &str = "rest";
 const COOKING_FIELD: &str = "cooking";
@@ -94,6 +96,7 @@ impl StepField {
 #[derive(Debug)]
 struct RecipeFormData {
     title: String,
+    description: Option<String>,
     preparation: Option<usize>,
     rest: Option<usize>,
     cooking: Option<usize>,
@@ -122,6 +125,7 @@ struct StepFormData {
 #[shard]
 pub async fn recipe_form(cx: &Cx) -> Result<impl View> {
     let title = signal(cx, String::new);
+    let description = signal(cx, String::new);
     let preparation = signal(cx, String::new);
     let rest = signal(cx, String::new);
     let cooking = signal(cx, String::new);
@@ -129,6 +133,7 @@ pub async fn recipe_form(cx: &Cx) -> Result<impl View> {
     let step_count = signal(cx, || 1usize);
 
     let title_id = element_id(cx);
+    let description_id = element_id(cx);
     let preparation_id = element_id(cx);
     let rest_id = element_id(cx);
     let cooking_id = element_id(cx);
@@ -148,6 +153,18 @@ pub async fn recipe_form(cx: &Cx) -> Result<impl View> {
                         :value=$(title.get())
                         @input=$(|e: Event| title.set(e.target.value))
                     })
+                )
+                field(
+                    field_label(attrs: attributes! { for=(&description_id) }, "Description (optional)")
+                    <textarea
+                        id=(&description_id)
+                        name=(DESCRIPTION_FIELD)
+                        rows="2"
+                        class=(TEXTAREA_CLASS)
+                        placeholder="A short description of your recipe."
+                        :value=$(description.get())
+                        @input=$(|e: Event| description.set(e.target.value))
+                    ></textarea>
                 )
                 <div class="grid gap-4 sm:grid-cols-3">
                     field(
@@ -392,6 +409,7 @@ async fn step_row(cx: &Cx, row: usize) -> Result<impl View> {
 /// Parses and validates the URL-encoded form into its wire DTO.
 fn parse_recipe_form(pairs: &[(String, String)]) -> Result<RecipeFormData> {
     let mut title = None;
+    let mut description = None;
     let mut preparation = None;
     let mut rest = None;
     let mut cooking = None;
@@ -401,6 +419,7 @@ fn parse_recipe_form(pairs: &[(String, String)]) -> Result<RecipeFormData> {
     for (key, value) in pairs {
         match key.as_str() {
             TITLE_FIELD => set_once(&mut title, value, key)?,
+            DESCRIPTION_FIELD => set_once(&mut description, value, key)?,
             PREPARATION_FIELD => set_once(&mut preparation, value, key)?,
             REST_FIELD => set_once(&mut rest, value, key)?,
             COOKING_FIELD => set_once(&mut cooking, value, key)?,
@@ -425,8 +444,13 @@ fn parse_recipe_form(pairs: &[(String, String)]) -> Result<RecipeFormData> {
         .filter(|title| !title.is_empty())
         .ok_or_else(|| invalid("title is required"))?;
 
+    let description = description
+        .map(|description| description.trim().to_string())
+        .filter(|description| !description.is_empty());
+
     Ok(RecipeFormData {
         title,
+        description,
         preparation: parse_optional_minutes(preparation.as_deref(), PREPARATION_FIELD)?,
         rest: parse_optional_minutes(rest.as_deref(), REST_FIELD)?,
         cooking: parse_optional_minutes(cooking.as_deref(), COOKING_FIELD)?,
@@ -440,6 +464,7 @@ pub(crate) fn create_recipe_request(pairs: Vec<(String, String)>) -> Result<Crea
 
     Ok(CreateRecipeRequest {
         title: RecipeTitle::new(form.title),
+        description: form.description.map(RecipeDescription::new),
         metadata: RecipeMetadata::new(
             form.preparation.map(DurationMinutes::new),
             form.rest.map(DurationMinutes::new),
@@ -696,6 +721,7 @@ mod tests {
     fn parses_every_recipe_field() {
         let form = parse_recipe_form(&pairs(&[
             ("title", "Soup"),
+            ("description", "A warming soup."),
             ("preparation", "10"),
             ("rest", "20"),
             ("cooking", "30"),
@@ -712,6 +738,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(form.title, "Soup");
+        assert_eq!(form.description.as_deref(), Some("A warming soup."));
         assert_eq!(form.preparation, Some(10));
         assert_eq!(form.rest, Some(20));
         assert_eq!(form.cooking, Some(30));
@@ -806,6 +833,13 @@ mod tests {
     }
 
     #[test]
+    fn treats_a_blank_description_as_missing() {
+        let form = parse_recipe_form(&pairs(&[("title", "Soup"), ("description", "   ")])).unwrap();
+
+        assert_eq!(form.description, None);
+    }
+
+    #[test]
     fn rejects_an_ingredient_without_a_quantity() {
         assert!(
             parse_recipe_form(&pairs(&[
@@ -880,6 +914,7 @@ mod tests {
     fn converts_the_form_into_a_create_request() {
         let request = create_recipe_request(pairs(&[
             ("title", "Soup"),
+            ("description", "A warming soup."),
             ("ingredients[0][name]", "Flour"),
             ("ingredients[0][quantity]", "200"),
             ("ingredients[0][unit]", "gram"),
@@ -888,6 +923,10 @@ mod tests {
         .unwrap();
 
         assert_eq!(request.title.as_str(), "Soup");
+        assert_eq!(
+            request.description.as_ref().map(RecipeDescription::as_str),
+            Some("A warming soup.")
+        );
         assert_eq!(request.ingredients.len(), 1);
         assert_eq!(request.steps.len(), 1);
     }

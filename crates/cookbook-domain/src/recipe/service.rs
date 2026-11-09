@@ -27,6 +27,7 @@ where
         let recipe = Recipe::new(
             RecipeId::new(Uuid::new_v4().to_string()),
             request.title,
+            request.description,
             request.metadata,
             request.ingredients,
             request.steps,
@@ -61,6 +62,7 @@ mod tests {
     fn request() -> CreateRecipeRequest {
         CreateRecipeRequest {
             title: RecipeTitle::new("Soup".to_string()),
+            description: None,
             metadata: RecipeMetadata::new(None, None, None),
             ingredients: HashMap::new(),
             steps: Vec::new(),

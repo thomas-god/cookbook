@@ -61,6 +61,7 @@ mod tests {
         Recipe::new(
             RecipeId::new(id.to_string()),
             RecipeTitle::new("Soup".to_string()),
+            None,
             RecipeMetadata::new(None, None, None),
             HashMap::new(),
             Vec::new(),
