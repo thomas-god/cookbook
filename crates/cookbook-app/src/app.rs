@@ -35,7 +35,7 @@ pub(crate) type AppRecipeService = RecipeServiceImpl<InMemoryRecipeRepository>;
 const GEIST: topcoat::font::Font = fontsource_font!(GEIST);
 
 pub fn router() -> topcoat::router::Router {
-    let recipe_service = AppRecipeService::new(InMemoryRecipeRepository::new());
+    let recipe_service = AppRecipeService::new(InMemoryRecipeRepository::seeded());
 
     module_router!()
         .app_context(recipe_service)

@@ -3,7 +3,10 @@ use std::sync::{Arc, RwLock};
 
 use anyhow::anyhow;
 
-use cookbook_domain::recipe::models::{Recipe, RecipeId};
+use cookbook_domain::recipe::models::{
+    DurationMinutes, IngredientName, Quantity, Recipe, RecipeDescription, RecipeId, RecipeMetadata,
+    RecipeStep, RecipeTitle, Unit,
+};
 use cookbook_domain::recipe::ports::{
     GetRecipeError, ListRecipesError, RecipeRepository, SaveRecipeError,
 };
@@ -17,6 +20,145 @@ impl InMemoryRecipeRepository {
     pub fn new() -> Self {
         Self::default()
     }
+
+    /// Creates a repository pre-populated with a few sample recipes.
+    pub fn seeded() -> Self {
+        Self::from_recipes(seed_recipes())
+    }
+
+    fn from_recipes(recipes: impl IntoIterator<Item = Recipe>) -> Self {
+        let recipes = recipes
+            .into_iter()
+            .map(|recipe| (recipe.id().clone(), recipe))
+            .collect();
+
+        Self {
+            recipes: Arc::new(RwLock::new(recipes)),
+        }
+    }
+}
+
+fn seed_recipes() -> Vec<Recipe> {
+    vec![
+        Recipe::new(
+            RecipeId::new("seed-tomato-soup".to_string()),
+            RecipeTitle::new("Tomato Soup".to_string()),
+            Some(RecipeDescription::new(
+                "A comforting weeknight soup made with ripe tomatoes.".to_string(),
+            )),
+            RecipeMetadata::new(
+                Some(DurationMinutes::new(10)),
+                None,
+                Some(DurationMinutes::new(30)),
+            ),
+            HashMap::from([
+                (
+                    IngredientName::new("tomatoes".to_string()),
+                    Quantity::new(800.0, Unit::Gram),
+                ),
+                (
+                    IngredientName::new("vegetable stock".to_string()),
+                    Quantity::new(0.5, Unit::Litre),
+                ),
+                (
+                    IngredientName::new("olive oil".to_string()),
+                    Quantity::new(30.0, Unit::MilliLitre),
+                ),
+            ]),
+            vec![
+                RecipeStep::new(
+                    Some("Soften the aromatics".to_string()),
+                    Some(HashMap::from([("tomatoes".to_string(), 800.0)])),
+                    "Warm the olive oil in a pot and cook the tomatoes until soft.".to_string(),
+                ),
+                RecipeStep::new(
+                    None,
+                    None,
+                    "Add the stock, simmer for 20 minutes, then blend until smooth.".to_string(),
+                ),
+            ],
+        ),
+        Recipe::new(
+            RecipeId::new("seed-lemon-pasta".to_string()),
+            RecipeTitle::new("Lemon Pasta".to_string()),
+            Some(RecipeDescription::new(
+                "A bright pasta dish that comes together in minutes.".to_string(),
+            )),
+            RecipeMetadata::new(
+                Some(DurationMinutes::new(10)),
+                None,
+                Some(DurationMinutes::new(12)),
+            ),
+            HashMap::from([
+                (
+                    IngredientName::new("spaghetti".to_string()),
+                    Quantity::new(400.0, Unit::Gram),
+                ),
+                (
+                    IngredientName::new("lemon".to_string()),
+                    Quantity::new(100.0, Unit::Gram),
+                ),
+                (
+                    IngredientName::new("olive oil".to_string()),
+                    Quantity::new(30.0, Unit::MilliLitre),
+                ),
+            ]),
+            vec![
+                RecipeStep::new(
+                    None,
+                    None,
+                    "Cook the spaghetti in salted water until al dente.".to_string(),
+                ),
+                RecipeStep::new(
+                    None,
+                    Some(HashMap::from([("lemon".to_string(), 100.0)])),
+                    "Toss with lemon zest, lemon juice and olive oil.".to_string(),
+                ),
+            ],
+        ),
+        Recipe::new(
+            RecipeId::new("seed-banana-bread".to_string()),
+            RecipeTitle::new("Banana Bread".to_string()),
+            Some(RecipeDescription::new(
+                "A moist loaf that is perfect for using up ripe bananas.".to_string(),
+            )),
+            RecipeMetadata::new(
+                Some(DurationMinutes::new(15)),
+                Some(DurationMinutes::new(10)),
+                Some(DurationMinutes::new(55)),
+            ),
+            HashMap::from([
+                (
+                    IngredientName::new("bananas".to_string()),
+                    Quantity::new(300.0, Unit::Gram),
+                ),
+                (
+                    IngredientName::new("flour".to_string()),
+                    Quantity::new(250.0, Unit::Gram),
+                ),
+                (
+                    IngredientName::new("sugar".to_string()),
+                    Quantity::new(150.0, Unit::Gram),
+                ),
+                (
+                    IngredientName::new("butter".to_string()),
+                    Quantity::new(100.0, Unit::Gram),
+                ),
+            ]),
+            vec![
+                RecipeStep::new(
+                    None,
+                    Some(HashMap::from([("bananas".to_string(), 300.0)])),
+                    "Mash the bananas and mix them with the melted butter and sugar.".to_string(),
+                ),
+                RecipeStep::new(
+                    None,
+                    None,
+                    "Fold in the flour, pour into a loaf tin and bake until golden.".to_string(),
+                ),
+            ],
+        ),
+    ]
 }
 
 impl RecipeRepository for InMemoryRecipeRepository {
@@ -66,6 +208,22 @@ mod tests {
             HashMap::new(),
             Vec::new(),
         )
+    }
+
+    #[tokio::test]
+    async fn seeded_repository_contains_the_sample_recipes() {
+        let repository = InMemoryRecipeRepository::seeded();
+
+        let mut titles: Vec<_> = repository
+            .get_recipes()
+            .await
+            .unwrap()
+            .iter()
+            .map(|recipe| recipe.title().as_str().to_string())
+            .collect();
+        titles.sort();
+
+        assert_eq!(titles, ["Banana Bread", "Lemon Pasta", "Tomato Soup"]);
     }
 
     #[tokio::test]
