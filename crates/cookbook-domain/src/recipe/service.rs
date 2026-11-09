@@ -32,6 +32,7 @@ where
             request.metadata,
             request.ingredients,
             request.steps,
+            request.author,
         );
 
         self.repository
@@ -66,6 +67,7 @@ mod tests {
     use super::*;
     use crate::recipe::models::{RecipeMetadata, RecipeTitle};
     use crate::recipe::ports::{MockRecipeRepository, SaveRecipeError};
+    use crate::user::models::UserId;
 
     fn request() -> CreateRecipeRequest {
         CreateRecipeRequest {
@@ -74,6 +76,7 @@ mod tests {
             metadata: RecipeMetadata::new(None, None, None),
             ingredients: HashMap::new(),
             steps: Vec::new(),
+            author: UserId::new("user-1".to_string()),
         }
     }
 
@@ -87,7 +90,9 @@ mod tests {
 
         let service = RecipeServiceImpl::new(repository);
 
-        service.create_recipe(request()).await.unwrap();
+        let recipe = service.create_recipe(request()).await.unwrap();
+
+        assert_eq!(recipe.author().as_str(), "user-1");
     }
 
     #[tokio::test]
@@ -163,6 +168,7 @@ mod tests {
                 RecipeMetadata::new(None, None, None),
                 HashMap::new(),
                 Vec::new(),
+                UserId::new("user-1".to_string()),
             )))
         });
 

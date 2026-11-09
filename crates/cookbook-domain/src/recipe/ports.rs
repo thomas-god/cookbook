@@ -6,6 +6,7 @@ use crate::recipe::models::{
     IngredientName, Quantity, Recipe, RecipeDescription, RecipeId, RecipeMetadata, RecipeStep,
     RecipeTitle,
 };
+use crate::user::models::UserId;
 
 #[derive(Debug, Clone)]
 pub struct CreateRecipeRequest {
@@ -14,6 +15,7 @@ pub struct CreateRecipeRequest {
     pub metadata: RecipeMetadata,
     pub ingredients: HashMap<IngredientName, Quantity>,
     pub steps: Vec<RecipeStep>,
+    pub author: UserId,
 }
 
 /// Inbound (driving) port for the recipe domain service.

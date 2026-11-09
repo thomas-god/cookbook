@@ -33,12 +33,12 @@ pub async fn page(cx: &Cx) -> Result<impl View> {
 
 #[route(POST)]
 pub async fn create(cx: &Cx, Form(form): Form<Vec<(String, String)>>) -> Result<SeeOther> {
-    auth::require_user(cx)?;
+    let user = auth::require_user(cx)?;
 
     let recipe_service: &AppRecipeService = app_context(cx);
 
     recipe_service
-        .create_recipe(create_recipe_request(form)?)
+        .create_recipe(create_recipe_request(form, user.id().clone())?)
         .await?;
 
     Ok(see_other("/recipes"))

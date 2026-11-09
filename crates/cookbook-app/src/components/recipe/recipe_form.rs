@@ -7,6 +7,7 @@ use cookbook_domain::recipe::{
     },
     ports::CreateRecipeRequest,
 };
+use cookbook_domain::user::models::UserId;
 use topcoat::{
     Error, Result,
     context::Cx,
@@ -493,7 +494,10 @@ fn parse_recipe_form(pairs: &[(String, String)]) -> Result<RecipeFormData> {
     })
 }
 
-pub(crate) fn create_recipe_request(pairs: Vec<(String, String)>) -> Result<CreateRecipeRequest> {
+pub(crate) fn create_recipe_request(
+    pairs: Vec<(String, String)>,
+    author: UserId,
+) -> Result<CreateRecipeRequest> {
     let form = parse_recipe_form(&pairs)?;
 
     Ok(CreateRecipeRequest {
@@ -519,6 +523,7 @@ pub(crate) fn create_recipe_request(pairs: Vec<(String, String)>) -> Result<Crea
             .into_iter()
             .map(|step| RecipeStep::new(step.title, step.ingredients, step.instruction))
             .collect(),
+        author,
     })
 }
 
@@ -946,17 +951,21 @@ mod tests {
 
     #[test]
     fn converts_the_form_into_a_create_request() {
-        let request = create_recipe_request(pairs(&[
-            ("title", "Soup"),
-            ("description", "A warming soup."),
-            ("ingredients[0][name]", "Flour"),
-            ("ingredients[0][quantity]", "200"),
-            ("ingredients[0][unit]", "gram"),
-            ("steps[0][instruction]", "Stir."),
-        ]))
+        let request = create_recipe_request(
+            pairs(&[
+                ("title", "Soup"),
+                ("description", "A warming soup."),
+                ("ingredients[0][name]", "Flour"),
+                ("ingredients[0][quantity]", "200"),
+                ("ingredients[0][unit]", "gram"),
+                ("steps[0][instruction]", "Stir."),
+            ]),
+            UserId::new("user-1".to_string()),
+        )
         .unwrap();
 
         assert_eq!(request.title.as_str(), "Soup");
+        assert_eq!(request.author.as_str(), "user-1");
         assert_eq!(
             request.description.as_ref().map(RecipeDescription::as_str),
             Some("A warming soup.")

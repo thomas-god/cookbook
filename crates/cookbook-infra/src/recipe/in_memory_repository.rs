@@ -10,6 +10,7 @@ use cookbook_domain::recipe::models::{
 use cookbook_domain::recipe::ports::{
     GetRecipeError, ListRecipesError, RecipeRepository, SaveRecipeError,
 };
+use cookbook_domain::user::models::UserId;
 
 #[derive(Debug, Clone, Default)]
 pub struct InMemoryRecipeRepository {
@@ -77,6 +78,7 @@ fn seed_recipes() -> Vec<Recipe> {
                     "Add the stock, simmer for 20 minutes, then blend until smooth.".to_string(),
                 ),
             ],
+            seed_author(),
         ),
         Recipe::new(
             RecipeId::new("seed-lemon-pasta".to_string()),
@@ -115,6 +117,7 @@ fn seed_recipes() -> Vec<Recipe> {
                     "Toss with lemon zest, lemon juice and olive oil.".to_string(),
                 ),
             ],
+            seed_author(),
         ),
         Recipe::new(
             RecipeId::new("seed-banana-bread".to_string()),
@@ -157,8 +160,13 @@ fn seed_recipes() -> Vec<Recipe> {
                     "Fold in the flour, pour into a loaf tin and bake until golden.".to_string(),
                 ),
             ],
+            seed_author(),
         ),
     ]
+}
+
+fn seed_author() -> UserId {
+    UserId::new("seed-author".to_string())
 }
 
 impl RecipeRepository for InMemoryRecipeRepository {
@@ -207,6 +215,7 @@ mod tests {
             RecipeMetadata::new(None, None, None),
             HashMap::new(),
             Vec::new(),
+            UserId::new("user-1".to_string()),
         )
     }
 

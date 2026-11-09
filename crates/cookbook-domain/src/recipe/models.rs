@@ -2,6 +2,8 @@ use std::collections::HashMap;
 
 use derive_more::Constructor;
 
+use crate::user::models::UserId;
+
 #[derive(Debug, Clone, Constructor)]
 pub struct Recipe {
     id: RecipeId,
@@ -10,6 +12,7 @@ pub struct Recipe {
     metadata: RecipeMetadata,
     ingredients: HashMap<IngredientName, Quantity>,
     steps: Vec<RecipeStep>,
+    author: UserId,
 }
 
 impl Recipe {
@@ -35,6 +38,10 @@ impl Recipe {
 
     pub fn steps(&self) -> &[RecipeStep] {
         &self.steps
+    }
+
+    pub fn author(&self) -> &UserId {
+        &self.author
     }
 }
 

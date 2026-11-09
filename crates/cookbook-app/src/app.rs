@@ -42,6 +42,7 @@ use crate::{
 };
 
 pub(crate) type AppRecipeService = RecipeServiceImpl<InMemoryRecipeRepository>;
+pub(crate) type AppUserRepository = InMemoryUserRepository;
 pub(crate) type AppAuthService = AuthServiceImpl<
     InMemoryUserRepository,
     Argon2PasswordHasher,
@@ -55,8 +56,9 @@ const GEIST: topcoat::font::Font = fontsource_font!(GEIST);
 pub async fn router() -> topcoat::router::Router {
     let recipe_service = AppRecipeService::new(InMemoryRecipeRepository::seeded());
     let auth_config = auth::AuthConfig::from_env().expect("invalid authentication configuration");
+    let user_repository = AppUserRepository::new();
     let auth_service = AppAuthService::new(
-        InMemoryUserRepository::new(),
+        user_repository.clone(),
         Argon2PasswordHasher::new(),
         InMemorySessionRepository::new(),
         SystemClock::new(),
@@ -72,6 +74,7 @@ pub async fn router() -> topcoat::router::Router {
     module_router!()
         .app_context(recipe_service)
         .app_context(auth_service)
+        .app_context(user_repository)
         .app_context(auth_config.settings())
         .discover()
         .layer(auth::AuthenticationLayer::new())

@@ -2,6 +2,7 @@ use cookbook_domain::recipe::{
     models::{RecipeId as RecipeIdValue, Unit},
     ports::RecipeService,
 };
+use cookbook_infra::auth::ports::UserRepository;
 use topcoat::{
     Result,
     context::{Cx, app_context},
@@ -10,7 +11,7 @@ use topcoat::{
 };
 
 use crate::{
-    app::{AppRecipeService, auth},
+    app::{AppRecipeService, AppUserRepository, auth},
     t,
 };
 
@@ -57,6 +58,15 @@ pub async fn recipe_detail(cx: &Cx) -> Result<impl View> {
         .await?
         .ok_or_not_found()?;
 
+    let user_repository: &AppUserRepository = app_context(cx);
+    let author_name = match user_repository.find_by_id(recipe.author()).await? {
+        Some(author) => author
+            .username()
+            .map(|username| username.as_str().to_string())
+            .unwrap_or_else(|| author.email().as_str().to_string()),
+        None => recipe.author().as_str().to_string(),
+    };
+
     let total_minutes = recipe.metadata().total_duration().as_minutes();
     let mut ingredients: Vec<_> = recipe
         .ingredients()
@@ -84,6 +94,9 @@ pub async fn recipe_detail(cx: &Cx) -> Result<impl View> {
                 if let Some(description) = recipe.description() {
                     <p class="mt-2 text-sm text-muted-foreground">(description.as_str())</p>
                 }
+                <p class="mt-2 text-sm text-muted-foreground">
+                    (t!(recipe_author)) ": " (author_name)
+                </p>
                 if total_minutes > 0 {
                     <p class="mt-2 text-sm text-muted-foreground">
                         (t!(recipe_total_duration)) ": " (total_minutes) " " (t!(recipe_minutes))

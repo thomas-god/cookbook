@@ -30,6 +30,7 @@ recipes_welcome = Bienvenue dans votre livre de recettes familial.
 recipes_list_heading = Liste des recettes
 recipes_empty = Aucune recette pour le moment.
 recipe_back_to_list = Retour aux recettes
+recipe_author = Auteur
 recipe_total_duration = Temps total
 recipe_minutes = minutes
 recipe_ingredients = Ingrédients

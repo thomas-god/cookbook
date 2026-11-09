@@ -30,6 +30,7 @@ recipes_welcome = Welcome to your family cookbook.
 recipes_list_heading = Recipe list
 recipes_empty = No recipes yet.
 recipe_back_to_list = Back to recipes
+recipe_author = Author
 recipe_total_duration = Total time
 recipe_minutes = minutes
 recipe_ingredients = Ingredients
