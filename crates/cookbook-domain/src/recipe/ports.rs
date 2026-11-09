@@ -24,6 +24,11 @@ pub trait RecipeService: Clone + Send + Sync + 'static {
     ) -> impl Future<Output = Result<Recipe, CreateRecipeError>> + Send;
 
     fn get_recipes(&self) -> impl Future<Output = Result<Vec<Recipe>, GetRecipesError>> + Send;
+
+    fn get_recipe(
+        &self,
+        id: RecipeId,
+    ) -> impl Future<Output = Result<Option<Recipe>, GetRecipeError>> + Send;
 }
 
 /// Outbound (driven) port for recipe persistence.
@@ -131,6 +136,11 @@ mockall::mock! {
         ) -> Result<Recipe, CreateRecipeError>;
 
         async fn get_recipes(&self) -> Result<Vec<Recipe>, GetRecipesError>;
+
+        async fn get_recipe(
+            &self,
+            id: RecipeId,
+        ) -> Result<Option<Recipe>, GetRecipeError>;
     }
 }
 

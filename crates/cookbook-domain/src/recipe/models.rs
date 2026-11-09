@@ -24,10 +24,28 @@ impl Recipe {
     pub fn description(&self) -> Option<&RecipeDescription> {
         self.description.as_ref()
     }
+
+    pub fn metadata(&self) -> &RecipeMetadata {
+        &self.metadata
+    }
+
+    pub fn ingredients(&self) -> &HashMap<IngredientName, Quantity> {
+        &self.ingredients
+    }
+
+    pub fn steps(&self) -> &[RecipeStep] {
+        &self.steps
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Constructor)]
 pub struct RecipeId(String);
+
+impl RecipeId {
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
 
 #[derive(Debug, Clone, Constructor)]
 pub struct RecipeTitle(String);
@@ -67,13 +85,35 @@ impl RecipeMetadata {
 #[derive(Debug, Clone, Constructor, Default)]
 pub struct DurationMinutes(usize);
 
+impl DurationMinutes {
+    pub fn as_minutes(&self) -> usize {
+        self.0
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Constructor)]
 pub struct IngredientName(String);
+
+impl IngredientName {
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
 
 #[derive(Debug, Clone, Constructor)]
 pub struct Quantity {
     value: f32,
     unit: Unit,
+}
+
+impl Quantity {
+    pub fn value(&self) -> f32 {
+        self.value
+    }
+
+    pub fn unit(&self) -> &Unit {
+        &self.unit
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -88,6 +128,20 @@ pub struct RecipeStep {
     title: Option<String>,
     ingredients: Option<HashMap<String, f32>>,
     instruction: String,
+}
+
+impl RecipeStep {
+    pub fn title(&self) -> Option<&str> {
+        self.title.as_deref()
+    }
+
+    pub fn ingredients(&self) -> Option<&HashMap<String, f32>> {
+        self.ingredients.as_ref()
+    }
+
+    pub fn instruction(&self) -> &str {
+        &self.instruction
+    }
 }
 
 #[cfg(test)]

@@ -29,6 +29,12 @@ recipes_heading = Recipes
 recipes_welcome = Welcome to your family cookbook.
 recipes_list_heading = Recipe list
 recipes_empty = No recipes yet.
+recipe_back_to_list = Back to recipes
+recipe_total_duration = Total time
+recipe_minutes = minutes
+recipe_ingredients = Ingredients
+recipe_steps = Steps
+recipe_step = Step
 
 form_add_recipe = Add a recipe
 form_new_recipe = New recipe

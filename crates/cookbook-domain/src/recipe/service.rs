@@ -2,7 +2,8 @@ use uuid::Uuid;
 
 use crate::recipe::models::{Recipe, RecipeId};
 use crate::recipe::ports::{
-    CreateRecipeError, CreateRecipeRequest, GetRecipesError, RecipeRepository, RecipeService,
+    CreateRecipeError, CreateRecipeRequest, GetRecipeError, GetRecipesError, RecipeRepository,
+    RecipeService,
 };
 
 #[derive(Debug, Clone)]
@@ -46,6 +47,13 @@ where
             .get_recipes()
             .await
             .map_err(|error| GetRecipesError::Storage(error.into()))
+    }
+
+    async fn get_recipe(&self, id: RecipeId) -> Result<Option<Recipe>, GetRecipeError> {
+        self.repository
+            .get_recipe(id)
+            .await
+            .map_err(|error| GetRecipeError::Storage(error.into()))
     }
 }
 
@@ -141,5 +149,44 @@ mod tests {
         let result = service.get_recipes().await;
 
         assert!(matches!(result, Err(GetRecipesError::Storage(_))));
+    }
+
+    #[tokio::test]
+    async fn get_recipe_returns_the_repository_recipe() {
+        let id = RecipeId::new("soup".to_string());
+        let mut repository = MockRecipeRepository::new();
+        repository.expect_get_recipe().times(1).returning(|_| {
+            Ok(Some(Recipe::new(
+                RecipeId::new("soup".to_string()),
+                RecipeTitle::new("Soup".to_string()),
+                None,
+                RecipeMetadata::new(None, None, None),
+                HashMap::new(),
+                Vec::new(),
+            )))
+        });
+
+        let service = RecipeServiceImpl::new(repository);
+
+        let recipe = service.get_recipe(id).await.unwrap();
+
+        assert_eq!(
+            recipe.map(|recipe| recipe.id().clone()),
+            Some(RecipeId::new("soup".to_string()))
+        );
+    }
+
+    #[tokio::test]
+    async fn get_recipe_maps_read_failures_to_storage_errors() {
+        let mut repository = MockRecipeRepository::new();
+        repository
+            .expect_get_recipe()
+            .returning(|_| Err(GetRecipeError::Storage(anyhow!("read unavailable"))));
+
+        let service = RecipeServiceImpl::new(repository);
+
+        let result = service.get_recipe(RecipeId::new("soup".to_string())).await;
+
+        assert!(matches!(result, Err(GetRecipeError::Storage(_))));
     }
 }
