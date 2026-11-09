@@ -1,20 +1,46 @@
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
+use std::time::SystemTime;
 
 use anyhow::anyhow;
+use uuid::Uuid;
 
 use cookbook_domain::recipe::models::{
-    DurationMinutes, IngredientName, Quantity, Recipe, RecipeDescription, RecipeId, RecipeMetadata,
-    RecipeStep, RecipeTitle, Unit,
+    DurationMinutes, IngredientName, Quantity, Recipe, RecipeContent, RecipeDescription, RecipeId,
+    RecipeMetadata, RecipeRevision, RecipeRevisionId, RecipeStep, RecipeTitle, RecipeWithContent,
+    Unit,
 };
 use cookbook_domain::recipe::ports::{
-    GetRecipeError, ListRecipesError, RecipeRepository, SaveRecipeError,
+    GetRecipeError, ListRecipeRevisionsError, ListRecipesError, RecipeRepository, SaveRecipeError,
 };
 use cookbook_domain::user::models::UserId;
 
+#[derive(Debug, Clone)]
+struct RecipeRecord {
+    recipe: Recipe,
+    revisions: Vec<RecipeRevision>,
+}
+
+impl RecipeRecord {
+    fn current(&self) -> anyhow::Result<RecipeWithContent> {
+        let revision = self
+            .revisions
+            .last()
+            .cloned()
+            .ok_or_else(|| anyhow!("recipe has no revisions"))?;
+
+        Ok(RecipeWithContent::new(self.recipe.clone(), revision)?)
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+struct RecipeStore {
+    recipes: HashMap<RecipeId, RecipeRecord>,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct InMemoryRecipeRepository {
-    recipes: Arc<RwLock<HashMap<RecipeId, Recipe>>>,
+    store: Arc<RwLock<RecipeStore>>,
 }
 
 impl InMemoryRecipeRepository {
@@ -24,29 +50,62 @@ impl InMemoryRecipeRepository {
 
     /// Creates a repository pre-populated with a few sample recipes.
     pub fn seeded() -> Self {
-        Self::from_recipes(seed_recipes())
+        Self::from_current_recipes(seed_recipes())
     }
 
-    fn from_recipes(recipes: impl IntoIterator<Item = Recipe>) -> Self {
-        let recipes = recipes
-            .into_iter()
-            .map(|recipe| (recipe.id().clone(), recipe))
-            .collect();
+    fn from_current_recipes(recipes: impl IntoIterator<Item = RecipeWithContent>) -> Self {
+        let mut store = RecipeStore::default();
+
+        for current in recipes {
+            store.recipes.insert(
+                current.id().clone(),
+                RecipeRecord {
+                    recipe: current.recipe().clone(),
+                    revisions: vec![current.revision().clone()],
+                },
+            );
+        }
 
         Self {
-            recipes: Arc::new(RwLock::new(recipes)),
+            store: Arc::new(RwLock::new(store)),
         }
     }
 }
 
-fn seed_recipes() -> Vec<Recipe> {
+fn seeded_recipe(
+    id: &str,
+    title: &str,
+    description: &str,
+    metadata: RecipeMetadata,
+    ingredients: HashMap<IngredientName, Quantity>,
+    steps: Vec<RecipeStep>,
+) -> RecipeWithContent {
+    let recipe = Recipe::new(RecipeId::new(id.to_string()), seed_author());
+    let content = RecipeContent::new(
+        RecipeTitle::new(title.to_string()),
+        Some(RecipeDescription::new(description.to_string())),
+        metadata,
+        ingredients,
+        steps,
+    );
+    let revision = RecipeRevision::new(
+        RecipeRevisionId::new(Uuid::new_v4().to_string()),
+        recipe.id().clone(),
+        content,
+        recipe.author().clone(),
+        SystemTime::now(),
+        None,
+    );
+
+    RecipeWithContent::new(recipe, revision).expect("seed revision belongs to its recipe")
+}
+
+fn seed_recipes() -> Vec<RecipeWithContent> {
     vec![
-        Recipe::new(
-            RecipeId::new("seed-tomato-soup".to_string()),
-            RecipeTitle::new("Tomato Soup".to_string()),
-            Some(RecipeDescription::new(
-                "A comforting weeknight soup made with ripe tomatoes.".to_string(),
-            )),
+        seeded_recipe(
+            "seed-tomato-soup",
+            "Tomato Soup",
+            "A comforting weeknight soup made with ripe tomatoes.",
             RecipeMetadata::new(
                 Some(DurationMinutes::new(10)),
                 None,
@@ -78,14 +137,11 @@ fn seed_recipes() -> Vec<Recipe> {
                     "Add the stock, simmer for 20 minutes, then blend until smooth.".to_string(),
                 ),
             ],
-            seed_author(),
         ),
-        Recipe::new(
-            RecipeId::new("seed-lemon-pasta".to_string()),
-            RecipeTitle::new("Lemon Pasta".to_string()),
-            Some(RecipeDescription::new(
-                "A bright pasta dish that comes together in minutes.".to_string(),
-            )),
+        seeded_recipe(
+            "seed-lemon-pasta",
+            "Lemon Pasta",
+            "A bright pasta dish that comes together in minutes.",
             RecipeMetadata::new(
                 Some(DurationMinutes::new(10)),
                 None,
@@ -117,14 +173,11 @@ fn seed_recipes() -> Vec<Recipe> {
                     "Toss with lemon zest, lemon juice and olive oil.".to_string(),
                 ),
             ],
-            seed_author(),
         ),
-        Recipe::new(
-            RecipeId::new("seed-banana-bread".to_string()),
-            RecipeTitle::new("Banana Bread".to_string()),
-            Some(RecipeDescription::new(
-                "A moist loaf that is perfect for using up ripe bananas.".to_string(),
-            )),
+        seeded_recipe(
+            "seed-banana-bread",
+            "Banana Bread",
+            "A moist loaf that is perfect for using up ripe bananas.",
             RecipeMetadata::new(
                 Some(DurationMinutes::new(15)),
                 Some(DurationMinutes::new(10)),
@@ -160,7 +213,6 @@ fn seed_recipes() -> Vec<Recipe> {
                     "Fold in the flour, pour into a loaf tin and bake until golden.".to_string(),
                 ),
             ],
-            seed_author(),
         ),
     ]
 }
@@ -170,39 +222,87 @@ fn seed_author() -> UserId {
 }
 
 impl RecipeRepository for InMemoryRecipeRepository {
-    async fn save_recipe(&self, recipe: Recipe) -> Result<(), SaveRecipeError> {
-        let mut recipes = self
-            .recipes
+    async fn save_recipe_with_revision(
+        &self,
+        recipe: Recipe,
+        revision: RecipeRevision,
+    ) -> Result<(), SaveRecipeError> {
+        if revision.recipe_id() != recipe.id() {
+            return Err(SaveRecipeError::RecipeIdMismatch);
+        }
+
+        let mut store = self
+            .store
             .write()
             .map_err(|_| SaveRecipeError::Storage(anyhow!("recipe store lock poisoned")))?;
 
-        recipes.insert(recipe.id().clone(), recipe);
+        if let Some(record) = store.recipes.get_mut(recipe.id()) {
+            if record.recipe != recipe {
+                return Err(SaveRecipeError::RecipeAuthorMismatch);
+            }
+
+            record.revisions.push(revision);
+        } else {
+            store.recipes.insert(
+                recipe.id().clone(),
+                RecipeRecord {
+                    recipe,
+                    revisions: vec![revision],
+                },
+            );
+        }
 
         Ok(())
     }
 
-    async fn get_recipe(&self, id: RecipeId) -> Result<Option<Recipe>, GetRecipeError> {
-        let recipes = self
-            .recipes
+    async fn get_recipe(&self, id: RecipeId) -> Result<Option<RecipeWithContent>, GetRecipeError> {
+        let store = self
+            .store
             .read()
             .map_err(|_| GetRecipeError::Storage(anyhow!("recipe store lock poisoned")))?;
 
-        Ok(recipes.get(&id).cloned())
+        store
+            .recipes
+            .get(&id)
+            .map(RecipeRecord::current)
+            .transpose()
+            .map_err(GetRecipeError::Storage)
     }
 
-    async fn get_recipes(&self) -> Result<Vec<Recipe>, ListRecipesError> {
-        let recipes = self
-            .recipes
+    async fn get_recipes(&self) -> Result<Vec<RecipeWithContent>, ListRecipesError> {
+        let store = self
+            .store
             .read()
             .map_err(|_| ListRecipesError::Storage(anyhow!("recipe store lock poisoned")))?;
 
-        Ok(recipes.values().cloned().collect())
+        store
+            .recipes
+            .values()
+            .map(RecipeRecord::current)
+            .collect::<anyhow::Result<Vec<_>>>()
+            .map_err(ListRecipesError::Storage)
+    }
+
+    async fn get_recipe_revisions(
+        &self,
+        id: RecipeId,
+    ) -> Result<Vec<RecipeRevision>, ListRecipeRevisionsError> {
+        let store = self.store.read().map_err(|_| {
+            ListRecipeRevisionsError::Storage(anyhow!("recipe store lock poisoned"))
+        })?;
+
+        Ok(store
+            .recipes
+            .get(&id)
+            .map(|record| record.revisions.clone())
+            .unwrap_or_default())
     }
 }
 
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
+    use std::time::SystemTime;
 
     use super::*;
     use cookbook_domain::recipe::models::{RecipeId, RecipeMetadata, RecipeTitle};
@@ -210,13 +310,52 @@ mod tests {
     fn recipe(id: &str) -> Recipe {
         Recipe::new(
             RecipeId::new(id.to_string()),
-            RecipeTitle::new("Soup".to_string()),
-            None,
-            RecipeMetadata::new(None, None, None),
-            HashMap::new(),
-            Vec::new(),
             UserId::new("user-1".to_string()),
         )
+    }
+
+    fn revision(id: &str, recipe: &Recipe) -> RecipeRevision {
+        RecipeRevision::new(
+            RecipeRevisionId::new(id.to_string()),
+            recipe.id().clone(),
+            RecipeContent::new(
+                RecipeTitle::new("Soup".to_string()),
+                None,
+                RecipeMetadata::new(None, None, None),
+                HashMap::new(),
+                Vec::new(),
+            ),
+            recipe.author().clone(),
+            SystemTime::UNIX_EPOCH,
+            None,
+        )
+    }
+
+    fn current_recipe(id: &str, title: &str) -> RecipeWithContent {
+        let recipe = recipe(id);
+        let revision = RecipeRevision::new(
+            RecipeRevisionId::new(format!("{id}-revision")),
+            recipe.id().clone(),
+            RecipeContent::new(
+                RecipeTitle::new(title.to_string()),
+                None,
+                RecipeMetadata::new(None, None, None),
+                HashMap::new(),
+                Vec::new(),
+            ),
+            recipe.author().clone(),
+            SystemTime::UNIX_EPOCH,
+            None,
+        );
+
+        RecipeWithContent::new(recipe, revision).unwrap()
+    }
+
+    async fn save(repository: &InMemoryRecipeRepository, current: RecipeWithContent) {
+        repository
+            .save_recipe_with_revision(current.recipe().clone(), current.revision().clone())
+            .await
+            .unwrap();
     }
 
     #[tokio::test]
@@ -236,11 +375,27 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn seeded_recipes_have_an_initial_revision() {
+        let repository = InMemoryRecipeRepository::seeded();
+
+        for recipe in repository.get_recipes().await.unwrap() {
+            let revisions = repository
+                .get_recipe_revisions(recipe.id().clone())
+                .await
+                .unwrap();
+
+            assert_eq!(revisions.len(), 1);
+            assert_eq!(revisions[0].editor(), recipe.author());
+            assert!(revisions[0].message().is_none());
+        }
+    }
+
+    #[tokio::test]
     async fn saves_and_gets_a_recipe_by_id() {
         let repository = InMemoryRecipeRepository::new();
         let id = RecipeId::new("soup".to_string());
 
-        repository.save_recipe(recipe("soup")).await.unwrap();
+        save(&repository, current_recipe("soup", "Soup")).await;
 
         let stored = repository.get_recipe(id.clone()).await.unwrap();
 
@@ -263,8 +418,8 @@ mod tests {
     async fn returns_every_saved_recipe() {
         let repository = InMemoryRecipeRepository::new();
 
-        repository.save_recipe(recipe("soup")).await.unwrap();
-        repository.save_recipe(recipe("stew")).await.unwrap();
+        save(&repository, current_recipe("soup", "Soup")).await;
+        save(&repository, current_recipe("stew", "Stew")).await;
 
         let stored = repository.get_recipes().await.unwrap();
 
@@ -272,16 +427,88 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn saving_an_existing_recipe_replaces_it() {
+    async fn saving_an_existing_recipe_replaces_its_content() {
         let repository = InMemoryRecipeRepository::new();
         let id = RecipeId::new("soup".to_string());
 
-        repository.save_recipe(recipe("soup")).await.unwrap();
-        repository.save_recipe(recipe("soup")).await.unwrap();
+        save(&repository, current_recipe("soup", "Soup")).await;
+        save(&repository, current_recipe("soup", "Stew")).await;
 
-        let stored = repository.get_recipes().await.unwrap();
+        let stored = repository.get_recipe(id.clone()).await.unwrap().unwrap();
 
-        assert_eq!(stored.len(), 1);
-        assert_eq!(stored[0].id(), &id);
+        assert_eq!(stored.id(), &id);
+        assert_eq!(stored.title().as_str(), "Stew");
+    }
+
+    #[tokio::test]
+    async fn appends_revisions_in_order() {
+        let repository = InMemoryRecipeRepository::new();
+        let recipe = recipe("soup");
+        let first = revision("revision-1", &recipe);
+        let second = revision("revision-2", &recipe);
+
+        repository
+            .save_recipe_with_revision(recipe.clone(), first)
+            .await
+            .unwrap();
+        repository
+            .save_recipe_with_revision(recipe, second)
+            .await
+            .unwrap();
+
+        let revisions = repository
+            .get_recipe_revisions(RecipeId::new("soup".to_string()))
+            .await
+            .unwrap();
+
+        assert_eq!(revisions.len(), 2);
+        assert_eq!(revisions[0].id().as_str(), "revision-1");
+        assert_eq!(revisions[1].id().as_str(), "revision-2");
+    }
+
+    #[tokio::test]
+    async fn returns_no_revisions_for_an_unknown_recipe() {
+        let repository = InMemoryRecipeRepository::new();
+
+        let revisions = repository
+            .get_recipe_revisions(RecipeId::new("unknown".to_string()))
+            .await
+            .unwrap();
+
+        assert!(revisions.is_empty());
+    }
+
+    #[tokio::test]
+    async fn rejects_a_revision_for_another_recipe() {
+        let repository = InMemoryRecipeRepository::new();
+        let soup = recipe("soup");
+        let revision = revision("salad-revision", &recipe("salad"));
+
+        let result = repository.save_recipe_with_revision(soup, revision).await;
+
+        assert!(matches!(result, Err(SaveRecipeError::RecipeIdMismatch)));
+    }
+
+    #[tokio::test]
+    async fn rejects_a_different_author_for_an_existing_recipe() {
+        let repository = InMemoryRecipeRepository::new();
+        let soup = recipe("soup");
+        let first_revision = revision("revision-1", &soup);
+        repository
+            .save_recipe_with_revision(soup, first_revision)
+            .await
+            .unwrap();
+
+        let other_recipe = Recipe::new(
+            RecipeId::new("soup".to_string()),
+            UserId::new("user-2".to_string()),
+        );
+        let second_revision = revision("revision-2", &other_recipe);
+
+        let result = repository
+            .save_recipe_with_revision(other_recipe, second_revision)
+            .await;
+
+        assert!(matches!(result, Err(SaveRecipeError::RecipeAuthorMismatch)));
     }
 }

@@ -41,7 +41,7 @@ use crate::{
     t,
 };
 
-pub(crate) type AppRecipeService = RecipeServiceImpl<InMemoryRecipeRepository>;
+pub(crate) type AppRecipeService = RecipeServiceImpl<InMemoryRecipeRepository, SystemClock>;
 pub(crate) type AppUserRepository = InMemoryUserRepository;
 pub(crate) type AppAuthService = AuthServiceImpl<
     InMemoryUserRepository,
@@ -54,7 +54,8 @@ pub(crate) type AppAuthService = AuthServiceImpl<
 const GEIST: topcoat::font::Font = fontsource_font!(GEIST);
 
 pub async fn router() -> topcoat::router::Router {
-    let recipe_service = AppRecipeService::new(InMemoryRecipeRepository::seeded());
+    let recipe_service =
+        AppRecipeService::new(InMemoryRecipeRepository::seeded(), SystemClock::new());
     let auth_config = auth::AuthConfig::from_env().expect("invalid authentication configuration");
     let user_repository = AppUserRepository::new();
     let auth_service = AppAuthService::new(

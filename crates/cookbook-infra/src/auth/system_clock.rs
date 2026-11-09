@@ -1,6 +1,8 @@
 use std::time::SystemTime;
 
-use crate::auth::ports::Clock;
+use cookbook_domain::clock::Clock as DomainClock;
+
+use crate::auth::ports::Clock as AuthClock;
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct SystemClock;
@@ -11,7 +13,13 @@ impl SystemClock {
     }
 }
 
-impl Clock for SystemClock {
+impl AuthClock for SystemClock {
+    fn now(&self) -> SystemTime {
+        SystemTime::now()
+    }
+}
+
+impl DomainClock for SystemClock {
     fn now(&self) -> SystemTime {
         SystemTime::now()
     }

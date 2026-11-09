@@ -21,7 +21,7 @@ mockall = "0.15"
 serde = { version = "1", features = ["derive"] }
 sha2 = "0.11"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
-uuid = { version = "1.29.0", features = ["v4"] }
+uuid = { version = "1.29.0", features = ["v4", "v7"] }
 
 cookbook-domain = { path = "crates/cookbook-domain" }
 cookbook-infra = { path = "crates/cookbook-infra" }
