@@ -4,19 +4,16 @@ use topcoat::{
     Result,
     asset::{AssetBundle, RouterBuilderAssetExt},
     context::Cx,
-    font::{RouterBuilderFontExt, fontsource::fontsource_font, link},
-    router::{Slot, layout, module_router, page},
-    view::{View, attributes, element_id, view},
+    font::{fontsource::fontsource_font, link},
+    router::{RouterBuilderDiscoverExt, Slot, layout, module_router, page},
+    runtime::RouterBuilderRuntimeExt,
+    view::{View, view},
 };
 
+mod recipe_form;
 mod recipes;
 
-use crate::components::{
-    button::button,
-    card::{card, card_content, card_description, card_header, card_title},
-    field::{field, field_label},
-    input::input,
-};
+use crate::components::card::{card, card_content, card_description, card_header, card_title};
 
 pub(crate) type AppRecipeService = RecipeServiceImpl<InMemoryRecipeRepository>;
 
@@ -27,11 +24,12 @@ pub fn router() -> topcoat::router::Router {
 
     module_router!()
         .app_context(recipe_service)
-        .font(GEIST)
+        .discover()
         .assets(
             AssetBundle::load()
                 .expect("no asset bundle found; run `topcoat asset bundle` or use `topcoat dev`"),
         )
+        .runtime()
         .build()
 }
 
@@ -48,6 +46,7 @@ async fn root_layout(cx: &Cx, slot: Slot<'_>) -> Result<impl View> {
                 <title>"Cookbook"</title>
                 link(font: GEIST, preload: false)
                 <link rel="stylesheet" href=(topcoat::tailwind::stylesheet!())>
+                topcoat::runtime::script()
                 topcoat::dev::script()
             </head>
             <body class="min-h-screen">
@@ -65,33 +64,17 @@ async fn root_layout(cx: &Cx, slot: Slot<'_>) -> Result<impl View> {
 }
 
 #[page]
-pub async fn page(cx: &Cx) -> Result<impl View> {
+pub async fn page() -> Result<impl View> {
     Ok(view! {
-        let title_id = element_id(cx);
-
         <h2 class="mb-2 text-2xl font-semibold">"Recipes"</h2>
         <p class="mb-6 text-sm text-muted-foreground">"Welcome to the family cookbook."</p>
         card(
             card_header(
                 card_title("Add a recipe")
-                card_description("Give your recipe a title to get started.")
+                card_description("Add the ingredients, timings, and steps for your recipe.")
             )
             card_content(
-                <form method="post" action="/recipes" class="flex flex-col gap-4">
-                    field(
-                        field_label(attrs: attributes! { for=(&title_id) }, "Title")
-                        input(attrs: attributes! {
-                            id=(&title_id)
-                            name="title"
-                            type="text"
-                            placeholder="Grandma's apple pie"
-                            required=""
-                        })
-                    )
-                    <div class="flex justify-end">
-                        button(attrs: attributes! { type="submit" }, "Add recipe")
-                    </div>
-                </form>
+                recipe_form::recipe_form()
             )
         )
     })

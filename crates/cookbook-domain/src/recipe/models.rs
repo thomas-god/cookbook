@@ -53,7 +53,7 @@ impl RecipeMetadata {
 #[derive(Debug, Clone, Constructor, Default)]
 pub struct DurationMinutes(usize);
 
-#[derive(Debug, Clone, Constructor)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Constructor)]
 pub struct IngredientName(String);
 
 #[derive(Debug, Clone, Constructor)]

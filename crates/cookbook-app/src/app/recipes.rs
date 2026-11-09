@@ -1,10 +1,4 @@
-use std::collections::HashMap;
-
-use cookbook_domain::recipe::{
-    models::{RecipeMetadata, RecipeTitle},
-    ports::{CreateRecipeRequest, RecipeService},
-};
-use serde::Deserialize;
+use cookbook_domain::recipe::ports::RecipeService;
 use topcoat::{
     Result,
     context::{Cx, app_context},
@@ -13,23 +7,16 @@ use topcoat::{
         error::{SeeOther, see_other},
         page, route,
     },
-    view::{View, attributes, element_id, view},
+    view::{View, view},
 };
 
 use crate::{
-    app::AppRecipeService,
-    components::{
-        button::button,
-        card::{card, card_content, card_description, card_header, card_title},
-        field::{field, field_label},
-        input::input,
+    app::{
+        AppRecipeService,
+        recipe_form::{create_recipe_request, recipe_form},
     },
+    components::card::{card, card_content, card_description, card_header, card_title},
 };
-
-#[derive(Deserialize)]
-struct CreateRecipeForm {
-    title: String,
-}
 
 #[page]
 pub async fn page(cx: &Cx) -> Result<impl View> {
@@ -37,30 +24,14 @@ pub async fn page(cx: &Cx) -> Result<impl View> {
     let recipes = recipe_service.get_recipes().await?;
 
     Ok(view! {
-        let title_id = element_id(cx);
-
         <h2 class="mb-6 text-2xl font-semibold">"Recipe list"</h2>
         card(
             card_header(
                 card_title("Add a recipe")
-                card_description("Give your recipe a title to get started.")
+                card_description("Add the ingredients, timings, and steps for your recipe.")
             )
             card_content(
-                <form method="post" action="/recipes" class="flex flex-col gap-4">
-                    field(
-                        field_label(attrs: attributes! { for=(&title_id) }, "Title")
-                        input(attrs: attributes! {
-                            id=(&title_id)
-                            name="title"
-                            type="text"
-                            placeholder="Grandma's apple pie"
-                            required=""
-                        })
-                    )
-                    <div class="flex justify-end">
-                        button(attrs: attributes! { type="submit" }, "Add recipe")
-                    </div>
-                </form>
+                recipe_form()
             )
         )
         if recipes.is_empty() {
@@ -78,16 +49,11 @@ pub async fn page(cx: &Cx) -> Result<impl View> {
 }
 
 #[route(POST)]
-pub async fn create(cx: &Cx, Form(form): Form<CreateRecipeForm>) -> Result<SeeOther> {
+pub async fn create(cx: &Cx, Form(form): Form<Vec<(String, String)>>) -> Result<SeeOther> {
     let recipe_service: &AppRecipeService = app_context(cx);
 
     recipe_service
-        .create_recipe(CreateRecipeRequest {
-            title: RecipeTitle::new(form.title),
-            metadata: RecipeMetadata::new(None, None, None),
-            ingredients: HashMap::new(),
-            steps: Vec::new(),
-        })
+        .create_recipe(create_recipe_request(form)?)
         .await?;
 
     Ok(see_other("/recipes"))
