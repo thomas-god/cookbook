@@ -14,7 +14,7 @@ use crate::{
     app::{AppRecipeService, auth},
     components::{
         base::card::{card, card_content, card_header, card_title},
-        recipe::recipe_form::{create_recipe_request, recipe_form},
+        recipe::recipe_form::{RecipeFormMode, create_recipe_request, recipe_form},
     },
     t,
 };
@@ -26,7 +26,7 @@ pub async fn page(cx: &Cx) -> Result<impl View> {
     Ok(view! {
         card(
             card_header(card_title((t!(form_new_recipe))))
-            card_content(recipe_form())
+            card_content(recipe_form(mode: RecipeFormMode::New))
         )
     })
 }

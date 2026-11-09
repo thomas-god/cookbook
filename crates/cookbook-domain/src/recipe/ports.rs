@@ -1,20 +1,15 @@
-use std::collections::HashMap;
 use std::fmt;
 use std::future::Future;
 
 use crate::recipe::models::{
-    IngredientName, Quantity, Recipe, RecipeContent, RecipeDescription, RecipeId, RecipeMetadata,
-    RecipeRevision, RecipeRevisionId, RecipeStep, RecipeTitle, RecipeWithContent, RevisionMessage,
+    Recipe, RecipeContent, RecipeId, RecipeRevision, RecipeRevisionId, RecipeWithContent,
+    RevisionMessage,
 };
 use crate::user::models::UserId;
 
 #[derive(Debug, Clone)]
 pub struct CreateRecipeRequest {
-    pub title: RecipeTitle,
-    pub description: Option<RecipeDescription>,
-    pub metadata: RecipeMetadata,
-    pub ingredients: HashMap<IngredientName, Quantity>,
-    pub steps: Vec<RecipeStep>,
+    pub content: RecipeContent,
     pub author: UserId,
 }
 

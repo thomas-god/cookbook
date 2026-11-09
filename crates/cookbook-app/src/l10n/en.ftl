@@ -36,9 +36,26 @@ recipe_minutes = minutes
 recipe_ingredients = Ingredients
 recipe_steps = Steps
 recipe_step = Step
+recipe_edit = Edit
+recipe_history = History
+recipe_back_to_recipe = Back to recipe
+recipe_back_to_history = Back to history
+recipe_view_current = View current recipe
+recipe_history_heading = History
+recipe_history_empty = No revisions yet.
+recipe_history_created = Created the recipe
+recipe_history_edited = Edited the recipe
+recipe_history_edited_by = Edited by
+recipe_history_view = View
+recipe_conflict = This recipe was changed by someone else. Reload the form and try again.
 
 form_add_recipe = Add a recipe
 form_new_recipe = New recipe
+form_edit_recipe = Edit recipe
+form_save_recipe = Save changes
+form_edit_message = Edit note (optional)
+    .placeholder = Reduce the sugar, use less salt, ...
+form_cancel = Cancel
 
 form_title = Title
     .placeholder = Grandma's apple pie

@@ -24,10 +24,10 @@ use topcoat::{
     view::{View, attributes, view},
 };
 
-mod auth;
+pub(crate) mod auth;
 mod locale;
-mod recipe;
-mod recipes;
+pub(crate) mod recipe;
+pub(crate) mod recipes;
 
 use crate::{
     app::{

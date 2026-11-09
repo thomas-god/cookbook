@@ -6,6 +6,7 @@ default-run = "cookbook-app"
 
 [dependencies]
 anyhow.workspace = true
+chrono.workspace = true
 cookbook-domain.workspace = true
 cookbook-infra.workspace = true
 serde.workspace = true

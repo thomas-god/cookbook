@@ -15,6 +15,7 @@ edition = "2024"
 anyhow = "1.0.104"
 argon2 = "0.6.0"
 base64 = "0.22"
+chrono = "0.4"
 derive_more = { version = "2.1.1", features = ["add", "constructor"] }
 getrandom = "0.4"
 mockall = "0.15"

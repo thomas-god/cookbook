@@ -2,21 +2,29 @@ use std::collections::{BTreeMap, HashMap};
 
 use cookbook_domain::recipe::{
     models::{
-        DurationMinutes, IngredientName, Quantity, RecipeDescription, RecipeMetadata, RecipeStep,
-        RecipeTitle, Unit,
+        DurationMinutes, IngredientName, Quantity, RecipeContent, RecipeDescription,
+        RecipeId as RecipeIdValue, RecipeMetadata, RecipeRevisionId, RecipeStep, RecipeTitle,
+        RecipeWithContent, RevisionMessage, Unit,
     },
-    ports::CreateRecipeRequest,
+    ports::{CreateRecipeRequest, RecipeService, UpdateRecipeRequest},
 };
 use cookbook_domain::user::models::UserId;
 use topcoat::{
     Error, Result,
-    context::Cx,
-    router::error::bad_request,
+    context::{Cx, app_context},
+    router::{
+        error::{RouterErrorExt, bad_request},
+        href,
+    },
     runtime::{Event, shard, signal},
     view::{View, attributes, component, element_id, view},
 };
 
 use crate::{
+    app::{
+        AppRecipeService, auth,
+        recipes::{RecipeId, recipe_detail},
+    },
     components::base::{
         button::{ButtonSize, ButtonVariant, button},
         field::{field, field_label, field_legend, field_set},
@@ -34,6 +42,8 @@ const DESCRIPTION_FIELD: &str = "description";
 const PREPARATION_FIELD: &str = "preparation";
 const REST_FIELD: &str = "rest";
 const COOKING_FIELD: &str = "cooking";
+const MESSAGE_FIELD: &str = "message";
+const LATEST_REVISION_FIELD: &str = "latest_revision";
 
 /// The fields of one ingredient row on the wire.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -106,6 +116,35 @@ struct RecipeFormData {
     cooking: Option<usize>,
     ingredients: Vec<IngredientFormData>,
     steps: Vec<StepFormData>,
+    message: Option<String>,
+    latest_revision: Option<String>,
+}
+
+impl RecipeFormData {
+    fn into_content(self) -> RecipeContent {
+        RecipeContent::new(
+            RecipeTitle::new(self.title),
+            self.description.map(RecipeDescription::new),
+            RecipeMetadata::new(
+                self.preparation.map(DurationMinutes::new),
+                self.rest.map(DurationMinutes::new),
+                self.cooking.map(DurationMinutes::new),
+            ),
+            self.ingredients
+                .into_iter()
+                .map(|ingredient| {
+                    (
+                        IngredientName::new(ingredient.name),
+                        Quantity::new(ingredient.quantity, ingredient.unit),
+                    )
+                })
+                .collect(),
+            self.steps
+                .into_iter()
+                .map(|step| RecipeStep::new(step.title, step.ingredients, step.instruction))
+                .collect(),
+        )
+    }
 }
 
 #[derive(Debug)]
@@ -122,28 +161,220 @@ struct StepFormData {
     ingredients: Option<HashMap<String, f32>>,
 }
 
-/// A form that creates a recipe with every field from the recipe domain model.
+#[derive(Clone, Default)]
+struct IngredientInitial {
+    name: String,
+    quantity: String,
+    unit: String,
+}
+
+#[derive(Clone, Default)]
+struct StepInitial {
+    title: String,
+    instruction: String,
+    ingredients: String,
+}
+
+#[derive(Default)]
+struct FormInitial {
+    title: String,
+    description: String,
+    preparation: String,
+    rest: String,
+    cooking: String,
+    ingredients: Vec<IngredientInitial>,
+    steps: Vec<StepInitial>,
+}
+
+impl FormInitial {
+    fn from_recipe(recipe: &RecipeWithContent) -> Self {
+        let mut ingredients: Vec<_> = recipe
+            .ingredients()
+            .iter()
+            .map(|(name, quantity)| IngredientInitial {
+                name: name.as_str().to_string(),
+                quantity: quantity.value().to_string(),
+                unit: unit_wire(quantity.unit()).to_string(),
+            })
+            .collect();
+        ingredients.sort_by(|left, right| left.name.cmp(&right.name));
+
+        Self {
+            title: recipe.title().as_str().to_string(),
+            description: recipe
+                .description()
+                .map(|description| description.as_str().to_string())
+                .unwrap_or_default(),
+            preparation: recipe
+                .metadata()
+                .preparation()
+                .map(|duration| duration.as_minutes().to_string())
+                .unwrap_or_default(),
+            rest: recipe
+                .metadata()
+                .rest()
+                .map(|duration| duration.as_minutes().to_string())
+                .unwrap_or_default(),
+            cooking: recipe
+                .metadata()
+                .cooking()
+                .map(|duration| duration.as_minutes().to_string())
+                .unwrap_or_default(),
+            ingredients,
+            steps: recipe
+                .steps()
+                .iter()
+                .map(|step| StepInitial {
+                    title: step.title().unwrap_or_default().to_string(),
+                    instruction: step.instruction().to_string(),
+                    ingredients: step_ingredients_text(step.ingredients()),
+                })
+                .collect(),
+        }
+    }
+}
+
+async fn load_current_recipe(cx: &Cx, recipe_id: &str) -> Result<Option<RecipeWithContent>> {
+    if recipe_id.is_empty() {
+        return Ok(None);
+    }
+
+    let recipe_service: &AppRecipeService = app_context(cx);
+    let recipe = recipe_service
+        .get_recipe(RecipeIdValue::new(recipe_id.to_string()))
+        .await?;
+
+    Ok(Some(recipe.ok_or_not_found()?))
+}
+
+fn unit_wire(unit: &Unit) -> &'static str {
+    match unit {
+        Unit::Gram => "gram",
+        Unit::MilliLitre => "millilitre",
+        Unit::Litre => "litre",
+    }
+}
+
+fn step_ingredients_text(ingredients: Option<&HashMap<String, f32>>) -> String {
+    let Some(ingredients) = ingredients else {
+        return String::new();
+    };
+
+    let mut entries: Vec<_> = ingredients.iter().collect();
+    entries.sort_by(|(left, _), (right, _)| left.cmp(right));
+
+    entries
+        .into_iter()
+        .map(|(name, quantity)| format!("{name}: {quantity}"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+#[derive(Clone)]
+pub enum RecipeFormMode {
+    New,
+    Edit {
+        recipe_id: RecipeIdValue,
+        latest_revision: RecipeRevisionId,
+    },
+}
+
+impl RecipeFormMode {
+    fn action(&self) -> String {
+        match self {
+            Self::New => "/recipe/new".to_string(),
+            Self::Edit { recipe_id, .. } => {
+                format!("/recipes/{}/edit", recipe_id.as_str())
+            }
+        }
+    }
+}
+
+/// A recipe form in either creation or edit mode.
+///
+/// The public API uses [`RecipeFormMode`]. The shard body accepts primitive
+/// arguments because shard arguments must belong to the runtime value
+/// vocabulary.
+#[component]
+pub async fn recipe_form(cx: &Cx, mode: RecipeFormMode) -> Result<impl View> {
+    let action = mode.action();
+    let (recipe_id, latest_revision) = match &mode {
+        RecipeFormMode::New => (String::new(), String::new()),
+        RecipeFormMode::Edit {
+            recipe_id,
+            latest_revision,
+        } => (
+            recipe_id.as_str().to_string(),
+            latest_revision.as_str().to_string(),
+        ),
+    };
+
+    Ok(view! {
+        cx =>
+        recipe_form_fields(
+            action: action,
+            recipe_id: recipe_id,
+            latest_revision: latest_revision
+        )
+    })
+}
+
+/// A form that creates or edits a recipe with every field from the recipe domain model.
 ///
 /// The form is a shard, so adding or removing an ingredient or step re-renders
 /// only the form. Its signals keep the current values while the form changes.
 #[shard]
-pub async fn recipe_form(cx: &Cx) -> Result<impl View> {
-    let title = signal(cx, String::new);
-    let description = signal(cx, String::new);
-    let preparation = signal(cx, String::new);
-    let rest = signal(cx, String::new);
-    let cooking = signal(cx, String::new);
-    let ingredient_count = signal(cx, || 1usize);
-    let step_count = signal(cx, || 1usize);
+async fn recipe_form_fields(
+    cx: &Cx,
+    action: String,
+    recipe_id: String,
+    latest_revision: String,
+) -> Result<impl View> {
+    auth::require_user(cx)?;
+
+    let current = load_current_recipe(cx, &recipe_id).await?;
+    let initial = current
+        .as_ref()
+        .map(FormInitial::from_recipe)
+        .unwrap_or_default();
+    let is_edit = !latest_revision.is_empty();
+    let initial_ingredient_count = initial.ingredients.len().max(1);
+    let initial_step_count = initial.steps.len().max(1);
+
+    let title_value = initial.title.clone();
+    let title = signal(cx, move || title_value.clone());
+    let description_value = initial.description.clone();
+    let description = signal(cx, move || description_value.clone());
+    let preparation_value = initial.preparation.clone();
+    let preparation = signal(cx, move || preparation_value.clone());
+    let rest_value = initial.rest.clone();
+    let rest = signal(cx, move || rest_value.clone());
+    let cooking_value = initial.cooking.clone();
+    let cooking = signal(cx, move || cooking_value.clone());
+    let message = signal(cx, String::new);
+    let ingredient_count = signal(cx, move || initial_ingredient_count);
+    let step_count = signal(cx, move || initial_step_count);
+
+    let ingredient_initials = initial.ingredients;
+    let step_initials = initial.steps;
+    let latest_revision = (!latest_revision.is_empty()).then_some(latest_revision);
 
     let title_id = element_id(cx);
     let description_id = element_id(cx);
     let preparation_id = element_id(cx);
     let rest_id = element_id(cx);
     let cooking_id = element_id(cx);
+    let message_id = element_id(cx);
 
     Ok(view! {
-        <form method="post" action="/recipe/new" class="flex flex-col gap-6">
+        <form method="post" action=(action) class="flex flex-col gap-6">
+            if let Some(latest_revision) = &latest_revision {
+                <input
+                    type="hidden"
+                    name=(LATEST_REVISION_FIELD)
+                    value=(latest_revision)
+                >
+            }
             field_set(
                 field(
                     input(
@@ -236,7 +467,10 @@ pub async fn recipe_form(cx: &Cx) -> Result<impl View> {
                 <div id="ingredients" class="flex flex-col gap-3">
                     #[key(index)]
                     for index in 0..ingredient_count.get() {
-                        ingredient_row(row: index)
+                        ingredient_row(
+                            row: index,
+                            initial: ingredient_initials.get(index).cloned()
+                        )
                     }
                 </div>
                 <div class="flex flex-wrap gap-2">
@@ -257,7 +491,7 @@ pub async fn recipe_form(cx: &Cx) -> Result<impl View> {
                 <div id="steps" class="flex flex-col gap-4">
                     #[key(index)]
                     for index in 0..step_count.get() {
-                        step_row(row: index)
+                        step_row(row: index, initial: step_initials.get(index).cloned())
                     }
                 </div>
                 <div class="flex flex-wrap gap-2">
@@ -273,18 +507,55 @@ pub async fn recipe_form(cx: &Cx) -> Result<impl View> {
                 </div>
             )
 
-            <div class="flex justify-end">
-                button(attrs: attributes! { type="submit" }, (t!(form_add_recipe)))
+            if is_edit {
+                field(
+                    field_label(
+                        attrs: attributes! { for=(&message_id) },
+                        (t!(form_edit_message))
+                    )
+                    <textarea
+                        id=(&message_id)
+                        name=(MESSAGE_FIELD)
+                        rows="2"
+                        class=(TEXTAREA_CLASS)
+                        placeholder=(t!(form_edit_message.placeholder))
+                        :value=$(message.get())
+                        @input=$(|e: Event| message.set(e.target.value))
+                    ></textarea>
+                )
+            }
+
+            <div class="flex justify-end gap-2">
+                if is_edit {
+                    <a href=(href!(recipe_detail, RecipeId(recipe_id)))>
+                        button(variant: ButtonVariant::Secondary, (t!(form_cancel)))
+                    </a>
+                    button(attrs: attributes! { type="submit" }, (t!(form_save_recipe)))
+                } else {
+                    button(attrs: attributes! { type="submit" }, (t!(form_add_recipe)))
+                }
             </div>
         </form>
     })
 }
 
 #[component]
-async fn ingredient_row(cx: &Cx, row: usize) -> Result<impl View> {
-    let name = signal(cx, String::new);
-    let quantity = signal(cx, String::new);
-    let unit = signal(cx, || "gram".to_owned());
+async fn ingredient_row(
+    cx: &Cx,
+    row: usize,
+    initial: Option<IngredientInitial>,
+) -> Result<impl View> {
+    let initial = initial.unwrap_or_default();
+    let name_value = initial.name;
+    let quantity_value = initial.quantity;
+    let unit_value = if initial.unit.is_empty() {
+        "gram".to_string()
+    } else {
+        initial.unit
+    };
+    let name = signal(cx, move || name_value.clone());
+    let quantity = signal(cx, move || quantity_value.clone());
+    let unit = signal(cx, move || unit_value.clone());
     let removed = signal(cx, || false);
 
     let name_id = element_id(cx);
@@ -362,10 +633,14 @@ async fn ingredient_row(cx: &Cx, row: usize) -> Result<impl View> {
 }
 
 #[component]
-async fn step_row(cx: &Cx, row: usize) -> Result<impl View> {
-    let title = signal(cx, String::new);
-    let instruction = signal(cx, String::new);
-    let ingredients = signal(cx, String::new);
+async fn step_row(cx: &Cx, row: usize, initial: Option<StepInitial>) -> Result<impl View> {
+    let initial = initial.unwrap_or_default();
+    let title_value = initial.title;
+    let instruction_value = initial.instruction;
+    let ingredients_value = initial.ingredients;
+    let title = signal(cx, move || title_value.clone());
+    let instruction = signal(cx, move || instruction_value.clone());
+    let ingredients = signal(cx, move || ingredients_value.clone());
     let removed = signal(cx, || false);
 
     let title_id = element_id(cx);
@@ -448,6 +723,8 @@ fn parse_recipe_form(pairs: &[(String, String)]) -> Result<RecipeFormData> {
     let mut preparation = None;
     let mut rest = None;
     let mut cooking = None;
+    let mut message = None;
+    let mut latest_revision = None;
     let mut ingredients: BTreeMap<usize, HashMap<IngredientField, String>> = BTreeMap::new();
     let mut steps: BTreeMap<usize, HashMap<StepField, String>> = BTreeMap::new();
 
@@ -458,6 +735,8 @@ fn parse_recipe_form(pairs: &[(String, String)]) -> Result<RecipeFormData> {
             PREPARATION_FIELD => set_once(&mut preparation, value, key)?,
             REST_FIELD => set_once(&mut rest, value, key)?,
             COOKING_FIELD => set_once(&mut cooking, value, key)?,
+            MESSAGE_FIELD => set_once(&mut message, value, key)?,
+            LATEST_REVISION_FIELD => set_once(&mut latest_revision, value, key)?,
             _ => {
                 if let Some((row, wire_field)) =
                     parse_indexed_key(key, "ingredients", IngredientField::parse)?
@@ -491,6 +770,8 @@ fn parse_recipe_form(pairs: &[(String, String)]) -> Result<RecipeFormData> {
         cooking: parse_optional_minutes(cooking.as_deref(), COOKING_FIELD)?,
         ingredients: parse_ingredient_rows(ingredients)?,
         steps: parse_step_rows(steps)?,
+        message,
+        latest_revision,
     })
 }
 
@@ -501,29 +782,39 @@ pub(crate) fn create_recipe_request(
     let form = parse_recipe_form(&pairs)?;
 
     Ok(CreateRecipeRequest {
-        title: RecipeTitle::new(form.title),
-        description: form.description.map(RecipeDescription::new),
-        metadata: RecipeMetadata::new(
-            form.preparation.map(DurationMinutes::new),
-            form.rest.map(DurationMinutes::new),
-            form.cooking.map(DurationMinutes::new),
-        ),
-        ingredients: form
-            .ingredients
-            .into_iter()
-            .map(|ingredient| {
-                (
-                    IngredientName::new(ingredient.name),
-                    Quantity::new(ingredient.quantity, ingredient.unit),
-                )
-            })
-            .collect(),
-        steps: form
-            .steps
-            .into_iter()
-            .map(|step| RecipeStep::new(step.title, step.ingredients, step.instruction))
-            .collect(),
+        content: form.into_content(),
         author,
+    })
+}
+
+pub(crate) fn update_recipe_request(
+    pairs: Vec<(String, String)>,
+    id: RecipeIdValue,
+    editor: UserId,
+) -> Result<UpdateRecipeRequest> {
+    let form = parse_recipe_form(&pairs)?;
+
+    let latest_revision = form
+        .latest_revision
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| invalid("latest revision is required"))?
+        .to_string();
+    let message = form
+        .message
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|message| RevisionMessage::new(message).map_err(|error| invalid(error.to_string())))
+        .transpose()?;
+
+    Ok(UpdateRecipeRequest {
+        id,
+        content: form.into_content(),
+        editor,
+        latest_revision: RecipeRevisionId::new(latest_revision),
+        message,
     })
 }
 
@@ -747,6 +1038,10 @@ fn parse_step_ingredients(value: &str) -> Result<Option<HashMap<String, f32>>> {
 
 #[cfg(test)]
 mod tests {
+    use std::time::SystemTime;
+
+    use cookbook_domain::recipe::models::{Recipe, RecipeRevision};
+
     use super::*;
 
     fn pairs(entries: &[(&str, &str)]) -> Vec<(String, String)> {
@@ -781,6 +1076,8 @@ mod tests {
         assert_eq!(form.preparation, Some(10));
         assert_eq!(form.rest, Some(20));
         assert_eq!(form.cooking, Some(30));
+        assert_eq!(form.message, None);
+        assert_eq!(form.latest_revision, None);
         assert_eq!(form.ingredients.len(), 2);
         assert_eq!(form.ingredients[0].name, "Flour");
         assert_eq!(form.ingredients[0].quantity, 200.0);
@@ -964,13 +1261,150 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(request.title.as_str(), "Soup");
+        assert_eq!(request.content.title().as_str(), "Soup");
         assert_eq!(request.author.as_str(), "user-1");
         assert_eq!(
-            request.description.as_ref().map(RecipeDescription::as_str),
+            request.content.description().map(RecipeDescription::as_str),
             Some("A warming soup.")
         );
-        assert_eq!(request.ingredients.len(), 1);
-        assert_eq!(request.steps.len(), 1);
+        assert_eq!(request.content.ingredients().len(), 1);
+        assert_eq!(request.content.steps().len(), 1);
+    }
+
+    #[test]
+    fn form_mode_derives_the_form_action() {
+        assert_eq!(RecipeFormMode::New.action(), "/recipe/new");
+
+        let edit = RecipeFormMode::Edit {
+            recipe_id: RecipeIdValue::new("soup".to_string()),
+            latest_revision: RecipeRevisionId::new("revision-1".to_string()),
+        };
+
+        assert_eq!(edit.action(), "/recipes/soup/edit");
+    }
+
+    #[test]
+    fn prefills_form_values_from_a_recipe() {
+        let recipe = Recipe::new(
+            RecipeIdValue::new("soup".to_string()),
+            UserId::new("user-1".to_string()),
+        );
+        let content = RecipeContent::new(
+            RecipeTitle::new("Soup".to_string()),
+            Some(RecipeDescription::new("A warming soup.".to_string())),
+            RecipeMetadata::new(
+                Some(DurationMinutes::new(10)),
+                None,
+                Some(DurationMinutes::new(20)),
+            ),
+            HashMap::from([
+                (
+                    IngredientName::new("milk".to_string()),
+                    Quantity::new(0.5, Unit::Litre),
+                ),
+                (
+                    IngredientName::new("flour".to_string()),
+                    Quantity::new(200.0, Unit::Gram),
+                ),
+            ]),
+            vec![RecipeStep::new(
+                Some("Mix".to_string()),
+                Some(HashMap::from([
+                    ("milk".to_string(), 0.5),
+                    ("flour".to_string(), 200.0),
+                ])),
+                "Stir everything together.".to_string(),
+            )],
+        );
+        let revision = RecipeRevision::new(
+            RecipeRevisionId::new("revision-1".to_string()),
+            recipe.id().clone(),
+            content,
+            UserId::new("user-1".to_string()),
+            SystemTime::UNIX_EPOCH,
+            None,
+        );
+        let current = RecipeWithContent::new(recipe, revision).unwrap();
+
+        let initial = FormInitial::from_recipe(&current);
+
+        assert_eq!(initial.title, "Soup");
+        assert_eq!(initial.description, "A warming soup.");
+        assert_eq!(initial.preparation, "10");
+        assert_eq!(initial.rest, "");
+        assert_eq!(initial.cooking, "20");
+        assert_eq!(initial.ingredients[0].name, "flour");
+        assert_eq!(initial.ingredients[0].quantity, "200");
+        assert_eq!(initial.ingredients[0].unit, "gram");
+        assert_eq!(initial.ingredients[1].name, "milk");
+        assert_eq!(initial.ingredients[1].quantity, "0.5");
+        assert_eq!(initial.ingredients[1].unit, "litre");
+        assert_eq!(initial.steps[0].title, "Mix");
+        assert_eq!(initial.steps[0].instruction, "Stir everything together.");
+        assert_eq!(initial.steps[0].ingredients, "flour: 200\nmilk: 0.5");
+    }
+
+    #[test]
+    fn parses_edit_message_and_latest_revision() {
+        let form = parse_recipe_form(&pairs(&[
+            ("title", "Soup"),
+            ("message", "  reduced the salt  "),
+            ("latest_revision", "revision-1"),
+        ]))
+        .unwrap();
+
+        assert_eq!(form.message.as_deref(), Some("  reduced the salt  "));
+        assert_eq!(form.latest_revision.as_deref(), Some("revision-1"));
+    }
+
+    #[test]
+    fn converts_the_form_into_an_update_request() {
+        let request = update_recipe_request(
+            pairs(&[
+                ("title", "Soup"),
+                ("message", "reduced the salt"),
+                ("latest_revision", "revision-1"),
+            ]),
+            RecipeIdValue::new("soup".to_string()),
+            UserId::new("editor-1".to_string()),
+        )
+        .unwrap();
+
+        assert_eq!(request.id.as_str(), "soup");
+        assert_eq!(request.editor.as_str(), "editor-1");
+        assert_eq!(request.latest_revision.as_str(), "revision-1");
+        assert_eq!(
+            request.message.as_ref().map(RevisionMessage::as_str),
+            Some("reduced the salt")
+        );
+        assert_eq!(request.content.title().as_str(), "Soup");
+    }
+
+    #[test]
+    fn update_request_requires_a_latest_revision() {
+        assert!(
+            update_recipe_request(
+                pairs(&[("title", "Soup")]),
+                RecipeIdValue::new("soup".to_string()),
+                UserId::new("editor-1".to_string()),
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn update_request_treats_a_blank_message_as_missing() {
+        let request = update_recipe_request(
+            pairs(&[
+                ("title", "Soup"),
+                ("message", "   "),
+                ("latest_revision", "revision-1"),
+            ]),
+            RecipeIdValue::new("soup".to_string()),
+            UserId::new("editor-1".to_string()),
+        )
+        .unwrap();
+
+        assert!(request.message.is_none());
     }
 }

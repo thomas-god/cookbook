@@ -2,7 +2,7 @@ use uuid::Uuid;
 
 use crate::clock::Clock;
 use crate::recipe::models::{
-    Recipe, RecipeContent, RecipeId, RecipeRevision, RecipeRevisionId, RecipeWithContent,
+    Recipe, RecipeId, RecipeRevision, RecipeRevisionId, RecipeWithContent,
 };
 use crate::recipe::ports::{
     CreateRecipeError, CreateRecipeRequest, GetRecipeError, GetRecipeHistoryError, GetRecipesError,
@@ -30,13 +30,7 @@ where
         &self,
         request: CreateRecipeRequest,
     ) -> Result<RecipeWithContent, CreateRecipeError> {
-        let content = RecipeContent::new(
-            request.title,
-            request.description,
-            request.metadata,
-            request.ingredients,
-            request.steps,
-        );
+        let content = request.content;
         let author = request.author;
         let recipe = Recipe::new(RecipeId::new(Uuid::now_v7().to_string()), author.clone());
 
@@ -75,6 +69,8 @@ where
             return Err(UpdateRecipeError::Conflict);
         }
 
+        // TODO: detect no-op edits by comparing the new content with the latest revision,
+        // and skip saving a new revision when they are identical.
         let recipe = current.recipe().clone();
         let revision = RecipeRevision::new(
             RecipeRevisionId::new(Uuid::now_v7().to_string()),
@@ -159,11 +155,7 @@ mod tests {
 
     fn create_request() -> CreateRecipeRequest {
         CreateRecipeRequest {
-            title: RecipeTitle::new("Soup".to_string()),
-            description: None,
-            metadata: RecipeMetadata::new(None, None, None),
-            ingredients: HashMap::new(),
-            steps: Vec::new(),
+            content: content("Soup"),
             author: UserId::new("user-1".to_string()),
         }
     }

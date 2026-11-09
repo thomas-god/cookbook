@@ -36,9 +36,26 @@ recipe_minutes = minutes
 recipe_ingredients = Ingrédients
 recipe_steps = Étapes
 recipe_step = Étape
+recipe_edit = Modifier
+recipe_history = Historique
+recipe_back_to_recipe = Retour à la recette
+recipe_back_to_history = Retour à l'historique
+recipe_view_current = Voir la recette actuelle
+recipe_history_heading = Historique
+recipe_history_empty = Aucune révision pour le moment.
+recipe_history_created = Recette créée
+recipe_history_edited = Recette modifiée
+recipe_history_edited_by = Modifiée par
+recipe_history_view = Voir
+recipe_conflict = Cette recette a été modifiée par quelqu'un d'autre. Rechargez le formulaire et réessayez.
 
 form_add_recipe = Ajouter une recette
 form_new_recipe = Nouvelle recette
+form_edit_recipe = Modifier la recette
+form_save_recipe = Enregistrer les modifications
+form_edit_message = Note de modification (facultatif)
+    .placeholder = Moins de sucre, moins de sel, ...
+form_cancel = Annuler
 
 form_title = Titre
     .placeholder = Tarte aux pommes de grand-mère
