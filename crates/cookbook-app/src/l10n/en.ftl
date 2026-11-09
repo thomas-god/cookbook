@@ -19,7 +19,6 @@ auth_have_account = Already have an account?
 auth_invalid_credentials = Invalid email or password.
 auth_form_invalid = Please fill in the form correctly.
 auth_invalid_email = Enter a valid email address.
-auth_password_too_short = The password must be at least 8 characters long.
 auth_password_mismatch = The passwords do not match.
 auth_email_taken = An account with this email already exists.
 auth_registration_disabled = Registration is disabled.

@@ -118,7 +118,6 @@ pub struct RegisterRequest {
 #[derive(Debug)]
 pub enum RegisterError {
     InvalidEmail,
-    PasswordTooShort { minimum: usize },
     EmailTaken,
     SessionError(StartSessionError),
     Storage(anyhow::Error),
@@ -128,9 +127,6 @@ impl fmt::Display for RegisterError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::InvalidEmail => f.write_str("invalid email address"),
-            Self::PasswordTooShort { minimum } => {
-                write!(f, "password must be at least {minimum} characters")
-            }
             Self::EmailTaken => f.write_str("an account with this email already exists"),
             Self::SessionError(err) => write!(f, "failed to start a session: {err}"),
             Self::Storage(reason) => write!(f, "failed to register user: {reason}"),

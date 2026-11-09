@@ -120,7 +120,10 @@ async fn login_form(cx: &Cx, email: String, error: Option<LoginFormError>) -> Re
                         field_error((t!(auth_invalid_credentials)))
                     }
                     field(
-                        field_label(attrs: attributes! { for=(&email_id) }, (t!(auth_email)))
+                        field_label(
+                            attrs: attributes! { for=(&email_id) },
+                            (t!(auth_email))
+                        )
                         input(
                             attrs: attributes! {
                                 id=(&email_id)
@@ -147,7 +150,10 @@ async fn login_form(cx: &Cx, email: String, error: Option<LoginFormError>) -> Re
                             }
                         )
                     )
-                    button(attrs: attributes! { type="submit" }, (t!(auth_login_submit)))
+                    button(
+                        attrs: attributes! { type="submit" },
+                        (t!(auth_login_submit))
+                    )
                     if registration_enabled {
                         <p class="text-sm text-muted-foreground">
                             (t!(auth_no_account))

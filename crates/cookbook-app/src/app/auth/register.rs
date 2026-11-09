@@ -104,15 +104,6 @@ pub async fn register(cx: &Cx, Form(form): Form<Vec<(String, String)>>) -> Resul
             )
             .await
         }
-        Err(RegisterError::PasswordTooShort { .. }) => {
-            register_form(
-                cx,
-                form.email.clone(),
-                form.username.clone().unwrap_or_default(),
-                Some(RegisterFormError::PasswordTooShort),
-            )
-            .await
-        }
         Err(error) => Err(error.into()),
     }
 }
@@ -122,7 +113,6 @@ pub enum RegisterFormError {
     RegistrationDisabled,
     InvalidForm,
     InvalidEmail,
-    PasswordTooShort,
     PasswordMismatch,
     EmailTaken,
 }
@@ -206,7 +196,6 @@ async fn register_form(
     let registration_disabled = matches!(error, Some(RegisterFormError::RegistrationDisabled));
     let invalid_form = matches!(error, Some(RegisterFormError::InvalidForm));
     let invalid_email = matches!(error, Some(RegisterFormError::InvalidEmail));
-    let password_too_short = matches!(error, Some(RegisterFormError::PasswordTooShort));
     let password_mismatch = matches!(error, Some(RegisterFormError::PasswordMismatch));
     let email_taken = matches!(error, Some(RegisterFormError::EmailTaken));
 
@@ -226,88 +215,91 @@ async fn register_form(
                         </a>
                     </p>
                 } else {
-                <form method="post" action="/register" class="flex flex-col gap-4">
-                    if invalid_form {
-                        field_error((t!(auth_form_invalid)))
-                    }
-                    if invalid_email {
-                        field_error((t!(auth_invalid_email)))
-                    }
-                    if password_too_short {
-                        field_error((t!(auth_password_too_short)))
-                    }
-                    if password_mismatch {
-                        field_error((t!(auth_password_mismatch)))
-                    }
-                    if email_taken {
-                        field_error((t!(auth_email_taken)))
-                    }
-                    field(
-                        field_label(attrs: attributes! { for=(&email_id) }, (t!(auth_email)))
-                        input(
-                            attrs: attributes! {
-                                id=(&email_id)
-                                name="email"
-                                type="email"
-                                autocomplete="email"
-                                required=""
-                                value=(email)
-                            }
+                    <form method="post" action="/register" class="flex flex-col gap-4">
+                        if invalid_form {
+                            field_error((t!(auth_form_invalid)))
+                        }
+                        if invalid_email {
+                            field_error((t!(auth_invalid_email)))
+                        }
+                        if password_mismatch {
+                            field_error((t!(auth_password_mismatch)))
+                        }
+                        if email_taken {
+                            field_error((t!(auth_email_taken)))
+                        }
+                        field(
+                            field_label(
+                                attrs: attributes! { for=(&email_id) },
+                                (t!(auth_email))
+                            )
+                            input(
+                                attrs: attributes! {
+                                    id=(&email_id)
+                                    name="email"
+                                    type="email"
+                                    autocomplete="email"
+                                    required=""
+                                    value=(email)
+                                }
+                            )
                         )
-                    )
-                    field(
-                        field_label(
-                            attrs: attributes! { for=(&username_id) },
-                            (t!(auth_username))
+                        field(
+                            field_label(
+                                attrs: attributes! { for=(&username_id) },
+                                (t!(auth_username))
+                            )
+                            input(
+                                attrs: attributes! {
+                                    id=(&username_id)
+                                    name="username"
+                                    type="text"
+                                    autocomplete="nickname"
+                                    value=(username)
+                                }
+                            )
                         )
-                        input(
-                            attrs: attributes! {
-                                id=(&username_id)
-                                name="username"
-                                type="text"
-                                autocomplete="nickname"
-                                value=(username)
-                            }
+                        field(
+                            field_label(
+                                attrs: attributes! { for=(&password_id) },
+                                (t!(auth_password))
+                            )
+                            input(
+                                attrs: attributes! {
+                                    id=(&password_id)
+                                    name="password"
+                                    type="password"
+                                    autocomplete="new-password"
+                                    required=""
+                                }
+                            )
                         )
-                    )
-                    field(
-                        field_label(
-                            attrs: attributes! { for=(&password_id) },
-                            (t!(auth_password))
+                        field(
+                            field_label(
+                                attrs: attributes! { for=(&password_confirm_id) },
+                                (t!(auth_password_confirm))
+                            )
+                            input(
+                                attrs: attributes! {
+                                    id=(&password_confirm_id)
+                                    name="password_confirm"
+                                    type="password"
+                                    autocomplete="new-password"
+                                    required=""
+                                }
+                            )
                         )
-                        input(
-                            attrs: attributes! {
-                                id=(&password_id)
-                                name="password"
-                                type="password"
-                                autocomplete="new-password"
-                                required=""
-                            }
+                        button(
+                            attrs: attributes! { type="submit" },
+                            (t!(auth_register_submit))
                         )
-                    )
-                    field(
-                        field_label(
-                            attrs: attributes! { for=(&password_confirm_id) },
-                            (t!(auth_password_confirm))
-                        )
-                        input(
-                            attrs: attributes! {
-                                id=(&password_confirm_id)
-                                name="password_confirm"
-                                type="password"
-                                autocomplete="new-password"
-                                required=""
-                            }
-                        )
-                    )
-                    button(attrs: attributes! { type="submit" }, (t!(auth_register_submit)))
-                    <p class="text-sm text-muted-foreground">
-                        (t!(auth_have_account))
-                        <a class="underline underline-offset-4" href="/login">
-                            (t!(auth_login_link))
-                        </a>
-                    </p>
-                </form>
+                        <p class="text-sm text-muted-foreground">
+                            (t!(auth_have_account))
+                            <a class="underline underline-offset-4" href="/login">
+                                (t!(auth_login_link))
+                            </a>
+                        </p>
+                    </form>
                 }
             )
         )

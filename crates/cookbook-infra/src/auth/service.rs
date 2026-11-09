@@ -13,8 +13,6 @@ use crate::auth::ports::{
     StartSessionError, UserRepository,
 };
 
-const MIN_PASSWORD_LENGTH: usize = 8;
-
 #[derive(Debug, Clone)]
 pub struct AuthServiceImpl<U, P, S, C, G> {
     users: U,
@@ -208,12 +206,6 @@ where
     async fn register_user(&self, request: RegisterRequest) -> Result<LoginResult, RegisterError> {
         if !valid_email(request.email.as_str()) {
             return Err(RegisterError::InvalidEmail);
-        }
-
-        if request.password.chars().count() < MIN_PASSWORD_LENGTH {
-            return Err(RegisterError::PasswordTooShort {
-                minimum: MIN_PASSWORD_LENGTH,
-            });
         }
 
         if self
