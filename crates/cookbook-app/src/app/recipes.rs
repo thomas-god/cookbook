@@ -15,7 +15,8 @@ use crate::{
         AppRecipeService,
         recipe_form::{create_recipe_request, recipe_form},
     },
-    components::card::{card, card_content, card_description, card_header, card_title},
+    components::card::{card, card_content, card_header, card_title},
+    t,
 };
 
 #[page]
@@ -24,18 +25,17 @@ pub async fn page(cx: &Cx) -> Result<impl View> {
     let recipes = recipe_service.get_recipes().await?;
 
     Ok(view! {
-        <h2 class="mb-6 text-2xl font-semibold">"Recipe list"</h2>
+        <h2 class="mb-6 text-2xl font-semibold">(t!(recipes_list_heading))</h2>
         card(
             card_header(
-                card_title("Add a recipe")
-                card_description("Add the ingredients, timings, and steps for your recipe.")
+                card_title((t!(form_new_recipe)))
             )
             card_content(
                 recipe_form()
             )
         )
         if recipes.is_empty() {
-            <p class="mt-8 text-sm text-muted-foreground">"No recipes yet."</p>
+            <p class="mt-8 text-sm text-muted-foreground">(t!(recipes_empty))</p>
         } else {
             <ul class="mt-8 flex flex-col gap-2">
                 for recipe in &recipes {

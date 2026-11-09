@@ -15,10 +15,13 @@ use topcoat::{
     view::{View, attributes, component, element_id, view},
 };
 
-use crate::components::{
-    button::{ButtonSize, ButtonVariant, button},
-    field::{field, field_description, field_label, field_legend, field_set},
-    input::input,
+use crate::{
+    components::{
+        button::{ButtonSize, ButtonVariant, button},
+        field::{field, field_label, field_legend, field_set},
+        input::input,
+    },
+    t,
 };
 
 const TEXTAREA_CLASS: &str = "min-h-24 w-full rounded-lg border border-border bg-transparent px-3 py-2 text-sm transition-colors outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background";
@@ -141,34 +144,32 @@ pub async fn recipe_form(cx: &Cx) -> Result<impl View> {
     Ok(view! {
         <form method="post" action="/recipes" class="flex flex-col gap-6">
             field_set(
-                field_legend("Recipe")
                 field(
-                    field_label(attrs: attributes! { for=(&title_id) }, "Title")
                     input(attrs: attributes! {
                         id=(&title_id)
                         name=(TITLE_FIELD)
                         type="text"
-                        placeholder="Grandma's apple pie"
+                        placeholder=(t!(form_title.placeholder))
                         required=""
                         :value=$(title.get())
                         @input=$(|e: Event| title.set(e.target.value))
                     })
                 )
                 field(
-                    field_label(attrs: attributes! { for=(&description_id) }, "Description (optional)")
+                    field_label(attrs: attributes! { for=(&description_id) }, (t!(form_description)))
                     <textarea
                         id=(&description_id)
                         name=(DESCRIPTION_FIELD)
                         rows="2"
                         class=(TEXTAREA_CLASS)
-                        placeholder="A short description of your recipe."
+                        placeholder=(t!(form_description.placeholder))
                         :value=$(description.get())
                         @input=$(|e: Event| description.set(e.target.value))
                     ></textarea>
                 )
                 <div class="grid gap-4 sm:grid-cols-3">
                     field(
-                        field_label(attrs: attributes! { for=(&preparation_id) }, "Preparation (minutes)")
+                        field_label(attrs: attributes! { for=(&preparation_id) }, (t!(form_preparation)))
                         input(attrs: attributes! {
                             id=(&preparation_id)
                             name=(PREPARATION_FIELD)
@@ -181,7 +182,7 @@ pub async fn recipe_form(cx: &Cx) -> Result<impl View> {
                         })
                     )
                     field(
-                        field_label(attrs: attributes! { for=(&rest_id) }, "Rest (minutes)")
+                        field_label(attrs: attributes! { for=(&rest_id) }, (t!(form_rest)))
                         input(attrs: attributes! {
                             id=(&rest_id)
                             name=(REST_FIELD)
@@ -194,7 +195,7 @@ pub async fn recipe_form(cx: &Cx) -> Result<impl View> {
                         })
                     )
                     field(
-                        field_label(attrs: attributes! { for=(&cooking_id) }, "Cooking (minutes)")
+                        field_label(attrs: attributes! { for=(&cooking_id) }, (t!(form_cooking)))
                         input(attrs: attributes! {
                             id=(&cooking_id)
                             name=(COOKING_FIELD)
@@ -210,8 +211,7 @@ pub async fn recipe_form(cx: &Cx) -> Result<impl View> {
             )
 
             field_set(
-                field_legend("Ingredients")
-                field_description("Add each ingredient with its quantity and unit.")
+                field_legend((t!(form_ingredients)))
                 <div id="ingredients" class="flex flex-col gap-3">
                     #[key(index)]
                     for index in 0..ingredient_count.get() {
@@ -226,14 +226,13 @@ pub async fn recipe_form(cx: &Cx) -> Result<impl View> {
                             type="button"
                             @click=$(|_e: Event| ingredient_count.increment())
                         },
-                        "Add ingredient"
+                        (t!(form_add_ingredient))
                     )
                 </div>
             )
 
             field_set(
-                field_legend("Steps")
-                field_description("Describe each step. Optionally list the ingredients it uses, one `name: quantity` per line.")
+                field_legend((t!(form_steps)))
                 <div id="steps" class="flex flex-col gap-4">
                     #[key(index)]
                     for index in 0..step_count.get() {
@@ -248,13 +247,13 @@ pub async fn recipe_form(cx: &Cx) -> Result<impl View> {
                             type="button"
                             @click=$(|_e: Event| step_count.increment())
                         },
-                        "Add step"
+                        (t!(form_add_step))
                     )
                 </div>
             )
 
             <div class="flex justify-end">
-                button(attrs: attributes! { type="submit" }, "Add recipe")
+                button(attrs: attributes! { type="submit" }, (t!(form_add_recipe)))
             </div>
         </form>
     })
@@ -282,31 +281,31 @@ async fn ingredient_row(cx: &Cx, row: usize) -> Result<impl View> {
             class="m-0 grid min-w-0 gap-3 rounded-lg border border-border p-4 sm:grid-cols-[minmax(0,1fr)_8rem_10rem_auto] sm:items-end"
         >
             field(
-                field_label(attrs: attributes! { for=(&name_id) }, "Ingredient")
+                field_label(attrs: attributes! { for=(&name_id) }, (t!(form_ingredient)))
                 input(attrs: attributes! {
                     id=(&name_id)
                     name=(name_field)
                     type="text"
-                    placeholder="Flour"
+                    placeholder=(t!(form_ingredient.placeholder))
                     :value=$(name.get())
                     @input=$(|e: Event| name.set(e.target.value))
                 })
             )
             field(
-                field_label(attrs: attributes! { for=(&quantity_id) }, "Quantity")
+                field_label(attrs: attributes! { for=(&quantity_id) }, (t!(form_quantity)))
                 input(attrs: attributes! {
                     id=(&quantity_id)
                     name=(quantity_field)
                     type="number"
                     min="0"
                     step="any"
-                    placeholder="200"
+                    placeholder=(t!(form_quantity.placeholder))
                     :value=$(quantity.get())
                     @input=$(|e: Event| quantity.set(e.target.value))
                 })
             )
             field(
-                field_label(attrs: attributes! { for=(&unit_id) }, "Unit")
+                field_label(attrs: attributes! { for=(&unit_id) }, (t!(form_unit)))
                 <select
                     id=(&unit_id)
                     name=(unit_field)
@@ -314,9 +313,9 @@ async fn ingredient_row(cx: &Cx, row: usize) -> Result<impl View> {
                     :value=$(unit.get())
                     @change=$(|e: Event| unit.set(e.target.value))
                 >
-                    <option value="gram">"Gram"</option>
-                    <option value="millilitre">"Millilitre"</option>
-                    <option value="litre">"Litre"</option>
+                    <option value="gram">(t!(unit_gram))</option>
+                    <option value="millilitre">(t!(unit_millilitre))</option>
+                    <option value="litre">(t!(unit_litre))</option>
                 </select>
             )
             <div class="flex items-end">
@@ -327,7 +326,7 @@ async fn ingredient_row(cx: &Cx, row: usize) -> Result<impl View> {
                         type="button"
                         @click=$(|_e: Event| removed.set(true))
                     },
-                    "Remove"
+                    (t!(form_remove))
                 )
             </div>
         </fieldset>
@@ -356,37 +355,37 @@ async fn step_row(cx: &Cx, row: usize) -> Result<impl View> {
             class="m-0 flex min-w-0 flex-col gap-3 rounded-lg border border-border p-4"
         >
             field(
-                field_label(attrs: attributes! { for=(&title_id) }, "Step title (optional)")
+                field_label(attrs: attributes! { for=(&title_id) }, (t!(form_step_title)))
                 input(attrs: attributes! {
                     id=(&title_id)
                     name=(title_field)
                     type="text"
-                    placeholder="Make the dough"
+                    placeholder=(t!(form_step_title.placeholder))
                     :value=$(title.get())
                     @input=$(|e: Event| title.set(e.target.value))
                 })
             )
             field(
-                field_label(attrs: attributes! { for=(&instruction_id) }, "Instruction")
+                field_label(attrs: attributes! { for=(&instruction_id) }, (t!(form_instruction)))
                 <textarea
                     id=(&instruction_id)
                     name=(instruction_field)
                     rows="3"
                     class=(TEXTAREA_CLASS)
-                    placeholder="Mix the flour and butter until crumbly."
+                    placeholder=(t!(form_instruction.placeholder))
                     required=""
                     :value=$(instruction.get())
                     @input=$(|e: Event| instruction.set(e.target.value))
                 ></textarea>
             )
             field(
-                field_label(attrs: attributes! { for=(&ingredients_id) }, "Ingredients used (optional)")
+                field_label(attrs: attributes! { for=(&ingredients_id) }, (t!(form_step_ingredients)))
                 <textarea
                     id=(&ingredients_id)
                     name=(ingredients_field)
                     rows="2"
                     class=(TEXTAREA_CLASS)
-                    placeholder="flour: 200"
+                    placeholder=(t!(form_step_ingredients.placeholder))
                     :value=$(ingredients.get())
                     @input=$(|e: Event| ingredients.set(e.target.value))
                 ></textarea>
@@ -399,7 +398,7 @@ async fn step_row(cx: &Cx, row: usize) -> Result<impl View> {
                         type="button"
                         @click=$(|_e: Event| removed.set(true))
                     },
-                    "Remove"
+                    (t!(form_remove))
                 )
             </div>
         </fieldset>

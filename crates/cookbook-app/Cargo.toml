@@ -9,7 +9,7 @@ cookbook-domain.workspace = true
 cookbook-infra.workspace = true
 serde.workspace = true
 tokio.workspace = true
-topcoat = { version = "0.11", features = ["font-fontsource", "tailwind", "ui"] }
+topcoat = { version = "0.11", features = ["font-fontsource", "l10n-fluent", "tailwind", "ui"] }
 
 [build-dependencies]
 topcoat = { version = "0.11", default-features = false, features = ["tailwind"] }

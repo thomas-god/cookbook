@@ -30,3 +30,17 @@ topcoat ui list --installed
 topcoat ui add dialog
 topcoat ui remove dialog
 ```
+
+### Translations
+
+The UI is translated with Topcoat's Fluent integration. Message catalogs live in
+`crates/cookbook-app/src/l10n/{locale}.ftl`.
+
+The request locale is selected from the `locale` cookie, then the browser's `Accept-Language`
+header, and falls back to English. To add a language, add its `.ftl` file, add its endonym to
+`locale_name` in `src/app/locale_select.rs`, and run:
+
+```sh
+cd crates/cookbook-app
+topcoat l10n check
+```
