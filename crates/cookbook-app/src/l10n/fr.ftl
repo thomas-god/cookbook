@@ -3,6 +3,27 @@ app_name = Cookbook
 language_label = Langue
 language_apply = Appliquer
 
+auth_login_heading = Se connecter
+auth_register_heading = Créer un compte
+auth_email = Adresse e-mail
+auth_username = Nom d'utilisateur (facultatif)
+auth_password = Mot de passe
+auth_password_confirm = Confirmer le mot de passe
+auth_login_submit = Se connecter
+auth_register_submit = Créer le compte
+auth_logout = Se déconnecter
+auth_login_link = Se connecter
+auth_register_link = Créer un compte
+auth_no_account = Pas encore de compte ?
+auth_have_account = Vous avez déjà un compte ?
+auth_invalid_credentials = Adresse e-mail ou mot de passe incorrect.
+auth_form_invalid = Veuillez remplir correctement le formulaire.
+auth_invalid_email = Saisissez une adresse e-mail valide.
+auth_password_too_short = Le mot de passe doit contenir au moins 8 caractères.
+auth_password_mismatch = Les mots de passe ne correspondent pas.
+auth_email_taken = Un compte avec cette adresse e-mail existe déjà.
+auth_registration_disabled = Les inscriptions sont désactivées.
+
 recipe_list = Recettes
 new_recipe = Nouvelle recette
 recipes_heading = Recettes

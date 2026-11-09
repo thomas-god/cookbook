@@ -5,11 +5,12 @@ edition.workspace = true
 default-run = "cookbook-app"
 
 [dependencies]
+anyhow.workspace = true
 cookbook-domain.workspace = true
 cookbook-infra.workspace = true
 serde.workspace = true
 tokio.workspace = true
-topcoat = { version = "0.11", features = ["font-fontsource", "l10n-fluent", "tailwind", "ui"] }
+topcoat = { version = "0.11", features = ["font-fontsource", "l10n-fluent", "session", "tailwind", "ui"] }
 
 [build-dependencies]
 topcoat = { version = "0.11", default-features = false, features = ["tailwind"] }

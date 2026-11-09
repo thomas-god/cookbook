@@ -25,7 +25,7 @@ pub async fn locale_select(cx: &Cx) -> Result<impl View> {
     let current_path = uri(cx).path_and_query().map_or("/", |path| path.as_str());
 
     Ok(view! {
-        <form method="post" action="/locale" class="ml-auto flex items-center gap-2">
+        <form method="post" action="/locale" class="flex items-center gap-2">
             <label for="locale-select" class="sr-only">(t!(language_label))</label>
             <select
                 id="locale-select"

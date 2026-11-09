@@ -1,9 +1,15 @@
 use cookbook_domain::recipe::service::RecipeServiceImpl;
-use cookbook_infra::recipe::InMemoryRecipeRepository;
+use cookbook_infra::{
+    auth::{
+        Argon2PasswordHasher, AuthServiceImpl, InMemorySessionRepository, InMemoryUserRepository,
+        RandomSessionTokenGenerator, SystemClock,
+    },
+    recipe::InMemoryRecipeRepository,
+};
 use topcoat::{
     Result,
     asset::{AssetBundle, RouterBuilderAssetExt},
-    context::Cx,
+    context::{Cx, app_context},
     cookie::RouterBuilderCookieExt,
     font::{fontsource::fontsource_font, link},
     l10n::locale,
@@ -14,15 +20,20 @@ use topcoat::{
         response::{Response, response_headers},
     },
     runtime::RouterBuilderRuntimeExt,
-    view::{View, view},
+    session::{RouterBuilderSessionExt, SessionConfig},
+    view::{View, attributes, view},
 };
 
+mod auth;
 mod locale;
 mod recipe;
 mod recipes;
 
 use crate::{
-    app::locale::get_locale,
+    app::{
+        auth::{AuthSettings, SESSION_POLICY},
+        locale::get_locale,
+    },
     components::{
         base::button::{ButtonSize, ButtonVariant, button},
         misc::locale_select::locale_select,
@@ -31,16 +42,46 @@ use crate::{
 };
 
 pub(crate) type AppRecipeService = RecipeServiceImpl<InMemoryRecipeRepository>;
+pub(crate) type AppAuthService = AuthServiceImpl<
+    InMemoryUserRepository,
+    Argon2PasswordHasher,
+    InMemorySessionRepository,
+    SystemClock,
+    RandomSessionTokenGenerator,
+>;
 
 const GEIST: topcoat::font::Font = fontsource_font!(GEIST);
 
-pub fn router() -> topcoat::router::Router {
+pub async fn router() -> topcoat::router::Router {
     let recipe_service = AppRecipeService::new(InMemoryRecipeRepository::seeded());
+    let auth_config = auth::AuthConfig::from_env().expect("invalid authentication configuration");
+    let auth_service = AppAuthService::new(
+        InMemoryUserRepository::new(),
+        Argon2PasswordHasher::new(),
+        InMemorySessionRepository::new(),
+        SystemClock::new(),
+        RandomSessionTokenGenerator::new(),
+        SESSION_POLICY,
+    );
+
+    auth_config
+        .seed_initial_admin(&auth_service)
+        .await
+        .expect("failed to create the initial admin");
 
     module_router!()
         .app_context(recipe_service)
+        .app_context(auth_service)
+        .app_context(auth_config.settings())
         .discover()
+        .layer(auth::AuthenticationLayer::new())
         .cookies()
+        .sessions(
+            SessionConfig::builder()
+                .token_store(auth::ForwardedProtoCookieTokenStore::new())
+                .lifetime(SESSION_POLICY.lifetime())
+                .build(),
+        )
         .assets(
             AssetBundle::load()
                 .expect("no asset bundle found; run `topcoat asset bundle` or use `topcoat dev`"),
@@ -52,6 +93,8 @@ pub fn router() -> topcoat::router::Router {
 #[layout]
 async fn root_layout(cx: &Cx, slot: Slot<'_>) -> Result<impl View> {
     let current_locale = locale(cx);
+    let current_user = auth::current_user(cx);
+    let settings: &AuthSettings = app_context(cx);
 
     Ok(view! {
         <!DOCTYPE html>
@@ -71,7 +114,37 @@ async fn root_layout(cx: &Cx, slot: Slot<'_>) -> Result<impl View> {
                         <a href=(href!(page))>
                             <h1 class="text-lg font-semibold">(t!(app_name))</h1>
                         </a>
-                        locale_select()
+                        <div class="ml-auto flex items-center gap-3">
+                            if let Some(current) = current_user {
+                                <span class="text-sm text-muted-foreground">
+                                    (current.display_name())
+                                </span>
+                                <form method="post" action="/logout">
+                                    button(
+                                        variant: ButtonVariant::Ghost,
+                                        size: ButtonSize::Sm,
+                                        attrs: attributes! { type="submit" },
+                                        (t!(auth_logout))
+                                    )
+                                </form>
+                            } else {
+                                <a
+                                    class="text-sm underline underline-offset-4"
+                                    href="/login"
+                                >
+                                    (t!(auth_login_link))
+                                </a>
+                                if settings.registration_enabled() {
+                                    <a
+                                        class="text-sm underline underline-offset-4"
+                                        href="/register"
+                                    >
+                                        (t!(auth_register_link))
+                                    </a>
+                                }
+                            }
+                            locale_select()
+                        </div>
                     </div>
                 </header>
                 <main class="mx-auto max-w-2xl px-4 py-8">(slot)</main>
@@ -90,7 +163,9 @@ async fn locale_layer(cx: &Cx, body: Body, next: Next<'_>) -> Result<Response> {
 }
 
 #[page]
-pub async fn page() -> Result<impl View> {
+pub async fn page(cx: &Cx) -> Result<impl View> {
+    auth::require_user(cx)?;
+
     Ok(view! {
         <h2 class="mb-2 text-2xl font-semibold">(t!(recipes_heading))</h2>
         <p class="mb-6 text-sm text-muted-foreground">(t!(recipes_welcome))</p>

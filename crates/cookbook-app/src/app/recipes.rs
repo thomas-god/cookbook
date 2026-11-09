@@ -6,10 +6,15 @@ use topcoat::{
     view::{View, view},
 };
 
-use crate::{app::AppRecipeService, t};
+use crate::{
+    app::{AppRecipeService, auth},
+    t,
+};
 
 #[page]
 pub async fn page(cx: &Cx) -> Result<impl View> {
+    auth::require_user(cx)?;
+
     let recipe_service: &AppRecipeService = app_context(cx);
     let recipes = recipe_service.get_recipes().await?;
 

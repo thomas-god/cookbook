@@ -11,7 +11,7 @@ use topcoat::{
 };
 
 use crate::{
-    app::AppRecipeService,
+    app::{AppRecipeService, auth},
     components::{
         base::card::{card, card_content, card_header, card_title},
         recipe::recipe_form::{create_recipe_request, recipe_form},
@@ -20,7 +20,9 @@ use crate::{
 };
 
 #[page]
-pub async fn page() -> Result<impl View> {
+pub async fn page(cx: &Cx) -> Result<impl View> {
+    auth::require_user(cx)?;
+
     Ok(view! {
         card(
             card_header(card_title((t!(form_new_recipe))))
@@ -31,6 +33,8 @@ pub async fn page() -> Result<impl View> {
 
 #[route(POST)]
 pub async fn create(cx: &Cx, Form(form): Form<Vec<(String, String)>>) -> Result<SeeOther> {
+    auth::require_user(cx)?;
+
     let recipe_service: &AppRecipeService = app_context(cx);
 
     recipe_service
