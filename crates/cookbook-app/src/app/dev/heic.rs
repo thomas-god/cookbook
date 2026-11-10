@@ -18,7 +18,7 @@ use crate::{
         button::button,
         card::{card, card_content, card_header, card_title},
         field::{field, field_label},
-        input::input,
+        image_upload::{IMAGE_ACCEPT, image_upload},
     },
 };
 
@@ -30,14 +30,14 @@ pub const MAX_UPLOAD_BYTES: usize = 25 * 1024 * 1024;
 pub async fn page(cx: &Cx) -> Result<impl View> {
     auth::require_user(cx)?;
 
-    render(cx, None)
+    render(cx, Vec::new())
 }
 
 #[page(POST)]
 pub async fn upload(cx: &Cx, mut multipart: Multipart) -> Result<impl View> {
     auth::require_user(cx)?;
 
-    let mut report = None;
+    let mut reports = Vec::new();
 
     while let Some(part) = multipart.next_field().await? {
         let field_name = part.name().map(str::to_owned);
@@ -55,9 +55,9 @@ pub async fn upload(cx: &Cx, mut multipart: Multipart) -> Result<impl View> {
             .collect::<Vec<_>>();
         let bytes = part.bytes().await?;
 
-        let is_image_field = field_name.as_deref() == Some("image");
-        if is_image_field || (report.is_none() && file_name.is_some()) {
-            report = Some(UploadReport::new(
+        let is_image_field = matches!(field_name.as_deref(), Some("image" | "images"));
+        if is_image_field || file_name.is_some() {
+            reports.push(UploadReport::new(
                 field_name,
                 file_name,
                 declared_content_type,
@@ -67,14 +67,14 @@ pub async fn upload(cx: &Cx, mut multipart: Multipart) -> Result<impl View> {
         }
     }
 
-    let Some(report) = report else {
+    if reports.is_empty() {
         return Err(bad_request("the upload did not include a file").into());
-    };
+    }
 
-    render(cx, Some(report))
+    render(cx, reports)
 }
 
-fn render(cx: &Cx, report: Option<UploadReport>) -> Result<impl View> {
+fn render(cx: &Cx, reports: Vec<UploadReport>) -> Result<impl View> {
     let image_id = element_id(cx);
 
     Ok(view! {
@@ -83,15 +83,15 @@ fn render(cx: &Cx, report: Option<UploadReport>) -> Result<impl View> {
             <div>
                 <h2 class="text-2xl font-semibold">"HEIC upload test"</h2>
                 <p class="mt-2 text-sm text-muted-foreground">
-                    "Pick a photo from the iOS Photos app. The file input advertises "
-                    <code>("accept=\"image/jpeg,image/png\"")</code>
-                    ", so iOS may convert a HEIC original before uploading it. This page "
+                    "Pick one or more photos from the iOS Photos app. The file input advertises "
+                    <code>(format!("accept=\"{IMAGE_ACCEPT}\""))</code>
+                    ", so iOS may convert HEIC originals before uploading them. This page "
                     "inspects the bytes that actually arrive on the server."
                 </p>
             </div>
 
             card(
-                card_header(card_title("Upload a photo"))
+                card_header(card_title("Upload photos"))
                 card_content(
                     <form
                         method="post"
@@ -102,14 +102,13 @@ fn render(cx: &Cx, report: Option<UploadReport>) -> Result<impl View> {
                         field(
                             field_label(
                                 attrs: attributes! { for=(&image_id) },
-                                "Image"
+                                "Images"
                             )
-                            input(
+                            image_upload(
+                                multiple: true,
                                 attrs: attributes! {
                                     id=(&image_id)
-                                    name="image"
-                                    type="file"
-                                    accept="image/jpeg,image/png"
+                                    name="images"
                                     required=""
                                 }
                             )
@@ -123,62 +122,75 @@ fn render(cx: &Cx, report: Option<UploadReport>) -> Result<impl View> {
                 )
             )
 
-            if let Some(report) = report {
-                card(
-                    card_header(card_title("What the server received"))
-                    card_content(
-                        <div class="flex flex-col gap-4 text-sm">
-                            <div class="rounded-lg border border-border bg-muted/40 p-4">
-                                <p class="font-medium">(report.verdict)</p>
-                                <p class="mt-1 text-muted-foreground">(report.verdict_detail)</p>
-                            </div>
+            if !reports.is_empty() {
+                <div class="flex flex-col gap-4">
+                    <h3 class="text-lg font-semibold">"What the server received"</h3>
+                    for (index, report) in reports.iter().enumerate() {
+                        card(
+                            card_header(card_title((format!("Image {}", index + 1))))
+                            card_content(
+                                <div class="flex flex-col gap-4 text-sm">
+                                    <div class="rounded-lg border border-border bg-muted/40 p-4">
+                                        <p class="font-medium">(report.verdict)</p>
+                                        <p class="mt-1 text-muted-foreground">
+                                            (report.verdict_detail.as_str())
+                                        </p>
+                                    </div>
 
-                            <dl class="grid grid-cols-[max-content_1fr] gap-x-4 gap-y-2">
-                                <dt class="text-muted-foreground">"Field name"</dt>
-                                <dd>(report.field_name.as_deref().unwrap_or("—"))</dd>
+                                    <dl class="grid grid-cols-[max-content_1fr] gap-x-4 gap-y-2">
+                                        <dt class="text-muted-foreground">"Field name"</dt>
+                                        <dd>(report.field_name.as_deref().unwrap_or("—"))</dd>
 
-                                <dt class="text-muted-foreground">"File name"</dt>
-                                <dd class="break-all">(report.file_name.as_deref().unwrap_or("—"))</dd>
+                                        <dt class="text-muted-foreground">"File name"</dt>
+                                        <dd class="break-all">
+                                            (report.file_name.as_deref().unwrap_or("—"))
+                                        </dd>
 
-                                <dt class="text-muted-foreground">"Declared Content-Type"</dt>
-                                <dd class="break-all">
-                                    (report.declared_content_type.as_deref().unwrap_or("—"))
-                                </dd>
+                                        <dt class="text-muted-foreground">
+                                            "Declared Content-Type"
+                                        </dt>
+                                        <dd class="break-all">
+                                            (report.declared_content_type.as_deref().unwrap_or("—"))
+                                        </dd>
 
-                                <dt class="text-muted-foreground">"Detected from bytes"</dt>
-                                <dd>
-                                    (report.detected_format)
-                                    if let Some(brand) = &report.heif_brand {
-                                        " (brand: "
-                                        (brand)
-                                        ")"
-                                    }
-                                </dd>
+                                        <dt class="text-muted-foreground">
+                                            "Detected from bytes"
+                                        </dt>
+                                        <dd>
+                                            (report.detected_format)
+                                            if let Some(brand) = &report.heif_brand {
+                                                " (brand: "
+                                                (brand)
+                                                ")"
+                                            }
+                                        </dd>
 
-                                <dt class="text-muted-foreground">"Size"</dt>
-                                <dd>(report.size) " bytes"</dd>
+                                        <dt class="text-muted-foreground">"Size"</dt>
+                                        <dd>(report.size) " bytes"</dd>
 
-                                <dt class="text-muted-foreground">"First bytes (hex)"</dt>
-                                <dd class="break-all font-mono">(report.magic_hex)</dd>
-                            </dl>
+                                        <dt class="text-muted-foreground">"First bytes (hex)"</dt>
+                                        <dd class="break-all font-mono">(report.magic_hex.as_str())</dd>
+                                    </dl>
 
-                            <details>
-                                <summary class="cursor-pointer font-medium">
-                                    "Part headers"
-                                </summary>
-                                <ul class="mt-2 flex flex-col gap-1 font-mono text-xs">
-                                    for (name, value) in &report.headers {
-                                        <li class="break-all">
-                                            (name)
-                                            ": "
-                                            (value)
-                                        </li>
-                                    }
-                                </ul>
-                            </details>
-                        </div>
-                    )
-                )
+                                    <details>
+                                        <summary class="cursor-pointer font-medium">
+                                            "Part headers"
+                                        </summary>
+                                        <ul class="mt-2 flex flex-col gap-1 font-mono text-xs">
+                                            for (name, value) in &report.headers {
+                                                <li class="break-all">
+                                                    (name)
+                                                    ": "
+                                                    (value)
+                                                </li>
+                                            }
+                                        </ul>
+                                    </details>
+                                </div>
+                            )
+                        )
+                    }
+                </div>
             }
         </div>
     })
