@@ -123,21 +123,14 @@ fn import_page(cx: &Cx, error: Option<ImportError>) -> Result<impl View> {
                         )
                         image_upload(
                             multiple: true,
-                            attrs: attributes! {
-                                id=(&images_id)
-                                name="images"
-                                required=""
-                            }
+                            attrs: attributes! { id=(&images_id) name="images" required="" }
                         )
                         field_description((t!(recipe_import_hint)))
                     )
                     <div class="flex flex-col items-end gap-2">
                         <div class="flex justify-end">
                             button(
-                                attrs: attributes! {
-                                    type="submit"
-                                    data-import-submit=""
-                                },
+                                attrs: attributes! { type="submit" data-import-submit="" },
                                 <span
                                     data-import-spinner=""
                                     aria-hidden="true"

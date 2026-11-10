@@ -47,8 +47,5 @@ pub async fn image_upload(
         attrs.insert(cx, "multiple", "");
     }
 
-    Ok(view! {
-        cx =>
-        input(attrs: attrs)
-    })
+    Ok(view! { cx => input(attrs: attrs) })
 }

@@ -106,18 +106,17 @@ fn render(cx: &Cx, reports: Vec<UploadReport>) -> Result<impl View> {
                             )
                             image_upload(
                                 multiple: true,
-                                attrs: attributes! {
-                                    id=(&image_id)
-                                    name="images"
-                                    required=""
-                                }
+                                attrs: attributes! { id=(&image_id) name="images" required="" }
                             )
                         )
                         <p class="text-sm text-muted-foreground">
                             "Tip: use the Photos picker rather than the Files app. Picking from "
                             "Files can bypass the conversion iOS applies to photo-library items."
                         </p>
-                        button(attrs: attributes! { type="submit" }, "Upload and inspect")
+                        button(
+                            attrs: attributes! { type="submit" },
+                            "Upload and inspect"
+                        )
                     </form>
                 )
             )
@@ -130,14 +129,18 @@ fn render(cx: &Cx, reports: Vec<UploadReport>) -> Result<impl View> {
                             card_header(card_title((format!("Image {}", index + 1))))
                             card_content(
                                 <div class="flex flex-col gap-4 text-sm">
-                                    <div class="rounded-lg border border-border bg-muted/40 p-4">
+                                    <div
+                                        class="rounded-lg border border-border bg-muted/40 p-4"
+                                    >
                                         <p class="font-medium">(report.verdict)</p>
                                         <p class="mt-1 text-muted-foreground">
                                             (report.verdict_detail.as_str())
                                         </p>
                                     </div>
 
-                                    <dl class="grid grid-cols-[max-content_1fr] gap-x-4 gap-y-2">
+                                    <dl
+                                        class="grid grid-cols-[max-content_1fr] gap-x-4 gap-y-2"
+                                    >
                                         <dt class="text-muted-foreground">"Field name"</dt>
                                         <dd>(report.field_name.as_deref().unwrap_or("—"))</dd>
 
@@ -166,10 +169,15 @@ fn render(cx: &Cx, reports: Vec<UploadReport>) -> Result<impl View> {
                                         </dd>
 
                                         <dt class="text-muted-foreground">"Size"</dt>
-                                        <dd>(report.size) " bytes"</dd>
+                                        <dd>
+                                            (report.size)
+                                            " bytes"
+                                        </dd>
 
                                         <dt class="text-muted-foreground">"First bytes (hex)"</dt>
-                                        <dd class="break-all font-mono">(report.magic_hex.as_str())</dd>
+                                        <dd class="break-all font-mono">
+                                            (report.magic_hex.as_str())
+                                        </dd>
                                     </dl>
 
                                     <details>

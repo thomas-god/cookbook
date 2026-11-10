@@ -624,7 +624,9 @@ async fn ingredient_row(
             :disabled=$(removed.get())
             class="m-0 flex min-w-0 flex-col gap-3 rounded-lg border border-border p-4"
         >
-            <div class="grid gap-3 sm:grid-cols-[minmax(0,1fr)_10rem_auto] sm:items-end">
+            <div
+                class="grid gap-3 sm:grid-cols-[minmax(0,1fr)_10rem_auto] sm:items-end"
+            >
                 field(
                     field_label(
                         attrs: attributes! { for=(&name_id) },
@@ -712,7 +714,7 @@ async fn ingredient_row(
                     </select>
                 )
                 field(
-                    attrs: attributes! { :hidden=$(unit.get() != "other") }
+                    attrs: attributes! { :hidden=$(unit.get() != "other") },
                     field_label(
                         attrs: attributes! { for=(&unit_other_id) },
                         (t!(form_unit_other))
@@ -732,7 +734,7 @@ async fn ingredient_row(
             </div>
 
             field(
-                attrs: attributes! { :hidden=$(amount_type.get() != "text") }
+                attrs: attributes! { :hidden=$(amount_type.get() != "text") },
                 field_label(
                     attrs: attributes! { for=(&quantity_text_id) },
                     (t!(form_amount_text_value))
