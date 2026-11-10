@@ -1,0 +1,14 @@
+[package]
+name = "cookbook-vision"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+base64.workspace = true
+cookbook-domain.workspace = true
+image.workspace = true
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+ureq.workspace = true

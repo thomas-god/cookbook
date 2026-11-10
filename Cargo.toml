@@ -3,6 +3,7 @@ resolver = "3"
 members = [
     "crates/cookbook-domain",
     "crates/cookbook-infra",
+    "crates/cookbook-vision",
     "crates/cookbook-app",
 ]
 default-members = ["crates/cookbook-app"]
@@ -18,14 +19,19 @@ base64 = "0.22"
 chrono = "0.4"
 derive_more = { version = "2.1.1", features = ["add", "constructor"] }
 getrandom = "0.4"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 mockall = "0.15"
+schemars = { version = "1", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 sha2 = "0.11"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+ureq = { version = "3.5.1", features = ["json"] }
 uuid = { version = "1.29.0", features = ["v4", "v7"] }
 
 cookbook-domain = { path = "crates/cookbook-domain" }
 cookbook-infra = { path = "crates/cookbook-infra" }
+cookbook-vision = { path = "crates/cookbook-vision" }
 
 [profile.dev.package."*"]
 debug = false
