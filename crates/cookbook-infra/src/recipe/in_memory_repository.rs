@@ -114,15 +114,15 @@ fn seed_recipes() -> Vec<RecipeWithContent> {
             HashMap::from([
                 (
                     IngredientName::new("tomatoes".to_string()),
-                    Quantity::new(800.0, Unit::Gram),
+                    Quantity::from_measure(800.0, Unit::Gram),
                 ),
                 (
                     IngredientName::new("vegetable stock".to_string()),
-                    Quantity::new(0.5, Unit::Litre),
+                    Quantity::from_measure(0.5, Unit::Litre),
                 ),
                 (
                     IngredientName::new("olive oil".to_string()),
-                    Quantity::new(30.0, Unit::MilliLitre),
+                    Quantity::from_measure(30.0, Unit::MilliLitre),
                 ),
             ]),
             vec![
@@ -150,15 +150,15 @@ fn seed_recipes() -> Vec<RecipeWithContent> {
             HashMap::from([
                 (
                     IngredientName::new("spaghetti".to_string()),
-                    Quantity::new(400.0, Unit::Gram),
+                    Quantity::from_measure(400.0, Unit::Gram),
                 ),
                 (
                     IngredientName::new("lemon".to_string()),
-                    Quantity::new(100.0, Unit::Gram),
+                    Quantity::from_measure(100.0, Unit::Gram),
                 ),
                 (
                     IngredientName::new("olive oil".to_string()),
-                    Quantity::new(30.0, Unit::MilliLitre),
+                    Quantity::from_measure(30.0, Unit::MilliLitre),
                 ),
             ]),
             vec![
@@ -186,19 +186,19 @@ fn seed_recipes() -> Vec<RecipeWithContent> {
             HashMap::from([
                 (
                     IngredientName::new("bananas".to_string()),
-                    Quantity::new(300.0, Unit::Gram),
+                    Quantity::from_measure(300.0, Unit::Gram),
                 ),
                 (
                     IngredientName::new("flour".to_string()),
-                    Quantity::new(250.0, Unit::Gram),
+                    Quantity::from_measure(250.0, Unit::Gram),
                 ),
                 (
                     IngredientName::new("sugar".to_string()),
-                    Quantity::new(150.0, Unit::Gram),
+                    Quantity::from_measure(150.0, Unit::Gram),
                 ),
                 (
                     IngredientName::new("butter".to_string()),
-                    Quantity::new(100.0, Unit::Gram),
+                    Quantity::from_measure(100.0, Unit::Gram),
                 ),
             ]),
             vec![

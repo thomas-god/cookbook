@@ -69,14 +69,27 @@ form_ingredients = Ingredients
 form_add_ingredient = Add ingredient
 form_ingredient = Ingredient
     .placeholder = Flour
+form_amount_type = Amount type
+form_amount_measured = Measured
+form_amount_text = Free text
+form_amount_text_value = Amount (free text)
+    .placeholder = a pinch, salt to taste, ...
 form_quantity = Quantity
     .placeholder = 200
 form_unit = Unit
+form_unit_other = Custom unit
+    .placeholder = sachet, bunch, pinch
 form_remove = Remove
 
 unit_gram = Gram
+unit_kilogram = Kilogram
 unit_millilitre = Millilitre
+unit_centilitre = Centilitre
 unit_litre = Litre
+unit_piece = Piece
+unit_teaspoon = Teaspoon
+unit_tablespoon = Tablespoon
+unit_other = Other
 
 form_steps = Steps
 form_add_step = Add step

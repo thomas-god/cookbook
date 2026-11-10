@@ -51,8 +51,11 @@ The URL-encoded wire format uses structural row keys rather than repeated flat f
 
 ```text
 ingredients[<row>][name]
-ingredients[<row>][quantity]
-ingredients[<row>][unit]
+ingredients[<row>][amount_type]   # "measured" or "text"; missing means "measured"
+ingredients[<row>][quantity]      # measured mode
+ingredients[<row>][unit]          # measured mode
+ingredients[<row>][unit_other]    # measured mode, when unit = "other"
+ingredients[<row>][quantity_text] # text mode
 
 steps[<row>][title]
 steps[<row>][instruction]
@@ -81,9 +84,13 @@ The parser rejects:
 - malformed indexed keys,
 - duplicate fields,
 - missing required values,
-- invalid quantities and units.
+- invalid amount modes,
+- invalid quantities and units,
+- empty or overlong custom unit labels,
+- missing free-text amounts.
 
-The typed form data is then converted into `CreateRecipeRequest`.
+The typed form data is then converted into `CreateRecipeRequest`. Missing `amount_type` values are
+treated as `measured`, so older form payloads remain valid.
 
 No client-side JSON serializer and no JSON endpoint are introduced.
 
@@ -106,6 +113,8 @@ No client-side JSON serializer and no JSON endpoint are introduced.
 - The parser is still hand-written, though it now produces typed form data and validates the
   contract explicitly.
 - The form/parser contract is enforced by shared helpers and tests, not by a serde-derived schema.
+- Ingredient rows carry an explicit amount mode, so the form has one more control per row.
+- Step ingredient quantities remain numeric; free-text quantities are not represented there yet.
 - The URL-encoded format remains internal to this UI and is not suitable as a public API contract.
 
 ### When to revisit

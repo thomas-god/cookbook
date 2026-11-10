@@ -49,16 +49,22 @@ const LATEST_REVISION_FIELD: &str = "latest_revision";
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 enum IngredientField {
     Name,
+    AmountType,
     Quantity,
+    QuantityText,
     Unit,
+    UnitOther,
 }
 
 impl IngredientField {
     const fn wire_name(self) -> &'static str {
         match self {
             Self::Name => "name",
+            Self::AmountType => "amount_type",
             Self::Quantity => "quantity",
+            Self::QuantityText => "quantity_text",
             Self::Unit => "unit",
+            Self::UnitOther => "unit_other",
         }
     }
 
@@ -69,8 +75,11 @@ impl IngredientField {
     fn parse(wire_field: &str) -> Option<Self> {
         match wire_field {
             "name" => Some(Self::Name),
+            "amount_type" => Some(Self::AmountType),
             "quantity" => Some(Self::Quantity),
+            "quantity_text" => Some(Self::QuantityText),
             "unit" => Some(Self::Unit),
+            "unit_other" => Some(Self::UnitOther),
             _ => None,
         }
     }
@@ -132,12 +141,7 @@ impl RecipeFormData {
             ),
             self.ingredients
                 .into_iter()
-                .map(|ingredient| {
-                    (
-                        IngredientName::new(ingredient.name),
-                        Quantity::new(ingredient.quantity, ingredient.unit),
-                    )
-                })
+                .map(|ingredient| (IngredientName::new(ingredient.name), ingredient.quantity))
                 .collect(),
             self.steps
                 .into_iter()
@@ -150,8 +154,7 @@ impl RecipeFormData {
 #[derive(Debug)]
 struct IngredientFormData {
     name: String,
-    quantity: f32,
-    unit: Unit,
+    quantity: Quantity,
 }
 
 #[derive(Debug)]
@@ -164,8 +167,11 @@ struct StepFormData {
 #[derive(Clone, Default)]
 struct IngredientInitial {
     name: String,
+    amount_type: String,
     quantity: String,
+    quantity_text: String,
     unit: String,
+    unit_other: String,
 }
 
 #[derive(Clone, Default)]
@@ -191,11 +197,7 @@ impl FormInitial {
         let mut ingredients: Vec<_> = recipe
             .ingredients()
             .iter()
-            .map(|(name, quantity)| IngredientInitial {
-                name: name.as_str().to_string(),
-                quantity: quantity.value().to_string(),
-                unit: unit_wire(quantity.unit()).to_string(),
-            })
+            .map(|(name, quantity)| ingredient_initial(name.as_str(), quantity))
             .collect();
         ingredients.sort_by(|left, right| left.name.cmp(&right.name));
 
@@ -247,11 +249,45 @@ async fn load_current_recipe(cx: &Cx, recipe_id: &str) -> Result<Option<RecipeWi
     Ok(Some(recipe.ok_or_not_found()?))
 }
 
+fn ingredient_initial(name: &str, quantity: &Quantity) -> IngredientInitial {
+    match quantity {
+        Quantity::Measured { value, unit } => {
+            let (unit, unit_other) = match unit {
+                Unit::Other(label) => ("other", label.clone()),
+                unit => (unit_wire(unit), String::new()),
+            };
+
+            IngredientInitial {
+                name: name.to_string(),
+                amount_type: "measured".to_string(),
+                quantity: value.to_string(),
+                quantity_text: String::new(),
+                unit: unit.to_string(),
+                unit_other,
+            }
+        }
+        Quantity::Text(text) => IngredientInitial {
+            name: name.to_string(),
+            amount_type: "text".to_string(),
+            quantity: String::new(),
+            quantity_text: text.clone(),
+            unit: "gram".to_string(),
+            unit_other: String::new(),
+        },
+    }
+}
+
 fn unit_wire(unit: &Unit) -> &'static str {
     match unit {
         Unit::Gram => "gram",
+        Unit::Kilogram => "kilogram",
         Unit::MilliLitre => "millilitre",
+        Unit::CentiLitre => "centilitre",
         Unit::Litre => "litre",
+        Unit::Piece => "piece",
+        Unit::Teaspoon => "teaspoon",
+        Unit::Tablespoon => "tablespoon",
+        Unit::Other(_) => "other",
     }
 }
 
@@ -547,87 +583,172 @@ async fn ingredient_row(
 ) -> Result<impl View> {
     let initial = initial.unwrap_or_default();
     let name_value = initial.name;
+    let amount_type_value = if initial.amount_type.is_empty() {
+        "measured".to_string()
+    } else {
+        initial.amount_type
+    };
     let quantity_value = initial.quantity;
+    let quantity_text_value = initial.quantity_text;
     let unit_value = if initial.unit.is_empty() {
         "gram".to_string()
     } else {
         initial.unit
     };
+    let unit_other_value = initial.unit_other;
     let name = signal(cx, move || name_value.clone());
+    let amount_type = signal(cx, move || amount_type_value.clone());
     let quantity = signal(cx, move || quantity_value.clone());
+    let quantity_text = signal(cx, move || quantity_text_value.clone());
     let unit = signal(cx, move || unit_value.clone());
+    let unit_other = signal(cx, move || unit_other_value.clone());
     let removed = signal(cx, || false);
 
     let name_id = element_id(cx);
+    let amount_type_id = element_id(cx);
     let quantity_id = element_id(cx);
+    let quantity_text_id = element_id(cx);
     let unit_id = element_id(cx);
+    let unit_other_id = element_id(cx);
 
     let name_field = IngredientField::Name.key(row);
+    let amount_type_field = IngredientField::AmountType.key(row);
     let quantity_field = IngredientField::Quantity.key(row);
+    let quantity_text_field = IngredientField::QuantityText.key(row);
     let unit_field = IngredientField::Unit.key(row);
+    let unit_other_field = IngredientField::UnitOther.key(row);
 
     Ok(view! {
         <fieldset
             :hidden=$(removed.get())
             :disabled=$(removed.get())
-            class="m-0 grid min-w-0 gap-3 rounded-lg border border-border p-4 sm:grid-cols-[minmax(0,1fr)_8rem_10rem_auto] sm:items-end"
+            class="m-0 flex min-w-0 flex-col gap-3 rounded-lg border border-border p-4"
         >
-            field(
-                field_label(
-                    attrs: attributes! { for=(&name_id) },
-                    (t!(form_ingredient))
+            <div class="grid gap-3 sm:grid-cols-[minmax(0,1fr)_10rem_auto] sm:items-end">
+                field(
+                    field_label(
+                        attrs: attributes! { for=(&name_id) },
+                        (t!(form_ingredient))
+                    )
+                    input(
+                        attrs: attributes! {
+                            id=(&name_id)
+                            name=(name_field)
+                            type="text"
+                            placeholder=(t!(form_ingredient.placeholder))
+                            :value=$(name.get())
+                            @input=$(|e: Event| name.set(e.target.value))
+                        }
+                    )
                 )
-                input(
-                    attrs: attributes! {
-                        id=(&name_id)
-                        name=(name_field)
-                        type="text"
-                        placeholder=(t!(form_ingredient.placeholder))
-                        :value=$(name.get())
-                        @input=$(|e: Event| name.set(e.target.value))
-                    }
+                field(
+                    field_label(
+                        attrs: attributes! { for=(&amount_type_id) },
+                        (t!(form_amount_type))
+                    )
+                    <select
+                        id=(&amount_type_id)
+                        name=(amount_type_field)
+                        class=(SELECT_CLASS)
+                        :value=$(amount_type.get())
+                        @change=$(|e: Event| amount_type.set(e.target.value))
+                    >
+                        <option value="measured">(t!(form_amount_measured))</option>
+                        <option value="text">(t!(form_amount_text))</option>
+                    </select>
                 )
-            )
-            field(
-                field_label(
-                    attrs: attributes! { for=(&quantity_id) },
-                    (t!(form_quantity))
+                <div class="flex items-end">
+                    button(
+                        variant: ButtonVariant::Ghost,
+                        size: ButtonSize::Sm,
+                        attrs: attributes! { type="button" @click=$(|_e: Event| removed.set(true)) },
+                        (t!(form_remove))
+                    )
+                </div>
+            </div>
+
+            <div
+                :hidden=$(amount_type.get() != "measured")
+                class="grid gap-3 sm:grid-cols-[8rem_10rem_minmax(0,1fr)] sm:items-end"
+            >
+                field(
+                    field_label(
+                        attrs: attributes! { for=(&quantity_id) },
+                        (t!(form_quantity))
+                    )
+                    input(
+                        attrs: attributes! {
+                            id=(&quantity_id)
+                            name=(quantity_field)
+                            type="number"
+                            min="0"
+                            step="any"
+                            placeholder=(t!(form_quantity.placeholder))
+                            :disabled=$(amount_type.get() != "measured")
+                            :value=$(quantity.get())
+                            @input=$(|e: Event| quantity.set(e.target.value))
+                        }
+                    )
                 )
-                input(
-                    attrs: attributes! {
-                        id=(&quantity_id)
-                        name=(quantity_field)
-                        type="number"
-                        min="0"
-                        step="any"
-                        placeholder=(t!(form_quantity.placeholder))
-                        :value=$(quantity.get())
-                        @input=$(|e: Event| quantity.set(e.target.value))
-                    }
+                field(
+                    field_label(attrs: attributes! { for=(&unit_id) }, (t!(form_unit)))
+                    <select
+                        id=(&unit_id)
+                        name=(unit_field)
+                        class=(SELECT_CLASS)
+                        :disabled=$(amount_type.get() != "measured")
+                        :value=$(unit.get())
+                        @change=$(|e: Event| unit.set(e.target.value))
+                    >
+                        <option value="gram">(t!(unit_gram))</option>
+                        <option value="kilogram">(t!(unit_kilogram))</option>
+                        <option value="millilitre">(t!(unit_millilitre))</option>
+                        <option value="centilitre">(t!(unit_centilitre))</option>
+                        <option value="litre">(t!(unit_litre))</option>
+                        <option value="piece">(t!(unit_piece))</option>
+                        <option value="teaspoon">(t!(unit_teaspoon))</option>
+                        <option value="tablespoon">(t!(unit_tablespoon))</option>
+                        <option value="other">(t!(unit_other))</option>
+                    </select>
                 )
-            )
-            field(
-                field_label(attrs: attributes! { for=(&unit_id) }, (t!(form_unit)))
-                <select
-                    id=(&unit_id)
-                    name=(unit_field)
-                    class=(SELECT_CLASS)
-                    :value=$(unit.get())
-                    @change=$(|e: Event| unit.set(e.target.value))
-                >
-                    <option value="gram">(t!(unit_gram))</option>
-                    <option value="millilitre">(t!(unit_millilitre))</option>
-                    <option value="litre">(t!(unit_litre))</option>
-                </select>
-            )
-            <div class="flex items-end">
-                button(
-                    variant: ButtonVariant::Ghost,
-                    size: ButtonSize::Sm,
-                    attrs: attributes! { type="button" @click=$(|_e: Event| removed.set(true)) },
-                    (t!(form_remove))
+                field(
+                    attrs: attributes! { :hidden=$(unit.get() != "other") }
+                    field_label(
+                        attrs: attributes! { for=(&unit_other_id) },
+                        (t!(form_unit_other))
+                    )
+                    input(
+                        attrs: attributes! {
+                            id=(&unit_other_id)
+                            name=(unit_other_field)
+                            type="text"
+                            placeholder=(t!(form_unit_other.placeholder))
+                            :disabled=$(amount_type.get() != "measured")
+                            :value=$(unit_other.get())
+                            @input=$(|e: Event| unit_other.set(e.target.value))
+                        }
+                    )
                 )
             </div>
+
+            field(
+                attrs: attributes! { :hidden=$(amount_type.get() != "text") }
+                field_label(
+                    attrs: attributes! { for=(&quantity_text_id) },
+                    (t!(form_amount_text_value))
+                )
+                input(
+                    attrs: attributes! {
+                        id=(&quantity_text_id)
+                        name=(quantity_text_field)
+                        type="text"
+                        placeholder=(t!(form_amount_text_value.placeholder))
+                        :disabled=$(amount_type.get() != "text")
+                        :value=$(quantity_text.get())
+                        @input=$(|e: Event| quantity_text.set(e.target.value))
+                    }
+                )
+            )
         </fieldset>
     })
 }
@@ -903,15 +1024,26 @@ fn parse_ingredient_rows(
 
     for (row, mut values) in rows {
         let name = values.remove(&IngredientField::Name).unwrap_or_default();
+        let amount_type = values
+            .remove(&IngredientField::AmountType)
+            .unwrap_or_default();
         let quantity = values
             .remove(&IngredientField::Quantity)
             .unwrap_or_default();
+        let quantity_text = values
+            .remove(&IngredientField::QuantityText)
+            .unwrap_or_default();
         let unit = values.remove(&IngredientField::Unit).unwrap_or_default();
+        let unit_other = values
+            .remove(&IngredientField::UnitOther)
+            .unwrap_or_default();
 
         let name = name.trim();
+        let amount_type = amount_type.trim();
         let quantity = quantity.trim();
+        let quantity_text = quantity_text.trim();
 
-        if name.is_empty() && quantity.is_empty() {
+        if name.is_empty() && quantity.is_empty() && quantity_text.is_empty() {
             continue;
         }
 
@@ -919,37 +1051,77 @@ fn parse_ingredient_rows(
             return Err(invalid(format!("ingredient row {} needs a name", row + 1)));
         }
 
-        if quantity.is_empty() {
-            return Err(invalid(format!("quantity is required for `{name}`")));
-        }
+        let quantity = match amount_type {
+            "" | "measured" => {
+                if quantity.is_empty() {
+                    return Err(invalid(format!("quantity is required for `{name}`")));
+                }
 
-        let quantity = quantity
-            .parse::<f32>()
-            .map_err(|_| invalid(format!("quantity for `{name}` must be a number")))?;
+                let quantity = quantity
+                    .parse::<f32>()
+                    .map_err(|_| invalid(format!("quantity for `{name}` must be a number")))?;
 
-        if !quantity.is_finite() || quantity < 0.0 {
-            return Err(invalid(format!(
-                "quantity for `{name}` must be zero or greater"
-            )));
-        }
+                if !quantity.is_finite() || quantity < 0.0 {
+                    return Err(invalid(format!(
+                        "quantity for `{name}` must be zero or greater"
+                    )));
+                }
 
-        let unit = parse_unit(&unit)?;
+                let unit = parse_unit(&unit, &unit_other)?;
+
+                Quantity::from_measure(quantity, unit)
+            }
+            "text" => {
+                if quantity_text.is_empty() {
+                    return Err(invalid(format!(
+                        "a free-form amount is required for `{name}`"
+                    )));
+                }
+
+                Quantity::from_text(quantity_text)
+            }
+            other => {
+                return Err(invalid(format!("unknown ingredient amount type `{other}`")));
+            }
+        };
 
         ingredients.push(IngredientFormData {
             name: name.to_string(),
             quantity,
-            unit,
         });
     }
 
     Ok(ingredients)
 }
 
-fn parse_unit(value: &str) -> Result<Unit> {
+const MAX_CUSTOM_UNIT_LENGTH: usize = 40;
+
+fn parse_unit(value: &str, unit_other: &str) -> Result<Unit> {
     match value.trim() {
         "gram" => Ok(Unit::Gram),
+        "kilogram" => Ok(Unit::Kilogram),
         "millilitre" => Ok(Unit::MilliLitre),
+        "centilitre" => Ok(Unit::CentiLitre),
         "litre" => Ok(Unit::Litre),
+        "piece" => Ok(Unit::Piece),
+        "teaspoon" => Ok(Unit::Teaspoon),
+        "tablespoon" => Ok(Unit::Tablespoon),
+        "other" => {
+            let label = unit_other.trim();
+
+            if label.is_empty() {
+                return Err(invalid("a custom ingredient unit needs a label"));
+            }
+
+            if label.chars().count() > MAX_CUSTOM_UNIT_LENGTH {
+                return Err(invalid(format!(
+                    "a custom ingredient unit cannot exceed {MAX_CUSTOM_UNIT_LENGTH} characters"
+                )));
+            }
+
+            Ok(Unit::Other(label.to_string()))
+        }
+        "" => Err(invalid("an ingredient unit is required")),
         other => Err(invalid(format!("unknown ingredient unit `{other}`"))),
     }
 }
@@ -1080,11 +1252,15 @@ mod tests {
         assert_eq!(form.latest_revision, None);
         assert_eq!(form.ingredients.len(), 2);
         assert_eq!(form.ingredients[0].name, "Flour");
-        assert_eq!(form.ingredients[0].quantity, 200.0);
-        assert!(matches!(form.ingredients[0].unit, Unit::Gram));
+        assert_eq!(
+            form.ingredients[0].quantity,
+            Quantity::from_measure(200.0, Unit::Gram)
+        );
         assert_eq!(form.ingredients[1].name, "Milk");
-        assert_eq!(form.ingredients[1].quantity, 0.5);
-        assert!(matches!(form.ingredients[1].unit, Unit::Litre));
+        assert_eq!(
+            form.ingredients[1].quantity,
+            Quantity::from_measure(0.5, Unit::Litre)
+        );
         assert_eq!(form.steps.len(), 1);
         assert_eq!(form.steps[0].title.as_deref(), Some("Mix"));
         assert_eq!(form.steps[0].instruction, "Stir everything together.");
@@ -1094,6 +1270,116 @@ mod tests {
                 .as_ref()
                 .expect("step ingredients")["flour"],
             200.0
+        );
+    }
+
+    #[test]
+    fn parses_measured_amounts_with_every_built_in_unit() {
+        let units = [
+            ("gram", Unit::Gram),
+            ("kilogram", Unit::Kilogram),
+            ("millilitre", Unit::MilliLitre),
+            ("centilitre", Unit::CentiLitre),
+            ("litre", Unit::Litre),
+            ("piece", Unit::Piece),
+            ("teaspoon", Unit::Teaspoon),
+            ("tablespoon", Unit::Tablespoon),
+        ];
+
+        for (index, (wire, expected)) in units.into_iter().enumerate() {
+            let form = parse_recipe_form(&pairs(&[
+                ("title", "Soup"),
+                ("ingredients[0][amount_type]", "measured"),
+                ("ingredients[0][name]", "Ingredient"),
+                ("ingredients[0][quantity]", "2"),
+                ("ingredients[0][unit]", wire),
+            ]))
+            .unwrap();
+
+            assert_eq!(
+                form.ingredients[0].quantity,
+                Quantity::from_measure(2.0, expected),
+                "unit row {index}"
+            );
+        }
+    }
+
+    #[test]
+    fn parses_free_text_amounts() {
+        let form = parse_recipe_form(&pairs(&[
+            ("title", "Soup"),
+            ("ingredients[0][amount_type]", "text"),
+            ("ingredients[0][name]", "Salt"),
+            ("ingredients[0][quantity_text]", "  to taste  "),
+        ]))
+        .unwrap();
+
+        assert_eq!(form.ingredients[0].name, "Salt");
+        assert_eq!(
+            form.ingredients[0].quantity,
+            Quantity::from_text("to taste")
+        );
+    }
+
+    #[test]
+    fn parses_custom_units() {
+        let form = parse_recipe_form(&pairs(&[
+            ("title", "Soup"),
+            ("ingredients[0][amount_type]", "measured"),
+            ("ingredients[0][name]", "Yeast"),
+            ("ingredients[0][quantity]", "1"),
+            ("ingredients[0][unit]", "other"),
+            ("ingredients[0][unit_other]", "  sachet  "),
+        ]))
+        .unwrap();
+
+        assert_eq!(
+            form.ingredients[0].quantity,
+            Quantity::from_measure(1.0, Unit::Other("sachet".to_string()))
+        );
+    }
+
+    #[test]
+    fn defaults_a_missing_amount_type_to_measured() {
+        let form = parse_recipe_form(&pairs(&[
+            ("title", "Soup"),
+            ("ingredients[0][name]", "Flour"),
+            ("ingredients[0][quantity]", "200"),
+            ("ingredients[0][unit]", "gram"),
+        ]))
+        .unwrap();
+
+        assert_eq!(
+            form.ingredients[0].quantity,
+            Quantity::from_measure(200.0, Unit::Gram)
+        );
+    }
+
+    #[test]
+    fn rejects_a_missing_free_text_amount() {
+        assert!(
+            parse_recipe_form(&pairs(&[
+                ("title", "Soup"),
+                ("ingredients[0][amount_type]", "text"),
+                ("ingredients[0][name]", "Salt"),
+                ("ingredients[0][quantity_text]", "   "),
+            ]))
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn rejects_a_missing_custom_unit_label() {
+        assert!(
+            parse_recipe_form(&pairs(&[
+                ("title", "Soup"),
+                ("ingredients[0][amount_type]", "measured"),
+                ("ingredients[0][name]", "Yeast"),
+                ("ingredients[0][quantity]", "1"),
+                ("ingredients[0][unit]", "other"),
+                ("ingredients[0][unit_other]", "   "),
+            ]))
+            .is_err()
         );
     }
 
@@ -1124,8 +1410,11 @@ mod tests {
     fn generated_keys_round_trip_through_the_parser() {
         for wire_field in [
             IngredientField::Name,
+            IngredientField::AmountType,
             IngredientField::Quantity,
+            IngredientField::QuantityText,
             IngredientField::Unit,
+            IngredientField::UnitOther,
         ] {
             assert_eq!(
                 parse_indexed_key(&wire_field.key(7), "ingredients", IngredientField::parse,)
@@ -1300,11 +1589,19 @@ mod tests {
             HashMap::from([
                 (
                     IngredientName::new("milk".to_string()),
-                    Quantity::new(0.5, Unit::Litre),
+                    Quantity::from_measure(0.5, Unit::Litre),
                 ),
                 (
                     IngredientName::new("flour".to_string()),
-                    Quantity::new(200.0, Unit::Gram),
+                    Quantity::from_measure(200.0, Unit::Gram),
+                ),
+                (
+                    IngredientName::new("salt".to_string()),
+                    Quantity::from_text("to taste"),
+                ),
+                (
+                    IngredientName::new("yeast".to_string()),
+                    Quantity::from_measure(1.0, Unit::Other("sachet".to_string())),
                 ),
             ]),
             vec![RecipeStep::new(
@@ -1334,11 +1631,24 @@ mod tests {
         assert_eq!(initial.rest, "");
         assert_eq!(initial.cooking, "20");
         assert_eq!(initial.ingredients[0].name, "flour");
+        assert_eq!(initial.ingredients[0].amount_type, "measured");
         assert_eq!(initial.ingredients[0].quantity, "200");
+        assert_eq!(initial.ingredients[0].quantity_text, "");
         assert_eq!(initial.ingredients[0].unit, "gram");
+        assert_eq!(initial.ingredients[0].unit_other, "");
         assert_eq!(initial.ingredients[1].name, "milk");
+        assert_eq!(initial.ingredients[1].amount_type, "measured");
         assert_eq!(initial.ingredients[1].quantity, "0.5");
         assert_eq!(initial.ingredients[1].unit, "litre");
+        assert_eq!(initial.ingredients[2].name, "salt");
+        assert_eq!(initial.ingredients[2].amount_type, "text");
+        assert_eq!(initial.ingredients[2].quantity, "");
+        assert_eq!(initial.ingredients[2].quantity_text, "to taste");
+        assert_eq!(initial.ingredients[3].name, "yeast");
+        assert_eq!(initial.ingredients[3].amount_type, "measured");
+        assert_eq!(initial.ingredients[3].quantity, "1");
+        assert_eq!(initial.ingredients[3].unit, "other");
+        assert_eq!(initial.ingredients[3].unit_other, "sachet");
         assert_eq!(initial.steps[0].title, "Mix");
         assert_eq!(initial.steps[0].instruction, "Stir everything together.");
         assert_eq!(initial.steps[0].ingredients, "flour: 200\nmilk: 0.5");

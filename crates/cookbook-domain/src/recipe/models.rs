@@ -244,27 +244,50 @@ impl IngredientName {
     }
 }
 
-#[derive(Debug, Clone, Constructor)]
-pub struct Quantity {
-    value: f32,
-    unit: Unit,
+#[derive(Debug, Clone, PartialEq)]
+pub enum Quantity {
+    /// A numeric amount with a unit, such as `200 g` or `2 eggs`.
+    Measured { value: f32, unit: Unit },
+    /// A free-form amount, such as `a pinch` or `salt to taste`.
+    Text(String),
 }
 
 impl Quantity {
-    pub fn value(&self) -> f32 {
-        self.value
+    pub fn from_measure(value: f32, unit: Unit) -> Self {
+        Self::Measured { value, unit }
     }
 
-    pub fn unit(&self) -> &Unit {
-        &self.unit
+    pub fn from_text(value: impl Into<String>) -> Self {
+        Self::Text(value.into())
+    }
+
+    pub fn as_measured(&self) -> Option<(f32, &Unit)> {
+        match self {
+            Self::Measured { value, unit } => Some((*value, unit)),
+            Self::Text(_) => None,
+        }
+    }
+
+    pub fn as_text(&self) -> Option<&str> {
+        match self {
+            Self::Measured { .. } => None,
+            Self::Text(value) => Some(value),
+        }
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Unit {
     Litre,
     MilliLitre,
+    CentiLitre,
     Gram,
+    Kilogram,
+    Piece,
+    Teaspoon,
+    Tablespoon,
+    /// A unit supplied by the user, such as `sachet` or `bunch`.
+    Other(String),
 }
 
 #[derive(Debug, Clone, Constructor)]
@@ -373,6 +396,25 @@ mod tests {
             metadata.cooking().map(DurationMinutes::as_minutes),
             Some(30)
         );
+    }
+
+    #[test]
+    fn measured_quantity_exposes_its_value_and_unit() {
+        let quantity = Quantity::from_measure(200.0, Unit::Gram);
+
+        let (value, unit) = quantity.as_measured().expect("measured quantity");
+
+        assert_eq!(value, 200.0);
+        assert!(matches!(unit, &Unit::Gram));
+        assert_eq!(quantity.as_text(), None);
+    }
+
+    #[test]
+    fn textual_quantity_exposes_its_text() {
+        let quantity = Quantity::from_text("salt to taste");
+
+        assert_eq!(quantity.as_text(), Some("salt to taste"));
+        assert_eq!(quantity.as_measured(), None);
     }
 
     #[test]

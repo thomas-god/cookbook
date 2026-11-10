@@ -69,14 +69,27 @@ form_ingredients = Ingrédients
 form_add_ingredient = Ajouter un ingrédient
 form_ingredient = Ingrédient
     .placeholder = Farine
+form_amount_type = Type de quantité
+form_amount_measured = Mesure
+form_amount_text = Libre
+form_amount_text_value = Quantité (texte libre)
+    .placeholder = une pincée, sel à volonté, ...
 form_quantity = Quantité
     .placeholder = 200
 form_unit = Unité
+form_unit_other = Unité personnalisée
+    .placeholder = sachet, botte, pincée
 form_remove = Supprimer
 
 unit_gram = Gramme
+unit_kilogram = Kilogramme
 unit_millilitre = Millilitre
+unit_centilitre = Centilitre
 unit_litre = Litre
+unit_piece = Unité
+unit_teaspoon = Cuillère à café
+unit_tablespoon = Cuillère à soupe
+unit_other = Autre
 
 form_steps = Étapes
 form_add_step = Ajouter une étape
