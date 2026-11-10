@@ -290,6 +290,136 @@ pub enum Unit {
     Other(String),
 }
 
+/// A source image as supplied by the application before it is stored.
+///
+/// The domain treats the payload as opaque bytes. The application layer
+/// determines and validates the content type.
+#[derive(Debug, Clone, Constructor)]
+pub struct NewRecipeSourceImage {
+    content_type: String,
+    original_name: Option<String>,
+    bytes: Vec<u8>,
+}
+
+impl NewRecipeSourceImage {
+    pub fn content_type(&self) -> &str {
+        &self.content_type
+    }
+
+    pub fn original_name(&self) -> Option<&str> {
+        self.original_name.as_deref()
+    }
+
+    pub fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+}
+
+/// A stored source image belonging to a recipe.
+#[derive(Debug, Clone, Constructor)]
+pub struct RecipeSourceImage {
+    id: RecipeSourceImageId,
+    recipe_id: RecipeId,
+    content_type: String,
+    original_name: Option<String>,
+    bytes: Vec<u8>,
+    added_by: UserId,
+    added_at: SystemTime,
+}
+
+impl RecipeSourceImage {
+    pub fn id(&self) -> &RecipeSourceImageId {
+        &self.id
+    }
+
+    pub fn recipe_id(&self) -> &RecipeId {
+        &self.recipe_id
+    }
+
+    pub fn content_type(&self) -> &str {
+        &self.content_type
+    }
+
+    pub fn original_name(&self) -> Option<&str> {
+        self.original_name.as_deref()
+    }
+
+    pub fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    pub fn added_by(&self) -> &UserId {
+        &self.added_by
+    }
+
+    pub fn added_at(&self) -> SystemTime {
+        self.added_at
+    }
+
+    pub fn summary(&self) -> RecipeSourceImageSummary {
+        RecipeSourceImageSummary::new(
+            self.id.clone(),
+            self.recipe_id.clone(),
+            self.content_type.clone(),
+            self.original_name.clone(),
+            self.bytes.len(),
+            self.added_by.clone(),
+            self.added_at,
+        )
+    }
+}
+
+/// Source image metadata without the image bytes.
+#[derive(Debug, Clone, Constructor)]
+pub struct RecipeSourceImageSummary {
+    id: RecipeSourceImageId,
+    recipe_id: RecipeId,
+    content_type: String,
+    original_name: Option<String>,
+    byte_len: usize,
+    added_by: UserId,
+    added_at: SystemTime,
+}
+
+impl RecipeSourceImageSummary {
+    pub fn id(&self) -> &RecipeSourceImageId {
+        &self.id
+    }
+
+    pub fn recipe_id(&self) -> &RecipeId {
+        &self.recipe_id
+    }
+
+    pub fn content_type(&self) -> &str {
+        &self.content_type
+    }
+
+    pub fn original_name(&self) -> Option<&str> {
+        self.original_name.as_deref()
+    }
+
+    pub fn byte_len(&self) -> usize {
+        self.byte_len
+    }
+
+    pub fn added_by(&self) -> &UserId {
+        &self.added_by
+    }
+
+    pub fn added_at(&self) -> SystemTime {
+        self.added_at
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Constructor)]
+pub struct RecipeSourceImageId(String);
+
+impl RecipeSourceImageId {
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
 #[derive(Debug, Clone, Constructor)]
 pub struct RecipeStep {
     title: Option<String>,
@@ -415,6 +545,29 @@ mod tests {
 
         assert_eq!(quantity.as_text(), Some("salt to taste"));
         assert_eq!(quantity.as_measured(), None);
+    }
+
+    #[test]
+    fn source_image_summary_contains_metadata_but_not_bytes() {
+        let image = RecipeSourceImage::new(
+            RecipeSourceImageId::new("image-1".to_string()),
+            RecipeId::new("soup".to_string()),
+            "image/jpeg".to_string(),
+            Some("front.jpg".to_string()),
+            vec![1, 2, 3, 4],
+            UserId::new("user-1".to_string()),
+            SystemTime::UNIX_EPOCH,
+        );
+
+        let summary = image.summary();
+
+        assert_eq!(summary.id().as_str(), "image-1");
+        assert_eq!(summary.recipe_id().as_str(), "soup");
+        assert_eq!(summary.content_type(), "image/jpeg");
+        assert_eq!(summary.original_name(), Some("front.jpg"));
+        assert_eq!(summary.byte_len(), 4);
+        assert_eq!(summary.added_by().as_str(), "user-1");
+        assert_eq!(summary.added_at(), SystemTime::UNIX_EPOCH);
     }
 
     #[test]

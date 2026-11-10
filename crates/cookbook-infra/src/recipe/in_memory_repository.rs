@@ -7,11 +7,13 @@ use uuid::Uuid;
 
 use cookbook_domain::recipe::models::{
     DurationMinutes, IngredientName, Quantity, Recipe, RecipeContent, RecipeDescription, RecipeId,
-    RecipeMetadata, RecipeRevision, RecipeRevisionId, RecipeStep, RecipeTitle, RecipeWithContent,
-    Unit,
+    RecipeMetadata, RecipeRevision, RecipeRevisionId, RecipeSourceImage, RecipeSourceImageId,
+    RecipeSourceImageSummary, RecipeStep, RecipeTitle, RecipeWithContent, Unit,
 };
 use cookbook_domain::recipe::ports::{
-    GetRecipeError, ListRecipeRevisionsError, ListRecipesError, RecipeRepository, SaveRecipeError,
+    AddSourceImagesError, DeleteSourceImageError, GetRecipeError, GetSourceImageError,
+    ListRecipeRevisionsError, ListRecipesError, ListSourceImagesError, RecipeRepository,
+    SaveRecipeError,
 };
 use cookbook_domain::user::models::UserId;
 
@@ -19,6 +21,7 @@ use cookbook_domain::user::models::UserId;
 struct RecipeRecord {
     recipe: Recipe,
     revisions: Vec<RecipeRevision>,
+    source_images: Vec<RecipeSourceImage>,
 }
 
 impl RecipeRecord {
@@ -62,6 +65,7 @@ impl InMemoryRecipeRepository {
                 RecipeRecord {
                     recipe: current.recipe().clone(),
                     revisions: vec![current.revision().clone()],
+                    source_images: Vec::new(),
                 },
             );
         }
@@ -222,6 +226,51 @@ fn seed_author() -> UserId {
 }
 
 impl RecipeRepository for InMemoryRecipeRepository {
+    async fn save_new_recipe(
+        &self,
+        recipe: Recipe,
+        revision: RecipeRevision,
+        source_images: Vec<RecipeSourceImage>,
+    ) -> Result<(), SaveRecipeError> {
+        if revision.recipe_id() != recipe.id() {
+            return Err(SaveRecipeError::RecipeIdMismatch);
+        }
+
+        if let Some(image) = source_images
+            .iter()
+            .find(|image| image.recipe_id() != recipe.id())
+        {
+            return Err(SaveRecipeError::Storage(anyhow!(
+                "source image `{}` does not belong to recipe `{}`",
+                image.id().as_str(),
+                recipe.id().as_str()
+            )));
+        }
+
+        let mut store = self
+            .store
+            .write()
+            .map_err(|_| SaveRecipeError::Storage(anyhow!("recipe store lock poisoned")))?;
+
+        if store.recipes.contains_key(recipe.id()) {
+            return Err(SaveRecipeError::Storage(anyhow!(
+                "recipe `{}` already exists",
+                recipe.id().as_str()
+            )));
+        }
+
+        store.recipes.insert(
+            recipe.id().clone(),
+            RecipeRecord {
+                recipe,
+                revisions: vec![revision],
+                source_images,
+            },
+        );
+
+        Ok(())
+    }
+
     async fn save_recipe_with_revision(
         &self,
         recipe: Recipe,
@@ -248,6 +297,7 @@ impl RecipeRepository for InMemoryRecipeRepository {
                 RecipeRecord {
                     recipe,
                     revisions: vec![revision],
+                    source_images: Vec::new(),
                 },
             );
         }
@@ -296,6 +346,104 @@ impl RecipeRepository for InMemoryRecipeRepository {
             .get(&id)
             .map(|record| record.revisions.clone())
             .unwrap_or_default())
+    }
+
+    async fn add_source_images(
+        &self,
+        images: Vec<RecipeSourceImage>,
+    ) -> Result<(), AddSourceImagesError> {
+        if images.is_empty() {
+            return Ok(());
+        }
+
+        let mut store = self
+            .store
+            .write()
+            .map_err(|_| AddSourceImagesError::Storage(anyhow!("recipe store lock poisoned")))?;
+
+        let recipe_id = images[0].recipe_id().clone();
+        let recipe = store
+            .recipes
+            .get_mut(&recipe_id)
+            .ok_or(AddSourceImagesError::RecipeNotFound)?;
+
+        if let Some(image) = images.iter().find(|image| image.recipe_id() != &recipe_id) {
+            return Err(AddSourceImagesError::Storage(anyhow!(
+                "source images belong to different recipes: `{}` and `{}`",
+                recipe_id.as_str(),
+                image.recipe_id().as_str()
+            )));
+        }
+
+        recipe.source_images.extend(images);
+
+        Ok(())
+    }
+
+    async fn get_source_images(
+        &self,
+        recipe_id: RecipeId,
+    ) -> Result<Vec<RecipeSourceImageSummary>, ListSourceImagesError> {
+        let store = self
+            .store
+            .read()
+            .map_err(|_| ListSourceImagesError::Storage(anyhow!("recipe store lock poisoned")))?;
+
+        Ok(store
+            .recipes
+            .get(&recipe_id)
+            .map(|record| {
+                record
+                    .source_images
+                    .iter()
+                    .map(RecipeSourceImage::summary)
+                    .collect()
+            })
+            .unwrap_or_default())
+    }
+
+    async fn get_source_image(
+        &self,
+        recipe_id: RecipeId,
+        image_id: RecipeSourceImageId,
+    ) -> Result<Option<RecipeSourceImage>, GetSourceImageError> {
+        let store = self
+            .store
+            .read()
+            .map_err(|_| GetSourceImageError::Storage(anyhow!("recipe store lock poisoned")))?;
+
+        Ok(store.recipes.get(&recipe_id).and_then(|record| {
+            record
+                .source_images
+                .iter()
+                .find(|image| image.id() == &image_id)
+                .cloned()
+        }))
+    }
+
+    async fn delete_source_image(
+        &self,
+        recipe_id: RecipeId,
+        image_id: RecipeSourceImageId,
+    ) -> Result<(), DeleteSourceImageError> {
+        let mut store = self
+            .store
+            .write()
+            .map_err(|_| DeleteSourceImageError::Storage(anyhow!("recipe store lock poisoned")))?;
+
+        let recipe = store
+            .recipes
+            .get_mut(&recipe_id)
+            .ok_or(DeleteSourceImageError::NotFound)?;
+        let index = recipe
+            .source_images
+            .iter()
+            .position(|image| image.id() == &image_id)
+            .ok_or(DeleteSourceImageError::NotFound)?;
+
+        recipe.source_images.remove(index);
+
+        Ok(())
     }
 }
 
@@ -356,6 +504,18 @@ mod tests {
             .save_recipe_with_revision(current.recipe().clone(), current.revision().clone())
             .await
             .unwrap();
+    }
+
+    fn source_image(recipe: &Recipe, id: &str, bytes: &[u8]) -> RecipeSourceImage {
+        RecipeSourceImage::new(
+            RecipeSourceImageId::new(id.to_string()),
+            recipe.id().clone(),
+            "image/jpeg".to_string(),
+            Some(format!("{id}.jpg")),
+            bytes.to_vec(),
+            recipe.author().clone(),
+            SystemTime::UNIX_EPOCH,
+        )
     }
 
     #[tokio::test]
@@ -510,5 +670,192 @@ mod tests {
             .await;
 
         assert!(matches!(result, Err(SaveRecipeError::RecipeAuthorMismatch)));
+    }
+
+    #[tokio::test]
+    async fn saves_a_new_recipe_with_its_source_images() {
+        let repository = InMemoryRecipeRepository::new();
+        let recipe = recipe("soup");
+        let revision = revision("revision-1", &recipe);
+        let image = source_image(&recipe, "image-1", b"front");
+
+        repository
+            .save_new_recipe(recipe.clone(), revision, vec![image])
+            .await
+            .unwrap();
+
+        let images = repository
+            .get_source_images(RecipeId::new("soup".to_string()))
+            .await
+            .unwrap();
+
+        assert_eq!(images.len(), 1);
+        assert_eq!(images[0].id().as_str(), "image-1");
+        assert_eq!(images[0].content_type(), "image/jpeg");
+        assert_eq!(images[0].byte_len(), 5);
+    }
+
+    #[tokio::test]
+    async fn rejects_a_new_recipe_image_for_another_recipe() {
+        let repository = InMemoryRecipeRepository::new();
+        let soup = recipe("soup");
+        let revision = revision("revision-1", &soup);
+        let salad = recipe("salad");
+        let image = source_image(&salad, "image-1", b"front");
+
+        let result = repository
+            .save_new_recipe(soup, revision, vec![image])
+            .await;
+
+        assert!(matches!(result, Err(SaveRecipeError::Storage(_))));
+    }
+
+    #[tokio::test]
+    async fn adds_and_lists_source_images() {
+        let repository = InMemoryRecipeRepository::new();
+        let recipe = recipe("soup");
+        let revision = revision("revision-1", &recipe);
+        repository
+            .save_new_recipe(recipe.clone(), revision, Vec::new())
+            .await
+            .unwrap();
+
+        repository
+            .add_source_images(vec![
+                source_image(&recipe, "image-1", b"front"),
+                source_image(&recipe, "image-2", b"back"),
+            ])
+            .await
+            .unwrap();
+
+        let images = repository
+            .get_source_images(RecipeId::new("soup".to_string()))
+            .await
+            .unwrap();
+
+        assert_eq!(images.len(), 2);
+        assert_eq!(images[0].id().as_str(), "image-1");
+        assert_eq!(images[1].id().as_str(), "image-2");
+    }
+
+    #[tokio::test]
+    async fn gets_a_source_image_by_id() {
+        let repository = InMemoryRecipeRepository::new();
+        let recipe = recipe("soup");
+        let revision = revision("revision-1", &recipe);
+        repository
+            .save_new_recipe(
+                recipe.clone(),
+                revision,
+                vec![source_image(&recipe, "image-1", b"front")],
+            )
+            .await
+            .unwrap();
+
+        let image = repository
+            .get_source_image(
+                RecipeId::new("soup".to_string()),
+                RecipeSourceImageId::new("image-1".to_string()),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(image.bytes(), b"front");
+        assert_eq!(image.original_name(), Some("image-1.jpg"));
+    }
+
+    #[tokio::test]
+    async fn returns_none_for_an_unknown_source_image() {
+        let repository = InMemoryRecipeRepository::new();
+        let recipe = recipe("soup");
+        let revision = revision("revision-1", &recipe);
+        repository
+            .save_new_recipe(recipe, revision, Vec::new())
+            .await
+            .unwrap();
+
+        let image = repository
+            .get_source_image(
+                RecipeId::new("soup".to_string()),
+                RecipeSourceImageId::new("missing".to_string()),
+            )
+            .await
+            .unwrap();
+
+        assert!(image.is_none());
+    }
+
+    #[tokio::test]
+    async fn deletes_a_source_image() {
+        let repository = InMemoryRecipeRepository::new();
+        let recipe = recipe("soup");
+        let revision = revision("revision-1", &recipe);
+        repository
+            .save_new_recipe(
+                recipe.clone(),
+                revision,
+                vec![source_image(&recipe, "image-1", b"front")],
+            )
+            .await
+            .unwrap();
+
+        repository
+            .delete_source_image(
+                RecipeId::new("soup".to_string()),
+                RecipeSourceImageId::new("image-1".to_string()),
+            )
+            .await
+            .unwrap();
+
+        let images = repository
+            .get_source_images(RecipeId::new("soup".to_string()))
+            .await
+            .unwrap();
+
+        assert!(images.is_empty());
+    }
+
+    #[tokio::test]
+    async fn rejects_source_images_for_an_unknown_recipe() {
+        let repository = InMemoryRecipeRepository::new();
+        let recipe = recipe("soup");
+        let image = source_image(&recipe, "image-1", b"front");
+
+        let result = repository.add_source_images(vec![image]).await;
+
+        assert!(matches!(result, Err(AddSourceImagesError::RecipeNotFound)));
+    }
+
+    #[tokio::test]
+    async fn deleting_an_unknown_source_image_is_not_found() {
+        let repository = InMemoryRecipeRepository::new();
+        let recipe = recipe("soup");
+        let revision = revision("revision-1", &recipe);
+        repository
+            .save_new_recipe(recipe, revision, Vec::new())
+            .await
+            .unwrap();
+
+        let result = repository
+            .delete_source_image(
+                RecipeId::new("soup".to_string()),
+                RecipeSourceImageId::new("missing".to_string()),
+            )
+            .await;
+
+        assert!(matches!(result, Err(DeleteSourceImageError::NotFound)));
+    }
+
+    #[tokio::test]
+    async fn unknown_recipes_have_no_source_images() {
+        let repository = InMemoryRecipeRepository::new();
+
+        let images = repository
+            .get_source_images(RecipeId::new("unknown".to_string()))
+            .await
+            .unwrap();
+
+        assert!(images.is_empty());
     }
 }

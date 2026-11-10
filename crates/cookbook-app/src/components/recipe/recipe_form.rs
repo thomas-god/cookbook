@@ -905,6 +905,7 @@ pub(crate) fn create_recipe_request(
     Ok(CreateRecipeRequest {
         content: form.into_content(),
         author,
+        source_images: Vec::new(),
     })
 }
 

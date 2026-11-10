@@ -2,12 +2,17 @@ use uuid::Uuid;
 
 use crate::clock::Clock;
 use crate::recipe::models::{
-    Recipe, RecipeId, RecipeRevision, RecipeRevisionId, RecipeWithContent,
+    NewRecipeSourceImage, Recipe, RecipeId, RecipeRevision, RecipeRevisionId, RecipeSourceImage,
+    RecipeSourceImageId, RecipeSourceImageSummary, RecipeWithContent,
 };
 use crate::recipe::ports::{
-    CreateRecipeError, CreateRecipeRequest, GetRecipeError, GetRecipeHistoryError, GetRecipesError,
-    RecipeRepository, RecipeService, SaveRecipeError, UpdateRecipeError, UpdateRecipeRequest,
+    AddRecipeSourceImagesError, AddRecipeSourceImagesRequest, AddSourceImagesError,
+    CreateRecipeError, CreateRecipeRequest, DeleteRecipeSourceImageError, DeleteSourceImageError,
+    GetRecipeError, GetRecipeHistoryError, GetRecipeSourceImageError, GetRecipeSourceImagesError,
+    GetRecipesError, GetSourceImageError, ListSourceImagesError, RecipeRepository, RecipeService,
+    SaveRecipeError, UpdateRecipeError, UpdateRecipeRequest,
 };
+use crate::user::models::UserId;
 
 #[derive(Debug, Clone)]
 pub struct RecipeServiceImpl<R, C> {
@@ -30,24 +35,29 @@ where
         &self,
         request: CreateRecipeRequest,
     ) -> Result<RecipeWithContent, CreateRecipeError> {
-        let content = request.content;
-        let author = request.author;
+        let CreateRecipeRequest {
+            content,
+            author,
+            source_images,
+        } = request;
         let recipe = Recipe::new(RecipeId::new(Uuid::now_v7().to_string()), author.clone());
+        let now = self.clock.now();
 
         let revision = RecipeRevision::new(
             RecipeRevisionId::new(Uuid::now_v7().to_string()),
             recipe.id().clone(),
             content,
-            author,
-            self.clock.now(),
+            author.clone(),
+            now,
             None,
         );
 
         let current = RecipeWithContent::new(recipe.clone(), revision.clone())
             .map_err(|error| CreateRecipeError::Storage(error.into()))?;
+        let source_images = build_source_images(recipe.id(), &author, source_images, now);
 
         self.repository
-            .save_recipe_with_revision(recipe, revision)
+            .save_new_recipe(recipe, revision, source_images)
             .await
             .map_err(|error| CreateRecipeError::Storage(error.into()))?;
 
@@ -120,6 +130,100 @@ where
             .await
             .map_err(|error| GetRecipeHistoryError::Storage(error.into()))
     }
+
+    async fn add_source_images(
+        &self,
+        request: AddRecipeSourceImagesRequest,
+    ) -> Result<Vec<RecipeSourceImageSummary>, AddRecipeSourceImagesError> {
+        if request.images.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let AddRecipeSourceImagesRequest {
+            recipe_id,
+            added_by,
+            images,
+        } = request;
+        let images = build_source_images(&recipe_id, &added_by, images, self.clock.now());
+        let summaries = images.iter().map(RecipeSourceImage::summary).collect();
+
+        self.repository
+            .add_source_images(images)
+            .await
+            .map_err(|error| match error {
+                AddSourceImagesError::RecipeNotFound => AddRecipeSourceImagesError::RecipeNotFound,
+                AddSourceImagesError::Storage(reason) => {
+                    AddRecipeSourceImagesError::Storage(reason)
+                }
+            })?;
+
+        Ok(summaries)
+    }
+
+    async fn get_source_images(
+        &self,
+        recipe_id: RecipeId,
+    ) -> Result<Vec<RecipeSourceImageSummary>, GetRecipeSourceImagesError> {
+        self.repository
+            .get_source_images(recipe_id)
+            .await
+            .map_err(|error| match error {
+                ListSourceImagesError::Storage(reason) => {
+                    GetRecipeSourceImagesError::Storage(reason)
+                }
+            })
+    }
+
+    async fn get_source_image(
+        &self,
+        recipe_id: RecipeId,
+        image_id: RecipeSourceImageId,
+    ) -> Result<Option<RecipeSourceImage>, GetRecipeSourceImageError> {
+        self.repository
+            .get_source_image(recipe_id, image_id)
+            .await
+            .map_err(|error| match error {
+                GetSourceImageError::Storage(reason) => GetRecipeSourceImageError::Storage(reason),
+            })
+    }
+
+    async fn delete_source_image(
+        &self,
+        recipe_id: RecipeId,
+        image_id: RecipeSourceImageId,
+    ) -> Result<(), DeleteRecipeSourceImageError> {
+        self.repository
+            .delete_source_image(recipe_id, image_id)
+            .await
+            .map_err(|error| match error {
+                DeleteSourceImageError::NotFound => DeleteRecipeSourceImageError::NotFound,
+                DeleteSourceImageError::Storage(reason) => {
+                    DeleteRecipeSourceImageError::Storage(reason)
+                }
+            })
+    }
+}
+
+fn build_source_images(
+    recipe_id: &RecipeId,
+    added_by: &UserId,
+    images: Vec<NewRecipeSourceImage>,
+    added_at: std::time::SystemTime,
+) -> Vec<RecipeSourceImage> {
+    images
+        .into_iter()
+        .map(|image| {
+            RecipeSourceImage::new(
+                RecipeSourceImageId::new(Uuid::now_v7().to_string()),
+                recipe_id.clone(),
+                image.content_type().to_string(),
+                image.original_name().map(str::to_string),
+                image.bytes().to_vec(),
+                added_by.clone(),
+                added_at,
+            )
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -157,7 +261,24 @@ mod tests {
         CreateRecipeRequest {
             content: content("Soup"),
             author: UserId::new("user-1".to_string()),
+            source_images: Vec::new(),
         }
+    }
+
+    fn new_source_image(name: &str, bytes: &[u8]) -> NewRecipeSourceImage {
+        NewRecipeSourceImage::new(
+            "image/jpeg".to_string(),
+            Some(name.to_string()),
+            bytes.to_vec(),
+        )
+    }
+
+    fn recipe_id() -> RecipeId {
+        RecipeId::new("soup".to_string())
+    }
+
+    fn user_id() -> UserId {
+        UserId::new("user-1".to_string())
     }
 
     fn content(title: &str) -> RecipeContent {
@@ -206,9 +327,9 @@ mod tests {
     async fn create_recipe_saves_and_returns_the_recipe() {
         let mut repository = MockRecipeRepository::new();
         repository
-            .expect_save_recipe_with_revision()
+            .expect_save_new_recipe()
             .times(1)
-            .returning(|_, _| Ok(()));
+            .returning(|_, _, _| Ok(()));
 
         let service = RecipeServiceImpl::new(repository, FixedClock::new());
 
@@ -222,16 +343,21 @@ mod tests {
         let edited_at = FixedClock::new().0;
         let mut repository = MockRecipeRepository::new();
         repository
-            .expect_save_recipe_with_revision()
+            .expect_save_new_recipe()
             .times(1)
-            .withf(move |recipe: &Recipe, revision: &RecipeRevision| {
-                revision.recipe_id() == recipe.id()
-                    && revision.content().title().as_str() == "Soup"
-                    && revision.editor() == recipe.author()
-                    && revision.edited_at() == edited_at
-                    && revision.message().is_none()
-            })
-            .returning(|_, _| Ok(()));
+            .withf(
+                move |recipe: &Recipe,
+                      revision: &RecipeRevision,
+                      source_images: &Vec<RecipeSourceImage>| {
+                    revision.recipe_id() == recipe.id()
+                        && revision.content().title().as_str() == "Soup"
+                        && revision.editor() == recipe.author()
+                        && revision.edited_at() == edited_at
+                        && revision.message().is_none()
+                        && source_images.is_empty()
+                },
+            )
+            .returning(|_, _, _| Ok(()));
 
         let service = RecipeServiceImpl::new(repository, FixedClock::new());
 
@@ -245,9 +371,9 @@ mod tests {
     async fn create_recipe_generates_a_unique_id_for_each_recipe() {
         let mut repository = MockRecipeRepository::new();
         repository
-            .expect_save_recipe_with_revision()
+            .expect_save_new_recipe()
             .times(2)
-            .returning(|_, _| Ok(()));
+            .returning(|_, _, _| Ok(()));
 
         let service = RecipeServiceImpl::new(repository, FixedClock::new());
 
@@ -261,14 +387,194 @@ mod tests {
     async fn create_recipe_maps_save_failures_to_storage_errors() {
         let mut repository = MockRecipeRepository::new();
         repository
-            .expect_save_recipe_with_revision()
-            .returning(|_, _| Err(SaveRecipeError::Storage(anyhow!("store unavailable"))));
+            .expect_save_new_recipe()
+            .returning(|_, _, _| Err(SaveRecipeError::Storage(anyhow!("store unavailable"))));
 
         let service = RecipeServiceImpl::new(repository, FixedClock::new());
 
         let result = service.create_recipe(create_request()).await;
 
         assert!(matches!(result, Err(CreateRecipeError::Storage(_))));
+    }
+
+    #[tokio::test]
+    async fn create_recipe_attaches_source_images() {
+        let added_at = FixedClock::new().0;
+        let mut repository = MockRecipeRepository::new();
+        repository
+            .expect_save_new_recipe()
+            .times(1)
+            .withf(
+                move |recipe: &Recipe, _: &RecipeRevision, images: &Vec<RecipeSourceImage>| {
+                    images.len() == 1
+                        && images[0].recipe_id() == recipe.id()
+                        && images[0].content_type() == "image/jpeg"
+                        && images[0].original_name() == Some("front.jpg")
+                        && images[0].bytes() == b"front"
+                        && images[0].added_by() == recipe.author()
+                        && images[0].added_at() == added_at
+                },
+            )
+            .returning(|_, _, _| Ok(()));
+
+        let service = RecipeServiceImpl::new(repository, FixedClock::new());
+        let mut request = create_request();
+        request.source_images = vec![new_source_image("front.jpg", b"front")];
+
+        let recipe = service.create_recipe(request).await.unwrap();
+
+        assert_eq!(recipe.title().as_str(), "Soup");
+    }
+
+    #[tokio::test]
+    async fn add_source_images_assigns_identity_and_metadata() {
+        let added_at = FixedClock::new().0;
+        let mut repository = MockRecipeRepository::new();
+        repository
+            .expect_add_source_images()
+            .times(1)
+            .withf(move |images: &Vec<RecipeSourceImage>| {
+                images.len() == 2
+                    && images.iter().all(|image| {
+                        image.recipe_id() == &recipe_id()
+                            && image.added_by() == &user_id()
+                            && image.added_at() == added_at
+                            && image.content_type() == "image/jpeg"
+                    })
+                    && images[0].original_name() == Some("front.jpg")
+                    && images[0].bytes() == b"front"
+                    && images[1].original_name() == Some("back.jpg")
+                    && images[1].bytes() == b"back"
+                    && images[0].id() != images[1].id()
+            })
+            .returning(|_| Ok(()));
+
+        let service = RecipeServiceImpl::new(repository, FixedClock::new());
+
+        let summaries = service
+            .add_source_images(AddRecipeSourceImagesRequest {
+                recipe_id: recipe_id(),
+                added_by: user_id(),
+                images: vec![
+                    new_source_image("front.jpg", b"front"),
+                    new_source_image("back.jpg", b"back"),
+                ],
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(summaries.len(), 2);
+        assert_eq!(summaries[0].recipe_id(), &recipe_id());
+        assert_eq!(summaries[0].content_type(), "image/jpeg");
+        assert_eq!(summaries[0].original_name(), Some("front.jpg"));
+        assert_eq!(summaries[0].byte_len(), 5);
+        assert_eq!(summaries[0].added_by(), &user_id());
+        assert_eq!(summaries[0].added_at(), added_at);
+        assert_ne!(summaries[0].id(), summaries[1].id());
+    }
+
+    #[tokio::test]
+    async fn add_source_images_is_a_no_op_for_an_empty_request() {
+        let repository = MockRecipeRepository::new();
+        let service = RecipeServiceImpl::new(repository, FixedClock::new());
+
+        let summaries = service
+            .add_source_images(AddRecipeSourceImagesRequest {
+                recipe_id: recipe_id(),
+                added_by: user_id(),
+                images: Vec::new(),
+            })
+            .await
+            .unwrap();
+
+        assert!(summaries.is_empty());
+    }
+
+    #[tokio::test]
+    async fn add_source_images_maps_a_missing_recipe() {
+        let mut repository = MockRecipeRepository::new();
+        repository
+            .expect_add_source_images()
+            .returning(|_| Err(AddSourceImagesError::RecipeNotFound));
+
+        let service = RecipeServiceImpl::new(repository, FixedClock::new());
+
+        let result = service
+            .add_source_images(AddRecipeSourceImagesRequest {
+                recipe_id: recipe_id(),
+                added_by: user_id(),
+                images: vec![new_source_image("front.jpg", b"front")],
+            })
+            .await;
+
+        assert!(matches!(
+            result,
+            Err(AddRecipeSourceImagesError::RecipeNotFound)
+        ));
+    }
+
+    #[tokio::test]
+    async fn get_source_images_returns_the_repository_list() {
+        let mut repository = MockRecipeRepository::new();
+        repository
+            .expect_get_source_images()
+            .times(1)
+            .returning(|_| Ok(Vec::new()));
+
+        let service = RecipeServiceImpl::new(repository, FixedClock::new());
+
+        let images = service.get_source_images(recipe_id()).await.unwrap();
+
+        assert!(images.is_empty());
+    }
+
+    #[tokio::test]
+    async fn get_source_image_returns_the_repository_image() {
+        let image = RecipeSourceImage::new(
+            RecipeSourceImageId::new("image-1".to_string()),
+            recipe_id(),
+            "image/png".to_string(),
+            Some("front.png".to_string()),
+            b"front".to_vec(),
+            user_id(),
+            FixedClock::new().0,
+        );
+        let mut repository = MockRecipeRepository::new();
+        repository.expect_get_source_image().times(1).returning({
+            let image = image.clone();
+            move |_, _| Ok(Some(image.clone()))
+        });
+
+        let service = RecipeServiceImpl::new(repository, FixedClock::new());
+
+        let stored = service
+            .get_source_image(recipe_id(), RecipeSourceImageId::new("image-1".to_string()))
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(stored.id().as_str(), "image-1");
+        assert_eq!(stored.content_type(), "image/png");
+        assert_eq!(stored.bytes(), b"front");
+    }
+
+    #[tokio::test]
+    async fn delete_source_image_maps_a_missing_image() {
+        let mut repository = MockRecipeRepository::new();
+        repository
+            .expect_delete_source_image()
+            .returning(|_, _| Err(DeleteSourceImageError::NotFound));
+
+        let service = RecipeServiceImpl::new(repository, FixedClock::new());
+
+        let result = service
+            .delete_source_image(recipe_id(), RecipeSourceImageId::new("missing".to_string()))
+            .await;
+
+        assert!(matches!(
+            result,
+            Err(DeleteRecipeSourceImageError::NotFound)
+        ));
     }
 
     #[tokio::test]
