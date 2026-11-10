@@ -1,3 +1,5 @@
+use std::time::Instant;
+
 use cookbook_domain::recipe::service::RecipeServiceImpl;
 use cookbook_infra::{
     auth::{
@@ -17,6 +19,7 @@ use topcoat::{
         Body, BodyLimit, HeaderValue, Next, RouterBuilderDiscoverExt, Slot,
         header::VARY,
         href, layer, layout, module_router, page,
+        request::{method, uri},
         response::{Response, response_headers},
     },
     runtime::RouterBuilderRuntimeExt,
@@ -163,6 +166,35 @@ async fn root_layout(cx: &Cx, slot: Slot<'_>) -> Result<impl View> {
             </body>
         </html>
     })
+}
+
+#[layer]
+async fn request_logging(cx: &Cx, body: Body, next: Next<'_>) -> Result<Response> {
+    let method = method(cx).clone();
+    let path = uri(cx).path().to_owned();
+    let started = Instant::now();
+
+    let result = next.run(cx, body).await;
+    let latency_ms = started.elapsed().as_millis();
+
+    match &result {
+        Ok(response) => tracing::info!(
+            %method,
+            path,
+            status = response.status().as_u16(),
+            latency_ms,
+            "request completed"
+        ),
+        Err(error) => tracing::warn!(
+            %method,
+            path,
+            latency_ms,
+            error = %error,
+            "request failed"
+        ),
+    }
+
+    result
 }
 
 #[layer]

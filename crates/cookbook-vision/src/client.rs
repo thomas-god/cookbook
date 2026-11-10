@@ -49,8 +49,21 @@ impl VisionClient {
         let mut failures = Vec::new();
 
         for (index, endpoint) in self.endpoints.iter().enumerate() {
+            tracing::debug!(
+                endpoint = index + 1,
+                model = endpoint.model(),
+                images = images.len(),
+                "trying vision endpoint"
+            );
+
             match self.try_endpoint(endpoint, &images) {
                 Ok(content) => {
+                    tracing::info!(
+                        endpoint = index + 1,
+                        model = endpoint.model(),
+                        "vision endpoint returned a recipe"
+                    );
+
                     let source_images = images
                         .iter()
                         .map(|image| {
@@ -64,7 +77,15 @@ impl VisionClient {
 
                     return Ok(VisionRecipe::new(content, source_images));
                 }
-                Err(reason) => failures.push(format!("endpoint {}: {reason}", index + 1)),
+                Err(reason) => {
+                    tracing::warn!(
+                        endpoint = index + 1,
+                        model = endpoint.model(),
+                        reason,
+                        "vision endpoint failed"
+                    );
+                    failures.push(format!("endpoint {}: {reason}", index + 1));
+                }
             }
         }
 
