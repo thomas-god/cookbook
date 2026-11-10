@@ -14,7 +14,7 @@ use topcoat::{
     font::{fontsource::fontsource_font, link},
     l10n::locale,
     router::{
-        Body, HeaderValue, Next, RouterBuilderDiscoverExt, Slot,
+        Body, BodyLimit, HeaderValue, Next, RouterBuilderDiscoverExt, Slot,
         header::VARY,
         href, layer, layout, module_router, page,
         response::{Response, response_headers},
@@ -25,6 +25,7 @@ use topcoat::{
 };
 
 pub(crate) mod auth;
+mod dev;
 mod locale;
 pub(crate) mod recipe;
 pub(crate) mod recipes;
@@ -78,6 +79,7 @@ pub async fn router() -> topcoat::router::Router {
         .app_context(user_repository)
         .app_context(auth_config.settings())
         .discover()
+        .layer(BodyLimit::max(dev::heic::MAX_UPLOAD_BYTES).at("/dev/heic"))
         .layer(auth::AuthenticationLayer::new())
         .cookies()
         .sessions(
