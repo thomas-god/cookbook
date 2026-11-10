@@ -168,7 +168,7 @@ async fn root_layout(cx: &Cx, slot: Slot<'_>) -> Result<impl View> {
     })
 }
 
-#[layer]
+#[layer("/")]
 async fn request_logging(cx: &Cx, body: Body, next: Next<'_>) -> Result<Response> {
     let method = method(cx).clone();
     let path = uri(cx).path().to_owned();
