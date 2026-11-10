@@ -18,7 +18,7 @@ use cookbook_domain::user::models::UserId;
 
 pub use client::VisionClient;
 pub use config::{VisionConfig, VisionEndpoint};
-pub use image::SourcePhoto;
+pub use image::{SourcePhoto, detect_image_content_type};
 
 /// A parsed recipe and the source photos it was created from.
 #[derive(Debug, Clone)]

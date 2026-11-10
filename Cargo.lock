@@ -294,6 +294,7 @@ dependencies = [
  "chrono",
  "cookbook-domain",
  "cookbook-infra",
+ "cookbook-vision",
  "serde",
  "tokio",
  "topcoat",

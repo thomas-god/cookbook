@@ -48,6 +48,24 @@ recipe_history_edited = Edited the recipe
 recipe_history_edited_by = Edited by
 recipe_history_view = View
 recipe_conflict = This recipe was changed by someone else. Reload the form and try again.
+recipe_import_link = Add from photos
+recipe_import_heading = Add a recipe from photos
+recipe_import_images = Photos
+recipe_import_hint = Select photos of a handwritten recipe, cookbook page, or other existing copy. A recipe will be created from the photos and opened for review.
+recipe_import_submit = Create recipe from photos
+recipe_import_empty = Select at least one photo.
+recipe_import_unsupported = Only JPEG and PNG photos are supported.
+recipe_import_failed = The photos could not be turned into a recipe. Check the vision configuration and try again.
+
+source_images_heading = Source recipe
+source_images_empty = No source recipe yet.
+source_images_upload = Add source photos
+source_images_upload_hint = These are reference photos for the recipe, separate from the recipe's presentation images.
+source_images_upload_submit = Upload photos
+source_images_delete = Delete
+source_images_unsupported = Only JPEG and PNG photos are supported.
+source_images_upload_empty = Select at least one photo.
+source_image_alt = Recipe source photo
 
 form_add_recipe = Add a recipe
 form_new_recipe = New recipe

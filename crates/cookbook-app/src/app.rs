@@ -29,6 +29,7 @@ mod dev;
 mod locale;
 pub(crate) mod recipe;
 pub(crate) mod recipes;
+mod vision;
 
 use crate::{
     app::{
@@ -58,6 +59,7 @@ pub async fn router() -> topcoat::router::Router {
     let recipe_service =
         AppRecipeService::new(InMemoryRecipeRepository::seeded(), SystemClock::new());
     let auth_config = auth::AuthConfig::from_env().expect("invalid authentication configuration");
+    let vision_config = vision::VisionConfig::from_env().expect("invalid vision configuration");
     let user_repository = AppUserRepository::new();
     let auth_service = AppAuthService::new(
         user_repository.clone(),
@@ -78,8 +80,12 @@ pub async fn router() -> topcoat::router::Router {
         .app_context(auth_service)
         .app_context(user_repository)
         .app_context(auth_config.settings())
+        .app_context(vision_config.settings())
+        .app_context(vision_config.client())
         .discover()
         .layer(BodyLimit::max(dev::heic::MAX_UPLOAD_BYTES).at("/dev/heic"))
+        .layer(BodyLimit::max(recipe::import::MAX_UPLOAD_BYTES).at("/recipe/import"))
+        .layer(BodyLimit::max(recipes::MAX_UPLOAD_BYTES).at("/recipes"))
         .layer(auth::AuthenticationLayer::new())
         .cookies()
         .sessions(
@@ -171,6 +177,7 @@ async fn locale_layer(cx: &Cx, body: Body, next: Next<'_>) -> Result<Response> {
 #[page]
 pub async fn page(cx: &Cx) -> Result<impl View> {
     auth::require_user(cx)?;
+    let vision_settings: &vision::VisionSettings = app_context(cx);
 
     Ok(view! {
         <h2 class="mb-2 text-2xl font-semibold">(t!(recipes_heading))</h2>
@@ -190,6 +197,15 @@ pub async fn page(cx: &Cx) -> Result<impl View> {
                     (t!(new_recipe))
                 )
             </a>
+            if vision_settings.enabled() {
+                <a href=(href!(recipe::import::page))>
+                    button(
+                        variant: ButtonVariant::Primary,
+                        size: ButtonSize::Md,
+                        (t!(recipe_import_link))
+                    )
+                </a>
+            }
         </div>
     })
 }

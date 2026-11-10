@@ -12,6 +12,23 @@ use crate::VisionError;
 const MAX_VLM_IMAGE_EDGE: u32 = 2048;
 const VLM_JPEG_QUALITY: u8 = 85;
 
+/// Detects the content type of a supported image from its magic bytes.
+///
+/// This is intentionally a lightweight check for application-side upload
+/// validation. The vision pipeline performs a full decode before sending the
+/// image to a model.
+pub fn detect_image_content_type(bytes: &[u8]) -> Option<&'static str> {
+    if bytes.starts_with(&[0xFF, 0xD8, 0xFF]) {
+        return Some("image/jpeg");
+    }
+
+    if bytes.starts_with(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]) {
+        return Some("image/png");
+    }
+
+    None
+}
+
 /// A photo supplied by the application.
 #[derive(Debug, Clone)]
 pub struct SourcePhoto {
@@ -155,6 +172,19 @@ mod tests {
         let result = prepare_images(vec![SourcePhoto::new(None, Vec::new())]);
 
         assert!(matches!(result, Err(VisionError::EmptyImage { index: 0 })));
+    }
+
+    #[test]
+    fn detects_supported_content_types() {
+        assert_eq!(
+            detect_image_content_type(&[0xFF, 0xD8, 0xFF, 0xE0]),
+            Some("image/jpeg")
+        );
+        assert_eq!(
+            detect_image_content_type(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]),
+            Some("image/png")
+        );
+        assert_eq!(detect_image_content_type(b"not an image"), None);
     }
 
     #[test]

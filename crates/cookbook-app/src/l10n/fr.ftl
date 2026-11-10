@@ -48,6 +48,24 @@ recipe_history_edited = Recette modifiée
 recipe_history_edited_by = Modifiée par
 recipe_history_view = Voir
 recipe_conflict = Cette recette a été modifiée par quelqu'un d'autre. Rechargez le formulaire et réessayez.
+recipe_import_link = Importer depuis une photo
+recipe_import_heading = Importer une recette depuis des photos
+recipe_import_images = Photos
+recipe_import_hint = Sélectionnez des photos d'une recette manuscrite, d'une page de livre ou d'une autre copie. La recette sera créée à partir des photos puis vous pourrez l'éditer.
+recipe_import_submit = Importer
+recipe_import_empty = Sélectionnez au moins une photo.
+recipe_import_unsupported = Seules les photos JPEG et PNG sont prises en charge.
+recipe_import_failed = Les photos n'ont pas pu être transformées en recette. Vérifiez la configuration du module de vision et réessayez.
+
+source_images_heading = Recette originale
+source_images_empty = Aucune photo source pour le moment.
+source_images_upload = Ajouter des photos
+source_images_upload_hint = Pour archiver votre recette originale (page manuscrite, page d'un livre, etc.).
+source_images_upload_submit = Envoyer les photos
+source_images_delete = Supprimer
+source_images_unsupported = Seules les photos JPEG et PNG sont prises en charge.
+source_images_upload_empty = Sélectionnez au moins une photo.
+source_image_alt = Photo source
 
 form_add_recipe = Ajouter une recette
 form_new_recipe = Nouvelle recette

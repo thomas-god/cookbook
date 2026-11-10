@@ -1,18 +1,26 @@
 use std::time::SystemTime;
 
 use cookbook_domain::recipe::models::{
-    RecipeId as RecipeIdValue, RecipeRevision, RecipeRevisionId,
+    NewRecipeSourceImage, RecipeId as RecipeIdValue, RecipeRevision, RecipeRevisionId,
+    RecipeSourceImageId as RecipeSourceImageIdValue,
 };
-use cookbook_domain::recipe::ports::{RecipeService, UpdateRecipeError};
+use cookbook_domain::recipe::ports::{
+    AddRecipeSourceImagesError, AddRecipeSourceImagesRequest, DeleteRecipeSourceImageError,
+    RecipeService, UpdateRecipeError,
+};
 use cookbook_domain::user::models::UserId;
 use cookbook_infra::auth::ports::UserRepository;
+use cookbook_vision::detect_image_content_type;
 use topcoat::{
     Result,
     context::{Cx, app_context},
     router::{
-        content::Form,
+        Body,
+        content::{Form, multipart::Multipart},
         error::{RouterErrorExt, SeeOther, bad_request, not_found, see_other},
-        href, page, path_param, route,
+        href, page, path_param,
+        response::Response,
+        route,
     },
     view::{View, view},
 };
@@ -24,10 +32,13 @@ use crate::{
         recipe::{
             recipe_form::{RecipeFormMode, recipe_form},
             recipe_view::recipe_view,
+            source_images::{source_image_editor, source_image_gallery},
         },
     },
     t,
 };
+
+pub(crate) const MAX_UPLOAD_BYTES: usize = 100 * 1024 * 1024;
 
 #[page]
 pub async fn page(cx: &Cx) -> Result<impl View> {
@@ -62,6 +73,7 @@ pub async fn page(cx: &Cx) -> Result<impl View> {
 
 path_param!(pub recipe_id);
 path_param!(revision_id);
+path_param!(pub source_image_id);
 
 #[page("./{recipe_id}")]
 pub async fn recipe_detail(cx: &Cx) -> Result<impl View> {
@@ -73,6 +85,9 @@ pub async fn recipe_detail(cx: &Cx) -> Result<impl View> {
         .get_recipe(RecipeIdValue::new(recipe_id))
         .await?
         .ok_or_not_found()?;
+    let source_images = recipe_service
+        .get_source_images(recipe.id().clone())
+        .await?;
 
     let author_name = display_name(cx, recipe.author()).await?;
     let total_minutes = recipe.metadata().total_duration().as_minutes();
@@ -125,6 +140,10 @@ pub async fn recipe_detail(cx: &Cx) -> Result<impl View> {
             </div>
 
             recipe_view(content: recipe.content())
+            source_image_gallery(
+                recipe_id: recipe.id().as_str(),
+                images: &source_images
+            )
         </div>
     })
 }
@@ -139,16 +158,30 @@ pub async fn edit_recipe(cx: &Cx) -> Result<impl View> {
         .get_recipe(RecipeIdValue::new(recipe_id.clone()))
         .await?
         .ok_or_not_found()?;
+    let source_images = recipe_service
+        .get_source_images(recipe.id().clone())
+        .await?;
     let mode = RecipeFormMode::Edit {
-        recipe_id: RecipeIdValue::new(recipe_id),
+        recipe_id: RecipeIdValue::new(recipe_id.clone()),
         latest_revision: RecipeRevisionId::new(recipe.revision().id().as_str().to_string()),
     };
 
     Ok(view! {
-        card(
-            card_header(card_title((t!(form_edit_recipe))))
-            card_content(recipe_form(mode: mode))
-        )
+        <div class="flex flex-col gap-6">
+            card(
+                card_header(card_title((t!(form_edit_recipe))))
+                card_content(recipe_form(mode: mode))
+            )
+            card(
+                card_header(card_title((t!(source_images_heading))))
+                card_content(
+                    source_image_editor(
+                        recipe_id: recipe_id.as_str(),
+                        images: &source_images
+                    )
+                )
+            )
+        </div>
     })
 }
 
@@ -171,6 +204,98 @@ pub async fn update_recipe(cx: &Cx, Form(form): Form<Vec<(String, String)>>) -> 
             Err(bad_request(t!(recipe_conflict).resolve(cx)).into())
         }
         Err(UpdateRecipeError::NotFound) => Err(not_found().into()),
+        Err(error) => Err(error.into()),
+    }
+}
+
+#[route(GET "./{recipe_id}/source-images/{source_image_id}")]
+pub async fn source_image(cx: &Cx) -> Result<Response> {
+    auth::require_user(cx)?;
+
+    let recipe_id = path_param::<RecipeId>(cx).to_string();
+    let image_id = path_param::<SourceImageId>(cx).to_string();
+    let recipe_service: &AppRecipeService = app_context(cx);
+    let image = recipe_service
+        .get_source_image(
+            RecipeIdValue::new(recipe_id),
+            RecipeSourceImageIdValue::new(image_id),
+        )
+        .await?
+        .ok_or_not_found()?;
+
+    Ok(Response::builder()
+        .header("Content-Type", image.content_type())
+        .header("Cache-Control", "private, max-age=3600")
+        .header("X-Content-Type-Options", "nosniff")
+        .body(Body::from(image.bytes().to_vec()))?)
+}
+
+#[route(POST "./{recipe_id}/source-images")]
+pub async fn upload_source_images(cx: &Cx, mut multipart: Multipart) -> Result<SeeOther> {
+    let user = auth::require_user(cx)?;
+    let recipe_id = path_param::<RecipeId>(cx).to_string();
+    let mut images = Vec::new();
+
+    while let Some(part) = multipart.next_field().await? {
+        if part.name() != Some("images") {
+            continue;
+        }
+
+        let original_name = part.file_name().map(str::to_owned);
+        let bytes = part.bytes().await?;
+        let Some(content_type) = detect_image_content_type(&bytes) else {
+            return Err(bad_request(t!(source_images_unsupported).resolve(cx)).into());
+        };
+
+        images.push(NewRecipeSourceImage::new(
+            content_type.to_string(),
+            original_name,
+            bytes.to_vec(),
+        ));
+    }
+
+    if images.is_empty() {
+        return Err(bad_request(t!(source_images_upload_empty).resolve(cx)).into());
+    }
+
+    let recipe_service: &AppRecipeService = app_context(cx);
+
+    match recipe_service
+        .add_source_images(AddRecipeSourceImagesRequest {
+            recipe_id: RecipeIdValue::new(recipe_id.clone()),
+            added_by: user.id().clone(),
+            images,
+        })
+        .await
+    {
+        Ok(_) => Ok(see_other(
+            href!(edit_recipe, RecipeId(recipe_id.as_str())).resolve(cx),
+        )),
+        Err(AddRecipeSourceImagesError::RecipeNotFound) => Err(not_found().into()),
+        Err(error) => Err(error.into()),
+    }
+}
+
+// Not DELETE since its driven by an HTTP form that can only use POST
+#[route(POST "./{recipe_id}/source-images/{source_image_id}/delete")]
+pub async fn delete_source_image(cx: &Cx) -> Result<SeeOther> {
+    auth::require_user(cx)?;
+
+    let recipe_id = path_param::<RecipeId>(cx).to_string();
+    let image_id = path_param::<SourceImageId>(cx).to_string();
+    let recipe_service: &AppRecipeService = app_context(cx);
+
+    match recipe_service
+        .delete_source_image(
+            RecipeIdValue::new(recipe_id.clone()),
+            RecipeSourceImageIdValue::new(image_id),
+        )
+        .await
+    {
+        Ok(_) => Ok(see_other(
+            href!(edit_recipe, RecipeId(recipe_id.as_str())).resolve(cx),
+        )),
+        Err(DeleteRecipeSourceImageError::NotFound) => Err(not_found().into()),
         Err(error) => Err(error.into()),
     }
 }

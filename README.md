@@ -30,6 +30,31 @@ Session cookie security follows the `X-Forwarded-Proto` header:
 A TLS-terminating reverse proxy must set `X-Forwarded-Proto`. If the app is exposed directly to
 untrusted clients, make sure they cannot spoof that header.
 
+## Vision recipe import
+
+Recipes can be imported from photos of an existing recipe using a vision-language model (VLM) via an
+OpenAI-compatible model endpoint. Configure a primary endpoint and an optional fallback:
+
+```sh
+COOKBOOK_VLM_PRIMARY_URL=http://localhost:1234/v1/chat/completions
+COOKBOOK_VLM_PRIMARY_MODEL=qwen2.5-vl-7b-instruct
+COOKBOOK_VLM_PRIMARY_API_KEY=        # optional for local endpoints
+COOKBOOK_VLM_PRIMARY_TIMEOUT_SECONDS=180
+
+COOKBOOK_VLM_BACKUP_URL=https://openrouter.ai/api/v1/chat/completions
+COOKBOOK_VLM_BACKUP_MODEL=qwen/qwen2.5-vl-72b-instruct
+COOKBOOK_VLM_BACKUP_API_KEY=sk-or-...
+COOKBOOK_VLM_BACKUP_TIMEOUT_SECONDS=120
+```
+
+- No endpoint configured disables the import feature and hides it from the UI.
+- The backup endpoint can be configured without a primary endpoint.
+- The app tries endpoints in order: primary first, then backup.
+- URLs are full chat-completions URLs, not just base URLs.
+- Requests use structured output (`response_format.json_schema`).
+- Uploaded originals are kept as recipe source photos. A resized copy is generated only for the
+  vision request.
+
 ## Development
 
 Run the app with the Topcoat development server:
