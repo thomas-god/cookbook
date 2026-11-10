@@ -1,7 +1,9 @@
-use std::{env, time::Duration};
+use std::time::Duration;
 
 use anyhow::{Context, bail};
 use cookbook_vision::{VisionClient, VisionConfig as ClientVisionConfig, VisionEndpoint};
+
+use crate::env;
 
 const PRIMARY_PREFIX: &str = "COOKBOOK_VLM_PRIMARY";
 const BACKUP_PREFIX: &str = "COOKBOOK_VLM_BACKUP";
@@ -55,10 +57,10 @@ fn endpoint_from_env(
     endpoint_from_values(
         prefix,
         default_timeout_seconds,
-        optional_env(&format!("{prefix}_URL")),
-        optional_env(&format!("{prefix}_MODEL")),
-        optional_env(&format!("{prefix}_API_KEY")),
-        optional_env(&format!("{prefix}_TIMEOUT_SECONDS")),
+        env::optional(&format!("{prefix}_URL"))?,
+        env::optional(&format!("{prefix}_MODEL"))?,
+        env::optional(&format!("{prefix}_API_KEY"))?,
+        env::optional(&format!("{prefix}_TIMEOUT_SECONDS"))?,
     )
 }
 
@@ -102,13 +104,6 @@ fn endpoint_from_values(
         api_key,
         Duration::from_secs(timeout_seconds),
     )))
-}
-
-fn optional_env(name: &str) -> Option<String> {
-    env::var(name)
-        .ok()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
 }
 
 #[cfg(test)]

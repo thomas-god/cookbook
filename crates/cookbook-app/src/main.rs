@@ -1,5 +1,6 @@
 mod app;
 mod components;
+mod env;
 
 topcoat::l10n::fluent::messages!("./l10n/{locale}.ftl");
 

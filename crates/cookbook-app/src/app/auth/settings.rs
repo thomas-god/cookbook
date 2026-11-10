@@ -1,5 +1,3 @@
-use std::env;
-
 use anyhow::{Context, bail};
 use cookbook_domain::user::models::{UserRole, Username};
 use cookbook_infra::auth::{
@@ -7,7 +5,7 @@ use cookbook_infra::auth::{
     ports::{AuthService, RegisterRequest},
 };
 
-use crate::app::AppAuthService;
+use crate::{app::AppAuthService, env};
 
 const REGISTRATION_ENABLED_ENV: &str = "COOKBOOK_REGISTRATION_ENABLED";
 const FIRST_ADMIN_EMAIL_ENV: &str = "COOKBOOK_FIRST_ADMIN_EMAIL";
@@ -42,19 +40,15 @@ struct BootstrapAdmin {
 
 impl AuthConfig {
     pub fn from_env() -> anyhow::Result<Self> {
-        let registration_enabled = match env::var(REGISTRATION_ENABLED_ENV) {
-            Ok(value) => parse_bool(&value)
+        let registration_enabled = match env::optional(REGISTRATION_ENABLED_ENV)? {
+            Some(value) => parse_bool(&value)
                 .with_context(|| format!("invalid value for {REGISTRATION_ENABLED_ENV}"))?,
-            Err(env::VarError::NotPresent) => false,
-            Err(error) => {
-                return Err(error)
-                    .with_context(|| format!("failed to read {REGISTRATION_ENABLED_ENV}"));
-            }
+            None => false,
         };
 
-        let email = optional_env(FIRST_ADMIN_EMAIL_ENV);
-        let password = optional_env(FIRST_ADMIN_PASSWORD_ENV);
-        let username = optional_env(FIRST_ADMIN_USERNAME_ENV);
+        let email = env::optional(FIRST_ADMIN_EMAIL_ENV)?;
+        let password = env::optional(FIRST_ADMIN_PASSWORD_ENV)?;
+        let username = env::optional(FIRST_ADMIN_USERNAME_ENV)?;
 
         let bootstrap_admin = match (email, password) {
             (None, None) => {
@@ -106,13 +100,6 @@ impl AuthConfig {
 
         Ok(())
     }
-}
-
-fn optional_env(name: &str) -> Option<String> {
-    env::var(name)
-        .ok()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
 }
 
 fn parse_bool(value: &str) -> anyhow::Result<bool> {

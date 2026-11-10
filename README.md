@@ -55,6 +55,22 @@ COOKBOOK_VLM_BACKUP_TIMEOUT_SECONDS=120
 - Uploaded originals are kept as recipe source photos. A resized copy is generated only for the
   vision request.
 
+## Secrets
+
+Every environment variable `NAME` can also be read from a file by setting `NAME_FILE` to the file
+path. This works with
+[Docker secrets](https://docs.docker.com/engine/swarm/secrets/#build-support-for-docker-secrets-into-your-images)
+or any mounted secret:
+
+```sh
+COOKBOOK_FIRST_ADMIN_PASSWORD_FILE=/run/secrets/admin_password
+COOKBOOK_VLM_PRIMARY_API_KEY_FILE=/run/secrets/vlm_api_key
+```
+
+The file takes precedence over the direct variable. Surrounding whitespace, including the trailing
+newline added by many secret stores, is trimmed. If `NAME_FILE` is set but the file cannot be read,
+startup fails instead of silently falling back.
+
 ## Development
 
 Run the app with the Topcoat development server:
