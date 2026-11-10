@@ -53,9 +53,12 @@ recipe_import_heading = Add a recipe from photos
 recipe_import_images = Photos
 recipe_import_hint = Select photos of a handwritten recipe, cookbook page, or other existing copy. A recipe will be created from the photos and opened for review.
 recipe_import_submit = Create recipe from photos
+recipe_import_working = Importing photos. This can take a moment.
 recipe_import_empty = Select at least one photo.
 recipe_import_unsupported = Only JPEG and PNG photos are supported.
 recipe_import_failed = The photos could not be turned into a recipe. Check the vision configuration and try again.
+recipe_import_save_failed = The imported recipe could not be saved. Please try again.
+recipe_import_retry = Your photos were not kept after the error. Select them again to retry.
 
 source_images_heading = Source recipe
 source_images_empty = No source recipe yet.

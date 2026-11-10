@@ -53,9 +53,12 @@ recipe_import_heading = Importer une recette depuis des photos
 recipe_import_images = Photos
 recipe_import_hint = Sélectionnez des photos d'une recette manuscrite, d'une page de livre ou d'une autre copie. La recette sera créée à partir des photos puis vous pourrez l'éditer.
 recipe_import_submit = Importer
+recipe_import_working = Import en cours, cela peut prendre un moment.
 recipe_import_empty = Sélectionnez au moins une photo.
 recipe_import_unsupported = Seules les photos JPEG et PNG sont prises en charge.
 recipe_import_failed = Les photos n'ont pas pu être transformées en recette. Vérifiez la configuration du module de vision et réessayez.
+recipe_import_save_failed = La recette n'a pas pu être enregistrée. Réessayez.
+recipe_import_retry = Vos photos n'ont pas pu être conservées. Sélectionnez-les à nouveau pour réessayer.
 
 source_images_heading = Recette originale
 source_images_empty = Aucune photo source pour le moment.
