@@ -97,7 +97,7 @@ pub async fn recipe_detail(cx: &Cx) -> Result<impl View> {
         .await?;
 
     let author_name = display_name(cx, recipe.author()).await?;
-    let total_minutes = recipe.metadata().total_duration().as_minutes();
+    let total_minutes = recipe.durations().total_duration().as_minutes();
 
     Ok(view! {
         <div class="flex flex-col gap-8">
@@ -463,7 +463,7 @@ pub async fn recipe_revision(cx: &Cx) -> Result<impl View> {
 
     let editor = display_name(cx, revision.editor()).await?;
     let author_name = display_name(cx, recipe.author()).await?;
-    let total_minutes = revision.content().metadata().total_duration().as_minutes();
+    let total_minutes = revision.content().durations().total_duration().as_minutes();
 
     Ok(view! {
         <div class="flex flex-col gap-8">

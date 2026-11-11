@@ -3,8 +3,8 @@ use std::collections::{BTreeMap, HashMap};
 use cookbook_domain::recipe::{
     models::{
         DurationMinutes, IngredientName, Quantity, RecipeContent, RecipeDescription,
-        RecipeId as RecipeIdValue, RecipeMetadata, RecipeRevisionId, RecipeStep, RecipeTitle,
-        RecipeWithContent, RevisionMessage, RevisionVerification, Unit,
+        RecipeDurations, RecipeId as RecipeIdValue, RecipeRevisionId, RecipeStep, RecipeTitle,
+        RecipeWithContent, RevisionMessage, RevisionVerification, Servings, Unit,
     },
     ports::{CreateRecipeRequest, RecipeService, UpdateRecipeRequest},
 };
@@ -42,6 +42,9 @@ const DESCRIPTION_FIELD: &str = "description";
 const PREPARATION_FIELD: &str = "preparation";
 const REST_FIELD: &str = "rest";
 const COOKING_FIELD: &str = "cooking";
+const SERVINGS_TYPE_FIELD: &str = "servings_type";
+const SERVINGS_COUNT_FIELD: &str = "servings_count";
+const SERVINGS_LABEL_FIELD: &str = "servings_label";
 const MESSAGE_FIELD: &str = "message";
 const LATEST_REVISION_FIELD: &str = "latest_revision";
 
@@ -120,6 +123,7 @@ impl StepField {
 struct RecipeFormData {
     title: String,
     description: Option<String>,
+    servings: Option<Servings>,
     preparation: Option<usize>,
     rest: Option<usize>,
     cooking: Option<usize>,
@@ -134,7 +138,8 @@ impl RecipeFormData {
         RecipeContent::new(
             RecipeTitle::new(self.title),
             self.description.map(RecipeDescription::new),
-            RecipeMetadata::new(
+            self.servings,
+            RecipeDurations::new(
                 self.preparation.map(DurationMinutes::new),
                 self.rest.map(DurationMinutes::new),
                 self.cooking.map(DurationMinutes::new),
@@ -185,6 +190,9 @@ struct StepInitial {
 struct FormInitial {
     title: String,
     description: String,
+    servings_type: String,
+    servings_count: String,
+    servings_label: String,
     preparation: String,
     rest: String,
     cooking: String,
@@ -201,24 +209,39 @@ impl FormInitial {
             .collect();
         ingredients.sort_by(|left, right| left.name.cmp(&right.name));
 
+        let (servings_type, servings_count, servings_label) = match recipe.servings() {
+            Some(Servings::People(count)) => {
+                ("people".to_string(), count.to_string(), String::new())
+            }
+            Some(Servings::Portions { count, label }) => (
+                "portions".to_string(),
+                count.to_string(),
+                label.clone().unwrap_or_default(),
+            ),
+            None => ("none".to_string(), String::new(), String::new()),
+        };
+
         Self {
             title: recipe.title().as_str().to_string(),
             description: recipe
                 .description()
                 .map(|description| description.as_str().to_string())
                 .unwrap_or_default(),
+            servings_type,
+            servings_count,
+            servings_label,
             preparation: recipe
-                .metadata()
+                .durations()
                 .preparation()
                 .map(|duration| duration.as_minutes().to_string())
                 .unwrap_or_default(),
             rest: recipe
-                .metadata()
+                .durations()
                 .rest()
                 .map(|duration| duration.as_minutes().to_string())
                 .unwrap_or_default(),
             cooking: recipe
-                .metadata()
+                .durations()
                 .cooking()
                 .map(|duration| duration.as_minutes().to_string())
                 .unwrap_or_default(),
@@ -388,6 +411,16 @@ async fn recipe_form_fields(
     let title = signal(cx, move || title_value.clone());
     let description_value = initial.description.clone();
     let description = signal(cx, move || description_value.clone());
+    let servings_type_value = if initial.servings_type.is_empty() {
+        "none".to_string()
+    } else {
+        initial.servings_type.clone()
+    };
+    let servings_type = signal(cx, move || servings_type_value.clone());
+    let servings_count_value = initial.servings_count.clone();
+    let servings_count = signal(cx, move || servings_count_value.clone());
+    let servings_label_value = initial.servings_label.clone();
+    let servings_label = signal(cx, move || servings_label_value.clone());
     let preparation_value = initial.preparation.clone();
     let preparation = signal(cx, move || preparation_value.clone());
     let rest_value = initial.rest.clone();
@@ -404,6 +437,9 @@ async fn recipe_form_fields(
 
     let title_id = element_id(cx);
     let description_id = element_id(cx);
+    let servings_type_id = element_id(cx);
+    let servings_count_id = element_id(cx);
+    let servings_label_id = element_id(cx);
     let preparation_id = element_id(cx);
     let rest_id = element_id(cx);
     let cooking_id = element_id(cx);
@@ -471,6 +507,66 @@ async fn recipe_form_fields(
                         :value=$(description.get())
                         @input=$(|e: Event| description.set(e.target.value))
                     ></textarea>
+                )
+                field_set(
+                    field_legend((t!(form_servings)))
+                    <div class="grid gap-4 sm:grid-cols-3">
+                        field(
+                            field_label(
+                                attrs: attributes! { for=(&servings_type_id) },
+                                (t!(form_servings_type))
+                            )
+                            <select
+                                id=(&servings_type_id)
+                                name=(SERVINGS_TYPE_FIELD)
+                                class=(SELECT_CLASS)
+                                :value=$(servings_type.get())
+                                @change=$(|e: Event| servings_type.set(e.target.value))
+                            >
+                                <option value="none">(t!(form_servings_none))</option>
+                                <option value="people">(t!(form_servings_people))</option>
+                                <option value="portions">(t!(form_servings_portions))</option>
+                            </select>
+                        )
+                        field(
+                            attrs: attributes! { :hidden=$(servings_type.get() == "none") },
+                            field_label(
+                                attrs: attributes! { for=(&servings_count_id) },
+                                (t!(form_servings_count))
+                            )
+                            input(
+                                attrs: attributes! {
+                                    id=(&servings_count_id)
+                                    name=(SERVINGS_COUNT_FIELD)
+                                    type="number"
+                                    min="1"
+                                    step="1"
+                                    placeholder="4"
+                                    :disabled=$(servings_type.get() == "none")
+                                    :value=$(servings_count.get())
+                                    @input=$(|e: Event| servings_count.set(e.target.value))
+                                }
+                            )
+                        )
+                        field(
+                            attrs: attributes! { :hidden=$(servings_type.get() != "portions") },
+                            field_label(
+                                attrs: attributes! { for=(&servings_label_id) },
+                                (t!(form_servings_label))
+                            )
+                            input(
+                                attrs: attributes! {
+                                    id=(&servings_label_id)
+                                    name=(SERVINGS_LABEL_FIELD)
+                                    type="text"
+                                    placeholder=(t!(form_servings_label.placeholder))
+                                    :disabled=$(servings_type.get() != "portions")
+                                    :value=$(servings_label.get())
+                                    @input=$(|e: Event| servings_label.set(e.target.value))
+                                }
+                            )
+                        )
+                    </div>
                 )
                 <div class="grid gap-4 sm:grid-cols-3">
                     field(
@@ -875,6 +971,9 @@ async fn step_row(cx: &Cx, row: usize, initial: Option<StepInitial>) -> Result<i
 fn parse_recipe_form(pairs: &[(String, String)]) -> Result<RecipeFormData> {
     let mut title = None;
     let mut description = None;
+    let mut servings_type = None;
+    let mut servings_count = None;
+    let mut servings_label = None;
     let mut preparation = None;
     let mut rest = None;
     let mut cooking = None;
@@ -887,6 +986,9 @@ fn parse_recipe_form(pairs: &[(String, String)]) -> Result<RecipeFormData> {
         match key.as_str() {
             TITLE_FIELD => set_once(&mut title, value, key)?,
             DESCRIPTION_FIELD => set_once(&mut description, value, key)?,
+            SERVINGS_TYPE_FIELD => set_once(&mut servings_type, value, key)?,
+            SERVINGS_COUNT_FIELD => set_once(&mut servings_count, value, key)?,
+            SERVINGS_LABEL_FIELD => set_once(&mut servings_label, value, key)?,
             PREPARATION_FIELD => set_once(&mut preparation, value, key)?,
             REST_FIELD => set_once(&mut rest, value, key)?,
             COOKING_FIELD => set_once(&mut cooking, value, key)?,
@@ -920,6 +1022,11 @@ fn parse_recipe_form(pairs: &[(String, String)]) -> Result<RecipeFormData> {
     Ok(RecipeFormData {
         title,
         description,
+        servings: parse_servings(
+            servings_type.as_deref(),
+            servings_count.as_deref(),
+            servings_label.as_deref(),
+        )?,
         preparation: parse_optional_minutes(preparation.as_deref(), PREPARATION_FIELD)?,
         rest: parse_optional_minutes(rest.as_deref(), REST_FIELD)?,
         cooking: parse_optional_minutes(cooking.as_deref(), COOKING_FIELD)?,
@@ -1041,6 +1148,69 @@ where
 
 fn invalid(message: impl Into<String>) -> Error {
     bad_request(message).into()
+}
+
+const MAX_SERVINGS_LABEL_LENGTH: usize = 40;
+
+fn parse_servings(
+    servings_type: Option<&str>,
+    count: Option<&str>,
+    label: Option<&str>,
+) -> Result<Option<Servings>> {
+    let servings_type = servings_type.map(str::trim).unwrap_or_default();
+    let count = count.map(str::trim).unwrap_or_default();
+    let label = label.map(str::trim).unwrap_or_default();
+
+    match servings_type {
+        "" | "none" => {
+            if !count.is_empty() || !label.is_empty() {
+                return Err(invalid(
+                    "servings cannot have a count or label when they are not specified",
+                ));
+            }
+
+            Ok(None)
+        }
+        "people" => {
+            if !label.is_empty() {
+                return Err(invalid("people servings cannot have a free-form label"));
+            }
+
+            Ok(Some(Servings::people(parse_servings_count(count)?)))
+        }
+        "portions" => {
+            let count = parse_servings_count(count)?;
+
+            if label.is_empty() {
+                return Ok(Some(Servings::portions(count)));
+            }
+
+            if label.chars().count() > MAX_SERVINGS_LABEL_LENGTH {
+                return Err(invalid(format!(
+                    "a portions label cannot exceed {MAX_SERVINGS_LABEL_LENGTH} characters"
+                )));
+            }
+
+            Ok(Some(Servings::portions_with_label(count, label)))
+        }
+        other => Err(invalid(format!("unknown servings type `{other}`"))),
+    }
+}
+
+fn parse_servings_count(value: &str) -> Result<usize> {
+    if value.is_empty() {
+        return Err(invalid("a serving count is required"));
+    }
+
+    let count = value
+        .parse::<usize>()
+        .map_err(|_| invalid("a serving count must be a whole number"))?;
+
+    if count == 0 {
+        return Err(invalid("a serving count must be greater than zero"));
+    }
+
+    Ok(count)
 }
 
 fn parse_optional_minutes(value: Option<&str>, wire_field: &str) -> Result<Option<usize>> {
@@ -1306,6 +1476,84 @@ mod tests {
                 .as_ref()
                 .expect("step ingredients")["flour"],
             200.0
+        );
+    }
+
+    #[test]
+    fn parses_people_servings() {
+        let form = parse_recipe_form(&pairs(&[
+            ("title", "Soup"),
+            ("servings_type", "people"),
+            ("servings_count", "4"),
+        ]))
+        .unwrap();
+
+        assert_eq!(form.servings, Some(Servings::people(4)));
+    }
+
+    #[test]
+    fn parses_portion_servings() {
+        let form = parse_recipe_form(&pairs(&[
+            ("title", "Cookies"),
+            ("servings_type", "portions"),
+            ("servings_count", "12"),
+            ("servings_label", "  cookies  "),
+        ]))
+        .unwrap();
+
+        assert_eq!(
+            form.servings,
+            Some(Servings::portions_with_label(12, "cookies"))
+        );
+    }
+
+    #[test]
+    fn parses_portion_servings_without_a_label() {
+        let form = parse_recipe_form(&pairs(&[
+            ("title", "Cookies"),
+            ("servings_type", "portions"),
+            ("servings_count", "12"),
+            ("servings_label", "   "),
+        ]))
+        .unwrap();
+
+        assert_eq!(form.servings, Some(Servings::portions(12)));
+    }
+
+    #[test]
+    fn defaults_to_no_servings() {
+        let form = parse_recipe_form(&pairs(&[("title", "Soup")])).unwrap();
+
+        assert_eq!(form.servings, None);
+    }
+
+    #[test]
+    fn rejects_servings_with_a_missing_or_zero_count() {
+        for entries in [
+            vec![("title", "Soup"), ("servings_type", "people")],
+            vec![
+                ("title", "Soup"),
+                ("servings_type", "people"),
+                ("servings_count", "0"),
+            ],
+            vec![("title", "Soup"), ("servings_type", "unknown")],
+        ] {
+            assert!(
+                parse_recipe_form(&pairs(&entries)).is_err(),
+                "expected an error for {entries:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_servings_values_when_servings_are_not_specified() {
+        assert!(
+            parse_recipe_form(&pairs(&[
+                ("title", "Soup"),
+                ("servings_type", "none"),
+                ("servings_count", "4"),
+            ]))
+            .is_err()
         );
     }
 
@@ -1619,7 +1867,8 @@ mod tests {
         let content = RecipeContent::new(
             RecipeTitle::new("Soup".to_string()),
             Some(RecipeDescription::new("A warming soup.".to_string())),
-            RecipeMetadata::new(
+            Some(Servings::portions_with_label(12, "cookies")),
+            RecipeDurations::new(
                 Some(DurationMinutes::new(10)),
                 None,
                 Some(DurationMinutes::new(20)),
@@ -1666,6 +1915,9 @@ mod tests {
 
         assert_eq!(initial.title, "Soup");
         assert_eq!(initial.description, "A warming soup.");
+        assert_eq!(initial.servings_type, "portions");
+        assert_eq!(initial.servings_count, "12");
+        assert_eq!(initial.servings_label, "cookies");
         assert_eq!(initial.preparation, "10");
         assert_eq!(initial.rest, "");
         assert_eq!(initial.cooking, "20");

@@ -268,7 +268,7 @@ mod tests {
 
     use super::*;
     use crate::recipe::models::{
-        RecipeContent, RecipeMetadata, RecipeRevision, RecipeTitle, RevisionMessage,
+        RecipeContent, RecipeDurations, RecipeRevision, RecipeTitle, RevisionMessage,
     };
     use crate::recipe::ports::{MockRecipeRepository, SaveRecipeError, UpdateRecipeRequest};
     use crate::user::models::UserId;
@@ -319,7 +319,8 @@ mod tests {
         RecipeContent::new(
             RecipeTitle::new(title.to_string()),
             None,
-            RecipeMetadata::new(None, None, None),
+            None,
+            RecipeDurations::new(None, None, None),
             HashMap::new(),
             Vec::new(),
         )

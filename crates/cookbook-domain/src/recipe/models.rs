@@ -76,8 +76,12 @@ impl RecipeWithContent {
         self.content().description()
     }
 
-    pub fn metadata(&self) -> &RecipeMetadata {
-        self.content().metadata()
+    pub fn servings(&self) -> Option<&Servings> {
+        self.content().servings()
+    }
+
+    pub fn durations(&self) -> &RecipeDurations {
+        self.content().durations()
     }
 
     pub fn ingredients(&self) -> &HashMap<IngredientName, Quantity> {
@@ -105,7 +109,8 @@ impl std::error::Error for RecipeRevisionMismatch {}
 pub struct RecipeContent {
     title: RecipeTitle,
     description: Option<RecipeDescription>,
-    metadata: RecipeMetadata,
+    servings: Option<Servings>,
+    durations: RecipeDurations,
     ingredients: HashMap<IngredientName, Quantity>,
     steps: Vec<RecipeStep>,
 }
@@ -119,8 +124,12 @@ impl RecipeContent {
         self.description.as_ref()
     }
 
-    pub fn metadata(&self) -> &RecipeMetadata {
-        &self.metadata
+    pub fn servings(&self) -> Option<&Servings> {
+        self.servings.as_ref()
+    }
+
+    pub fn durations(&self) -> &RecipeDurations {
+        &self.durations
     }
 
     pub fn ingredients(&self) -> &HashMap<IngredientName, Quantity> {
@@ -216,14 +225,54 @@ impl RecipeDescription {
     }
 }
 
+/// How much a recipe yields.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Servings {
+    /// A number of people, such as `4 people`.
+    People(usize),
+    /// A number of portions with an optional free-form label, such as `12 cookies`.
+    Portions { count: usize, label: Option<String> },
+}
+
+impl Servings {
+    pub fn people(count: usize) -> Self {
+        Self::People(count)
+    }
+
+    pub fn portions(count: usize) -> Self {
+        Self::Portions { count, label: None }
+    }
+
+    pub fn portions_with_label(count: usize, label: impl Into<String>) -> Self {
+        Self::Portions {
+            count,
+            label: Some(label.into()),
+        }
+    }
+
+    pub fn as_people(&self) -> Option<usize> {
+        match self {
+            Self::People(count) => Some(*count),
+            Self::Portions { .. } => None,
+        }
+    }
+
+    pub fn as_portions(&self) -> Option<(usize, Option<&str>)> {
+        match self {
+            Self::People(_) => None,
+            Self::Portions { count, label } => Some((*count, label.as_deref())),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Constructor)]
-pub struct RecipeMetadata {
+pub struct RecipeDurations {
     preparation: Option<DurationMinutes>,
     rest: Option<DurationMinutes>,
     cooking: Option<DurationMinutes>,
 }
 
-impl RecipeMetadata {
+impl RecipeDurations {
     pub fn preparation(&self) -> Option<&DurationMinutes> {
         self.preparation.as_ref()
     }
@@ -499,12 +548,12 @@ impl std::error::Error for RevisionMessageError {}
 mod tests {
     use super::*;
 
-    fn metadata(
+    fn durations(
         preparation: Option<usize>,
         rest: Option<usize>,
         cooking: Option<usize>,
-    ) -> RecipeMetadata {
-        RecipeMetadata::new(
+    ) -> RecipeDurations {
+        RecipeDurations::new(
             preparation.map(DurationMinutes::new),
             rest.map(DurationMinutes::new),
             cooking.map(DurationMinutes::new),
@@ -513,38 +562,61 @@ mod tests {
 
     #[test]
     fn total_duration_is_zero_when_no_durations_are_set() {
-        let metadata = metadata(None, None, None);
+        let durations = durations(None, None, None);
 
-        assert_eq!(metadata.total_duration().0, 0);
+        assert_eq!(durations.total_duration().0, 0);
     }
 
     #[test]
     fn total_duration_sums_preparation_rest_and_cooking() {
-        let metadata = metadata(Some(10), Some(20), Some(30));
+        let durations = durations(Some(10), Some(20), Some(30));
 
-        assert_eq!(metadata.total_duration().0, 60);
+        assert_eq!(durations.total_duration().0, 60);
     }
 
     #[test]
     fn total_duration_treats_missing_durations_as_zero() {
-        assert_eq!(metadata(Some(10), None, None).total_duration().0, 10);
-        assert_eq!(metadata(None, Some(20), None).total_duration().0, 20);
-        assert_eq!(metadata(None, None, Some(30)).total_duration().0, 30);
+        assert_eq!(durations(Some(10), None, None).total_duration().0, 10);
+        assert_eq!(durations(None, Some(20), None).total_duration().0, 20);
+        assert_eq!(durations(None, None, Some(30)).total_duration().0, 30);
     }
 
     #[test]
-    fn exposes_individual_metadata_durations() {
-        let metadata = metadata(Some(10), Some(20), Some(30));
+    fn exposes_individual_durations() {
+        let durations = durations(Some(10), Some(20), Some(30));
 
         assert_eq!(
-            metadata.preparation().map(DurationMinutes::as_minutes),
+            durations.preparation().map(DurationMinutes::as_minutes),
             Some(10)
         );
-        assert_eq!(metadata.rest().map(DurationMinutes::as_minutes), Some(20));
+        assert_eq!(durations.rest().map(DurationMinutes::as_minutes), Some(20));
         assert_eq!(
-            metadata.cooking().map(DurationMinutes::as_minutes),
+            durations.cooking().map(DurationMinutes::as_minutes),
             Some(30)
         );
+    }
+
+    #[test]
+    fn people_servings_expose_their_count() {
+        let servings = Servings::people(4);
+
+        assert_eq!(servings.as_people(), Some(4));
+        assert_eq!(servings.as_portions(), None);
+    }
+
+    #[test]
+    fn portion_servings_expose_their_count_and_label() {
+        let servings = Servings::portions_with_label(12, "cookies");
+
+        assert_eq!(servings.as_people(), None);
+        assert_eq!(servings.as_portions(), Some((12, Some("cookies"))));
+    }
+
+    #[test]
+    fn portion_servings_can_have_no_label() {
+        let servings = Servings::portions(12);
+
+        assert_eq!(servings.as_portions(), Some((12, None)));
     }
 
     #[test]

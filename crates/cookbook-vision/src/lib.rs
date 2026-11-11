@@ -102,7 +102,7 @@ mod tests {
     use std::collections::HashMap;
 
     use cookbook_domain::recipe::models::{
-        RecipeContent, RecipeMetadata, RecipeTitle, RevisionVerification,
+        RecipeContent, RecipeDurations, RecipeTitle, RevisionVerification,
     };
 
     use super::*;
@@ -112,7 +112,8 @@ mod tests {
         let content = RecipeContent::new(
             RecipeTitle::new("Soup".to_string()),
             None,
-            RecipeMetadata::new(None, None, None),
+            None,
+            RecipeDurations::new(None, None, None),
             HashMap::new(),
             Vec::new(),
         );

@@ -6,10 +6,10 @@ use anyhow::anyhow;
 use uuid::Uuid;
 
 use cookbook_domain::recipe::models::{
-    DurationMinutes, IngredientName, Quantity, Recipe, RecipeContent, RecipeDescription, RecipeId,
-    RecipeMetadata, RecipeRevision, RecipeRevisionId, RecipeSourceImage, RecipeSourceImageId,
-    RecipeSourceImageSummary, RecipeStep, RecipeTitle, RecipeWithContent, RevisionVerification,
-    Unit,
+    DurationMinutes, IngredientName, Quantity, Recipe, RecipeContent, RecipeDescription,
+    RecipeDurations, RecipeId, RecipeRevision, RecipeRevisionId, RecipeSourceImage,
+    RecipeSourceImageId, RecipeSourceImageSummary, RecipeStep, RecipeTitle, RecipeWithContent,
+    RevisionVerification, Servings, Unit,
 };
 use cookbook_domain::recipe::ports::{
     AddSourceImagesError, DeleteSourceImageError, GetRecipeError, GetSourceImageError,
@@ -81,7 +81,8 @@ fn seeded_recipe(
     id: &str,
     title: &str,
     description: &str,
-    metadata: RecipeMetadata,
+    servings: Option<Servings>,
+    durations: RecipeDurations,
     ingredients: HashMap<IngredientName, Quantity>,
     steps: Vec<RecipeStep>,
 ) -> RecipeWithContent {
@@ -89,7 +90,8 @@ fn seeded_recipe(
     let content = RecipeContent::new(
         RecipeTitle::new(title.to_string()),
         Some(RecipeDescription::new(description.to_string())),
-        metadata,
+        servings,
+        durations,
         ingredients,
         steps,
     );
@@ -112,7 +114,8 @@ fn seed_recipes() -> Vec<RecipeWithContent> {
             "seed-tomato-soup",
             "Tomato Soup",
             "A comforting weeknight soup made with ripe tomatoes.",
-            RecipeMetadata::new(
+            Some(Servings::people(4)),
+            RecipeDurations::new(
                 Some(DurationMinutes::new(10)),
                 None,
                 Some(DurationMinutes::new(30)),
@@ -148,7 +151,8 @@ fn seed_recipes() -> Vec<RecipeWithContent> {
             "seed-lemon-pasta",
             "Lemon Pasta",
             "A bright pasta dish that comes together in minutes.",
-            RecipeMetadata::new(
+            Some(Servings::people(2)),
+            RecipeDurations::new(
                 Some(DurationMinutes::new(10)),
                 None,
                 Some(DurationMinutes::new(12)),
@@ -184,7 +188,8 @@ fn seed_recipes() -> Vec<RecipeWithContent> {
             "seed-banana-bread",
             "Banana Bread",
             "A moist loaf that is perfect for using up ripe bananas.",
-            RecipeMetadata::new(
+            Some(Servings::portions_with_label(12, "slices")),
+            RecipeDurations::new(
                 Some(DurationMinutes::new(15)),
                 Some(DurationMinutes::new(10)),
                 Some(DurationMinutes::new(55)),
@@ -455,7 +460,7 @@ mod tests {
     use std::time::SystemTime;
 
     use super::*;
-    use cookbook_domain::recipe::models::{RecipeId, RecipeMetadata, RecipeTitle};
+    use cookbook_domain::recipe::models::{RecipeDurations, RecipeId, RecipeTitle};
 
     fn recipe(id: &str) -> Recipe {
         Recipe::new(
@@ -471,7 +476,8 @@ mod tests {
             RecipeContent::new(
                 RecipeTitle::new("Soup".to_string()),
                 None,
-                RecipeMetadata::new(None, None, None),
+                None,
+                RecipeDurations::new(None, None, None),
                 HashMap::new(),
                 Vec::new(),
             ),
@@ -490,7 +496,8 @@ mod tests {
             RecipeContent::new(
                 RecipeTitle::new(title.to_string()),
                 None,
-                RecipeMetadata::new(None, None, None),
+                None,
+                RecipeDurations::new(None, None, None),
                 HashMap::new(),
                 Vec::new(),
             ),
@@ -709,7 +716,8 @@ mod tests {
             RecipeContent::new(
                 RecipeTitle::new("Soup".to_string()),
                 None,
-                RecipeMetadata::new(None, None, None),
+                None,
+                RecipeDurations::new(None, None, None),
                 HashMap::new(),
                 Vec::new(),
             ),

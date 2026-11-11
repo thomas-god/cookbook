@@ -1,4 +1,4 @@
-use cookbook_domain::recipe::models::{Quantity, RecipeContent, Unit};
+use cookbook_domain::recipe::models::{Quantity, RecipeContent, Servings, Unit};
 use topcoat::{
     Result,
     context::Cx,
@@ -49,6 +49,22 @@ fn quantity_label(cx: &Cx, quantity: &Quantity) -> String {
     }
 }
 
+fn servings_label(cx: &Cx, servings: &Servings) -> String {
+    match servings {
+        Servings::People(count) if *count == 1 => t!(serving_person, count = count.to_string())
+            .resolve(cx)
+            .into_owned(),
+        Servings::People(count) => t!(serving_people, count = count.to_string())
+            .resolve(cx)
+            .into_owned(),
+        Servings::Portions {
+            count,
+            label: Some(label),
+        } => format!("{count} {label}"),
+        Servings::Portions { count, label: None } => count.to_string(),
+    }
+}
+
 /// Read-only rendering of a recipe's ingredients and steps.
 #[component]
 pub async fn recipe_view(cx: &Cx, content: &RecipeContent) -> Result<impl View> {
@@ -61,6 +77,13 @@ pub async fn recipe_view(cx: &Cx, content: &RecipeContent) -> Result<impl View> 
 
     Ok(view! {
         cx =>
+        if let Some(servings) = content.servings() {
+            <p class="text-sm text-muted-foreground">
+                (t!(recipe_servings))
+                ": "
+                (servings_label(cx, servings))
+            </p>
+        }
         <section>
             <h3 class="mb-3 text-lg font-semibold">(t!(recipe_ingredients))</h3>
             <ul class="flex flex-col gap-2">
@@ -143,5 +166,31 @@ mod tests {
         let cx = Cx::default();
 
         assert_eq!(quantity_label(&cx, &Quantity::from_text("libre")), "libre");
+    }
+
+    #[test]
+    fn localizes_people_servings_with_singular_and_plural_forms() {
+        let cx = Cx::default().with(topcoat::l10n::locale!("en"));
+
+        // Fluent wraps interpolated values in bidi isolation marks.
+        let label = |servings| {
+            servings_label(&cx, &servings)
+                .replace('\u{2068}', "")
+                .replace('\u{2069}', "")
+        };
+
+        assert_eq!(label(Servings::people(1)), "1 person");
+        assert_eq!(label(Servings::people(4)), "4 people");
+    }
+
+    #[test]
+    fn displays_portion_servings_with_their_free_form_label() {
+        let cx = Cx::default();
+
+        assert_eq!(
+            servings_label(&cx, &Servings::portions_with_label(12, "cookies")),
+            "12 cookies"
+        );
+        assert_eq!(servings_label(&cx, &Servings::portions(12)), "12");
     }
 }

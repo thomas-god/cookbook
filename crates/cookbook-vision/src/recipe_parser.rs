@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
 use cookbook_domain::recipe::models::{
-    DurationMinutes, IngredientName, Quantity, RecipeContent, RecipeDescription, RecipeMetadata,
-    RecipeStep, RecipeTitle, Unit,
+    DurationMinutes, IngredientName, Quantity, RecipeContent, RecipeDescription, RecipeDurations,
+    RecipeStep, RecipeTitle, Servings, Unit,
 };
 use schemars::{JsonSchema, generate::SchemaSettings};
 use serde::Deserialize;
@@ -21,6 +21,13 @@ Rules for ingredient amounts:
   "to taste".
 - Every ingredient must have either a numeric amount or an amount_text.
 - Step-level ingredients contain only names and numeric amounts from the ingredient list.
+
+Rules for servings:
+- Use "servings_people" for a number of people, such as 4.
+- Use "servings_amount" with an optional "servings_label" for a count of items, such as
+  12 cookies or 8 slices. Keep the label as written in the source when it is present.
+- Leave all three servings fields null when the source does not state a yield.
+- Do not fill both a people count and an item count.
 
 Durations are whole minutes. Use null when a duration is not written in the source."#;
 
@@ -128,6 +135,9 @@ struct RawRecipe {
     preparation_minutes: Option<f64>,
     rest_minutes: Option<f64>,
     cooking_minutes: Option<f64>,
+    servings_people: Option<f64>,
+    servings_amount: Option<f64>,
+    servings_label: Option<String>,
     #[serde(default)]
     ingredients: Vec<RawIngredient>,
     #[serde(default)]
@@ -147,6 +157,11 @@ impl RawRecipe {
             .map(|value| value.trim().to_string())
             .filter(|value| !value.is_empty())
             .map(RecipeDescription::new);
+        let servings = parse_servings(
+            self.servings_people,
+            self.servings_amount,
+            self.servings_label.as_deref(),
+        );
 
         let ingredients = self
             .ingredients
@@ -163,7 +178,8 @@ impl RawRecipe {
         Ok(RecipeContent::new(
             RecipeTitle::new(title),
             description,
-            RecipeMetadata::new(
+            servings,
+            RecipeDurations::new(
                 duration_minutes(self.preparation_minutes),
                 duration_minutes(self.rest_minutes),
                 duration_minutes(self.cooking_minutes),
@@ -268,6 +284,26 @@ fn duration_minutes(value: Option<f64>) -> Option<DurationMinutes> {
         .map(|value| DurationMinutes::new(value.round() as usize))
 }
 
+fn parse_servings(
+    people: Option<f64>,
+    amount: Option<f64>,
+    label: Option<&str>,
+) -> Option<Servings> {
+    if let Some(people) = people.filter(|value| value.is_finite() && *value >= 1.0) {
+        return Some(Servings::people(people.round() as usize));
+    }
+
+    let amount = amount.filter(|value| value.is_finite() && *value >= 1.0)?;
+    let count = amount.round() as usize;
+
+    Some(
+        match label.map(str::trim).filter(|label| !label.is_empty()) {
+            Some(label) => Servings::portions_with_label(count, label),
+            None => Servings::portions(count),
+        },
+    )
+}
+
 fn parse_quantity(
     amount: Option<f64>,
     unit: Option<&str>,
@@ -335,6 +371,9 @@ mod tests {
                 "preparation_minutes": 10,
                 "rest_minutes": null,
                 "cooking_minutes": 30,
+                "servings_people": 4,
+                "servings_amount": null,
+                "servings_label": null,
                 "ingredients": [
                     {"name": "tomatoes", "amount": 800, "unit": "gram", "amount_text": null},
                     {"name": "salt", "amount": null, "unit": null, "amount_text": "to taste"}
@@ -355,7 +394,8 @@ mod tests {
             content.description().map(RecipeDescription::as_str),
             Some("A simple soup.")
         );
-        assert_eq!(content.metadata().total_duration().as_minutes(), 40);
+        assert_eq!(content.durations().total_duration().as_minutes(), 40);
+        assert_eq!(content.servings(), Some(&Servings::people(4)));
         assert_eq!(
             content.ingredients()[&IngredientName::new("tomatoes".to_string())],
             Quantity::from_measure(800.0, Unit::Gram)
@@ -365,6 +405,50 @@ mod tests {
             Quantity::from_text("to taste")
         );
         assert_eq!(content.steps()[0].instruction(), "Simmer everything.");
+    }
+
+    #[test]
+    fn parses_portion_servings_and_ignores_absent_servings() {
+        let content = parse_recipe_json(
+            r#"{
+                "title": "Cookies",
+                "servings_people": null,
+                "servings_amount": 12,
+                "servings_label": "  cookies  ",
+                "ingredients": [],
+                "steps": []
+            }"#,
+        )
+        .unwrap();
+        let without_servings = parse_recipe_json(
+            r#"{
+                "title": "Soup",
+                "servings_people": null,
+                "servings_amount": null,
+                "servings_label": null,
+                "ingredients": [],
+                "steps": []
+            }"#,
+        )
+        .unwrap();
+        let without_label = parse_recipe_json(
+            r#"{
+                "title": "Cookies",
+                "servings_people": null,
+                "servings_amount": 12,
+                "servings_label": null,
+                "ingredients": [],
+                "steps": []
+            }"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            content.servings(),
+            Some(&Servings::portions_with_label(12, "cookies"))
+        );
+        assert_eq!(without_label.servings(), Some(&Servings::portions(12)));
+        assert_eq!(without_servings.servings(), None);
     }
 
     #[test]
@@ -430,6 +514,9 @@ mod tests {
             "preparation_minutes",
             "rest_minutes",
             "cooking_minutes",
+            "servings_people",
+            "servings_amount",
+            "servings_label",
             "ingredients",
             "steps",
         ] {
