@@ -57,12 +57,22 @@ ingredients[<row>][unit]          # measured mode
 ingredients[<row>][unit_other]    # measured mode, when unit = "other"
 ingredients[<row>][quantity_text] # text mode
 
+steps[<row>][id]          # stable step ID, hidden; empty for a new step
 steps[<row>][title]
 steps[<row>][instruction]
 steps[<row>][ingredients]
+steps[<row>][image_ids]   # repeated; complete ordered image list for that step
 ```
 
-Top-level fields remain (e.g. `title`, `preparation`, etc.).
+Images are uploaded as part of the same multipart form:
+
+```text
+image_ids                 # repeated; complete ordered recipe-level image list
+images                    # multiple recipe-level image files
+steps[<row>][images]      # multiple image files for that step
+```
+
+Top-level text fields remain (e.g. `title`, `preparation`, etc.).
 
 Field names are generated through shared helpers (`IngredientField::key` and `StepField::key`) so
 the form and parser use the same definitions.

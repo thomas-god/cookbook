@@ -3,7 +3,7 @@ use topcoat::{
     Result,
     context::{Cx, app_context},
     router::{
-        content::Form,
+        content::multipart::Multipart,
         error::{SeeOther, see_other},
         page, route,
     },
@@ -14,7 +14,9 @@ use crate::{
     app::{AppRecipeService, auth},
     components::{
         base::card::{card, card_content, card_header, card_title},
-        recipe::recipe_form::{RecipeFormMode, create_recipe_request, recipe_form},
+        recipe::recipe_form::{
+            RecipeFormMode, create_recipe_request, read_recipe_form, recipe_form,
+        },
     },
     t,
 };
@@ -32,13 +34,14 @@ pub async fn page(cx: &Cx) -> Result<impl View> {
 }
 
 #[route(POST)]
-pub async fn create(cx: &Cx, Form(form): Form<Vec<(String, String)>>) -> Result<SeeOther> {
+pub async fn create(cx: &Cx, mut multipart: Multipart) -> Result<SeeOther> {
     let user = auth::require_user(cx)?;
 
     let recipe_service: &AppRecipeService = app_context(cx);
+    let submission = read_recipe_form(&mut multipart).await?;
 
     recipe_service
-        .create_verified_recipe(create_recipe_request(form, user.id().clone())?)
+        .create_verified_recipe(create_recipe_request(submission, user.id().clone())?)
         .await?;
 
     Ok(see_other("/recipes"))

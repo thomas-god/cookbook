@@ -88,6 +88,7 @@ pub async fn router() -> topcoat::router::Router {
         .discover()
         .layer(BodyLimit::max(dev::heic::MAX_UPLOAD_BYTES).at("/dev/heic"))
         .layer(BodyLimit::max(recipe::import::MAX_UPLOAD_BYTES).at("/recipe/import"))
+        .layer(BodyLimit::max(recipes::MAX_UPLOAD_BYTES).at("/recipe/new"))
         .layer(BodyLimit::max(recipes::MAX_UPLOAD_BYTES).at("/recipes"))
         .layer(auth::AuthenticationLayer::new())
         .cookies()

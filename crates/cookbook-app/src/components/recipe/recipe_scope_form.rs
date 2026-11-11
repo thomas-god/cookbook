@@ -42,10 +42,7 @@ pub async fn recipe_scope_form(
     Ok(view! {
         <form method="post" action=(action) class="flex flex-col gap-4">
             field(
-                field_label(
-                    attrs: attributes! { for=(&scope_id) },
-                    (t!(scope_label))
-                )
+                field_label(attrs: attributes! { for=(&scope_id) }, (t!(scope_label)))
                 <select id=(&scope_id) name="scope" class=(SELECT_CLASS)>
                     for (option, label) in options {
                         <option value=(option.as_str()) selected=(option == scope)>

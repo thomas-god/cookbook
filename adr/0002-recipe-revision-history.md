@@ -69,6 +69,16 @@ the editor. Update requests carry it as `latest_revision`. The service compares 
 latest revision and returns `UpdateRecipeError::Conflict` when they differ. A conflicting update is
 not persisted.
 
+### Presentation images are referenced by revisions
+
+Recipe-level and step-level presentation images are recipe-owned assets stored separately from
+revision snapshots. Revisions store ordered image ids in `RecipeContent` and in each `RecipeStep`,
+but not image bytes. Removing an image reference from a new revision does not delete the image
+record: older revisions keep referencing it and can still display it. Image records are kept until
+the recipe itself is deleted. Source/reference photos remain a separate collection.
+
+Step splitting can copy image ids to the new step without duplicating or updating image records.
+
 ## Consequences
 
 ### Benefits

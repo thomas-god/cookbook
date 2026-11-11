@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use cookbook_domain::recipe::models::{
     DurationMinutes, IngredientName, Quantity, RecipeContent, RecipeDescription, RecipeDurations,
-    RecipeStep, RecipeTitle, Servings, Unit,
+    RecipeStep, RecipeStepId, RecipeTitle, Servings, Unit,
 };
 use schemars::{JsonSchema, generate::SchemaSettings};
 use serde::Deserialize;
@@ -185,6 +185,7 @@ impl RawRecipe {
                 duration_minutes(self.cooking_minutes),
             ),
             ingredients,
+            Vec::new(),
             steps,
         ))
     }
@@ -250,9 +251,11 @@ impl RawStep {
             .collect::<HashMap<_, _>>();
 
         Some(Ok(RecipeStep::new(
+            RecipeStepId::generate(),
             title,
             (!ingredients.is_empty()).then_some(ingredients),
             instruction,
+            Vec::new(),
         )))
     }
 }

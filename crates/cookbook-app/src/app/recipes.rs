@@ -1,8 +1,9 @@
 use std::time::SystemTime;
 
 use cookbook_domain::recipe::models::{
-    NewRecipeSourceImage, RecipeId as RecipeIdValue, RecipeRevision, RecipeRevisionId, RecipeScope,
-    RecipeSourceImageId as RecipeSourceImageIdValue, RevisionVerification,
+    NewRecipeSourceImage, RecipeId as RecipeIdValue, RecipeImageId as RecipeImageIdValue,
+    RecipeRevision, RecipeRevisionId, RecipeScope, RecipeSourceImageId as RecipeSourceImageIdValue,
+    RevisionVerification, Servings,
 };
 use cookbook_domain::recipe::ports::{
     AddRecipeSourceImagesError, AddRecipeSourceImagesRequest, DeleteRecipeSourceImageError,
@@ -30,7 +31,8 @@ use crate::{
     components::{
         base::card::{card, card_content, card_header, card_title},
         recipe::{
-            recipe_form::{RecipeFormMode, recipe_form},
+            recipe_form::{RecipeFormMode, read_recipe_form, recipe_form},
+            recipe_images::recipe_image_gallery,
             recipe_scope_form::recipe_scope_form,
             recipe_view::recipe_view,
             source_images::{source_image_editor, source_image_gallery},
@@ -82,6 +84,7 @@ pub async fn page(cx: &Cx) -> Result<impl View> {
 path_param!(pub recipe_id);
 path_param!(revision_id);
 path_param!(pub source_image_id);
+path_param!(pub image_id);
 
 #[page("./{recipe_id}")]
 pub async fn recipe_detail(cx: &Cx) -> Result<impl View> {
@@ -95,6 +98,9 @@ pub async fn recipe_detail(cx: &Cx) -> Result<impl View> {
         .ok_or_not_found()?;
     let source_images = recipe_service
         .get_source_images(recipe.id().clone(), user.id().clone())
+        .await?;
+    let images = recipe_service
+        .get_recipe_images(recipe.id().clone(), user.id().clone())
         .await?;
 
     let can_edit = recipe.can_edit(user.id());
@@ -115,7 +121,9 @@ pub async fn recipe_detail(cx: &Cx) -> Result<impl View> {
                 </a>
                 <div class="mt-3 flex items-start justify-between gap-4">
                     <div class="flex flex-wrap items-center gap-3">
-                        <h2 class="text-3xl font-semibold">(recipe.title().as_str())</h2>
+                        <h2 class="text-3xl font-semibold">
+                            (recipe.title().as_str())
+                        </h2>
                         if recipe.needs_review() {
                             <span
                                 class="inline-flex items-center rounded-full border border-warning/40 bg-warning/10 px-2.5 py-0.5 text-sm font-medium text-warning-foreground"
@@ -177,9 +185,25 @@ pub async fn recipe_detail(cx: &Cx) -> Result<impl View> {
                         (t!(recipe_minutes))
                     </p>
                 }
+                if let Some(servings) = recipe.content().servings() {
+                    <p class="mt-2 text-sm text-muted-foreground">
+                        (t!(recipe_servings))
+                        ": "
+                        (servings_label(cx, servings))
+                    </p>
+                }
             </div>
 
-            recipe_view(content: recipe.content())
+            recipe_image_gallery(
+                recipe_id: recipe.id().as_str(),
+                image_ids: recipe.content().images(),
+                images: &images
+            )
+            recipe_view(
+                recipe_id: recipe.id().as_str(),
+                content: recipe.content(),
+                images: &images
+            )
             source_image_gallery(
                 recipe_id: recipe.id().as_str(),
                 images: &source_images
@@ -195,6 +219,22 @@ pub async fn recipe_detail(cx: &Cx) -> Result<impl View> {
             }
         </div>
     })
+}
+
+fn servings_label(cx: &Cx, servings: &Servings) -> String {
+    match servings {
+        Servings::People(count) if *count == 1 => t!(serving_person, count = count.to_string())
+            .resolve(cx)
+            .into_owned(),
+        Servings::People(count) => t!(serving_people, count = count.to_string())
+            .resolve(cx)
+            .into_owned(),
+        Servings::Portions {
+            count,
+            label: Some(label),
+        } => format!("{count} {label}"),
+        Servings::Portions { count, label: None } => count.to_string(),
+    }
 }
 
 #[page("./{recipe_id}/edit")]
@@ -247,12 +287,13 @@ pub async fn edit_recipe(cx: &Cx) -> Result<impl View> {
 }
 
 #[route(POST "./{recipe_id}/edit")]
-pub async fn update_recipe(cx: &Cx, Form(form): Form<Vec<(String, String)>>) -> Result<SeeOther> {
+pub async fn update_recipe(cx: &Cx, mut multipart: Multipart) -> Result<SeeOther> {
     let user = auth::require_user(cx)?;
     let recipe_id = path_param::<RecipeId>(cx).to_string();
     let recipe_service: &AppRecipeService = app_context(cx);
+    let submission = read_recipe_form(&mut multipart).await?;
     let request = crate::components::recipe::recipe_form::update_recipe_request(
-        form,
+        submission,
         RecipeIdValue::new(recipe_id.clone()),
         user.id().clone(),
     )?;
@@ -266,6 +307,9 @@ pub async fn update_recipe(cx: &Cx, Form(form): Form<Vec<(String, String)>>) -> 
         }
         Err(UpdateRecipeError::NotFound) => Err(not_found().into()),
         Err(UpdateRecipeError::Forbidden) => Err(forbidden().into()),
+        Err(UpdateRecipeError::InvalidImageReference) => {
+            Err(bad_request(t!(recipe_image_invalid_target).resolve(cx)).into())
+        }
         Err(error) => Err(error.into()),
     }
 }
@@ -308,6 +352,29 @@ pub async fn source_image(cx: &Cx) -> Result<Response> {
         .get_source_image(
             RecipeIdValue::new(recipe_id),
             RecipeSourceImageIdValue::new(image_id),
+            user.id().clone(),
+        )
+        .await?
+        .ok_or_not_found()?;
+
+    Ok(Response::builder()
+        .header("Content-Type", image.content_type())
+        .header("Cache-Control", "private, max-age=3600")
+        .header("X-Content-Type-Options", "nosniff")
+        .body(Body::from(image.bytes().to_vec()))?)
+}
+
+#[route(GET "./{recipe_id}/images/{image_id}")]
+pub async fn recipe_image(cx: &Cx) -> Result<Response> {
+    let user = auth::require_user(cx)?;
+
+    let recipe_id = path_param::<RecipeId>(cx).to_string();
+    let image_id = path_param::<ImageId>(cx).to_string();
+    let recipe_service: &AppRecipeService = app_context(cx);
+    let image = recipe_service
+        .get_recipe_image(
+            RecipeIdValue::new(recipe_id),
+            RecipeImageIdValue::new(image_id),
             user.id().clone(),
         )
         .await?
@@ -451,7 +518,8 @@ pub async fn recipe_history(cx: &Cx) -> Result<impl View> {
                                     if let Some(message) = entry.revision.message() {
                                         <p class="font-medium">(message.as_str())</p>
                                     } else if entry.is_first {
-                                        if entry.revision.verification() == RevisionVerification::NeedsReview {
+                                        if entry.revision.verification()
+                                            == RevisionVerification::NeedsReview {
                                             <p class="font-medium">(t!(recipe_history_imported))</p>
                                         } else {
                                             <p class="font-medium">(t!(recipe_history_created))</p>
@@ -460,7 +528,8 @@ pub async fn recipe_history(cx: &Cx) -> Result<impl View> {
                                         <p class="font-medium">(t!(recipe_history_edited))</p>
                                     }
                                     <p class="mt-1">
-                                        if entry.revision.verification() == RevisionVerification::NeedsReview {
+                                        if entry.revision.verification()
+                                            == RevisionVerification::NeedsReview {
                                             <span
                                                 class="inline-flex items-center rounded-full border border-warning/40 bg-warning/10 px-2 py-0.5 text-xs font-medium text-warning-foreground"
                                             >
@@ -518,6 +587,9 @@ pub async fn recipe_revision(cx: &Cx) -> Result<impl View> {
         .into_iter()
         .find(|revision| revision.id().as_str() == revision_id.as_str())
         .ok_or_not_found()?;
+    let images = recipe_service
+        .get_recipe_images(recipe.id().clone(), user.id().clone())
+        .await?;
 
     let editor = display_name(cx, revision.editor()).await?;
     let author_name = display_name(cx, recipe.author()).await?;
@@ -589,7 +661,16 @@ pub async fn recipe_revision(cx: &Cx) -> Result<impl View> {
                 </p>
             </div>
 
-            recipe_view(content: revision.content())
+            recipe_image_gallery(
+                recipe_id: recipe.id().as_str(),
+                image_ids: revision.content().images(),
+                images: &images
+            )
+            recipe_view(
+                recipe_id: recipe.id().as_str(),
+                content: revision.content(),
+                images: &images
+            )
         </div>
     })
 }
@@ -687,5 +768,31 @@ mod tests {
                 "expected an error for {entries:?}"
             );
         }
+    }
+
+    #[test]
+    fn localizes_people_servings_with_singular_and_plural_forms() {
+        let cx = Cx::default().with(topcoat::l10n::locale!("en"));
+
+        // Fluent wraps interpolated values in bidi isolation marks.
+        let label = |servings| {
+            servings_label(&cx, &servings)
+                .replace('\u{2068}', "")
+                .replace('\u{2069}', "")
+        };
+
+        assert_eq!(label(Servings::people(1)), "1 person");
+        assert_eq!(label(Servings::people(4)), "4 people");
+    }
+
+    #[test]
+    fn displays_portion_servings_with_their_free_form_label() {
+        let cx = Cx::default();
+
+        assert_eq!(
+            servings_label(&cx, &Servings::portions_with_label(12, "cookies")),
+            "12 cookies"
+        );
+        assert_eq!(servings_label(&cx, &Servings::portions(12)), "12");
     }
 }

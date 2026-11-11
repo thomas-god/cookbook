@@ -3,6 +3,7 @@ use std::fmt;
 use std::time::SystemTime;
 
 use derive_more::Constructor;
+use uuid::Uuid;
 
 use crate::user::models::UserId;
 
@@ -176,6 +177,7 @@ pub struct RecipeContent {
     servings: Option<Servings>,
     durations: RecipeDurations,
     ingredients: HashMap<IngredientName, Quantity>,
+    images: Vec<RecipeImageId>,
     steps: Vec<RecipeStep>,
 }
 
@@ -198,6 +200,10 @@ impl RecipeContent {
 
     pub fn ingredients(&self) -> &HashMap<IngredientName, Quantity> {
         &self.ingredients
+    }
+
+    pub fn images(&self) -> &[RecipeImageId] {
+        &self.images
     }
 
     pub fn steps(&self) -> &[RecipeStep] {
@@ -552,14 +558,156 @@ impl RecipeSourceImageId {
     }
 }
 
+/// A recipe presentation image. Opaque from the domain point of view.
+#[derive(Debug, Clone, Constructor)]
+pub struct NewRecipeImage {
+    id: RecipeImageId,
+    content_type: String,
+    bytes: Vec<u8>,
+}
+
+impl NewRecipeImage {
+    pub fn id(&self) -> &RecipeImageId {
+        &self.id
+    }
+
+    pub fn content_type(&self) -> &str {
+        &self.content_type
+    }
+
+    pub fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+}
+
+/// A stored presentation image belonging to a recipe. Presentation images are
+/// handled separately from recipe revisions. Revisions reference their ids.
+#[derive(Debug, Clone)]
+pub struct RecipeImage {
+    metadata: RecipeImageMetadata,
+    bytes: Vec<u8>,
+}
+
+impl RecipeImage {
+    pub fn new(
+        id: RecipeImageId,
+        recipe_id: RecipeId,
+        content_type: String,
+        bytes: Vec<u8>,
+        added_by: UserId,
+        added_at: SystemTime,
+    ) -> Self {
+        let metadata =
+            RecipeImageMetadata::new(id, recipe_id, content_type, bytes.len(), added_by, added_at);
+
+        Self { metadata, bytes }
+    }
+
+    pub fn metadata(&self) -> &RecipeImageMetadata {
+        &self.metadata
+    }
+
+    pub fn id(&self) -> &RecipeImageId {
+        self.metadata.id()
+    }
+
+    pub fn recipe_id(&self) -> &RecipeId {
+        self.metadata.recipe_id()
+    }
+
+    pub fn content_type(&self) -> &str {
+        self.metadata.content_type()
+    }
+
+    pub fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    pub fn added_by(&self) -> &UserId {
+        self.metadata.added_by()
+    }
+
+    pub fn added_at(&self) -> SystemTime {
+        self.metadata.added_at()
+    }
+}
+
+#[derive(Debug, Clone, Constructor)]
+pub struct RecipeImageMetadata {
+    id: RecipeImageId,
+    recipe_id: RecipeId,
+    content_type: String,
+    byte_len: usize,
+    added_by: UserId,
+    added_at: SystemTime,
+}
+
+impl RecipeImageMetadata {
+    pub fn id(&self) -> &RecipeImageId {
+        &self.id
+    }
+
+    pub fn recipe_id(&self) -> &RecipeId {
+        &self.recipe_id
+    }
+
+    pub fn content_type(&self) -> &str {
+        &self.content_type
+    }
+
+    pub fn byte_len(&self) -> usize {
+        self.byte_len
+    }
+
+    pub fn added_by(&self) -> &UserId {
+        &self.added_by
+    }
+
+    pub fn added_at(&self) -> SystemTime {
+        self.added_at
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Constructor)]
+pub struct RecipeImageId(String);
+
+impl RecipeImageId {
+    pub fn generate() -> Self {
+        Self(Uuid::now_v7().to_string())
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Constructor)]
+pub struct RecipeStepId(String);
+
+impl RecipeStepId {
+    pub fn generate() -> Self {
+        Self(Uuid::new_v4().to_string())
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
 #[derive(Debug, Clone, Constructor)]
 pub struct RecipeStep {
+    id: RecipeStepId,
     title: Option<String>,
     ingredients: Option<HashMap<String, f32>>,
     instruction: String,
+    images: Vec<RecipeImageId>,
 }
 
 impl RecipeStep {
+    pub fn id(&self) -> &RecipeStepId {
+        &self.id
+    }
+
     pub fn title(&self) -> Option<&str> {
         self.title.as_deref()
     }
@@ -570,6 +718,10 @@ impl RecipeStep {
 
     pub fn instruction(&self) -> &str {
         &self.instruction
+    }
+
+    pub fn images(&self) -> &[RecipeImageId] {
+        &self.images
     }
 }
 

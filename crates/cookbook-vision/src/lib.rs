@@ -49,7 +49,8 @@ impl VisionRecipe {
             content: self.content,
             author,
             source_images: self.source_images,
-            /// Imported recipes always need review
+            images: Vec::new(),
+            // Imported recipes always need review
             verification: RevisionVerification::NeedsReview,
         }
     }
@@ -115,6 +116,7 @@ mod tests {
             None,
             RecipeDurations::new(None, None, None),
             HashMap::new(),
+            Vec::new(),
             Vec::new(),
         );
         let recipe = VisionRecipe::new(content, Vec::new());

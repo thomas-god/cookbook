@@ -7,14 +7,14 @@ use uuid::Uuid;
 
 use cookbook_domain::recipe::models::{
     DurationMinutes, IngredientName, Quantity, Recipe, RecipeContent, RecipeDescription,
-    RecipeDurations, RecipeId, RecipeRevision, RecipeRevisionId, RecipeSourceImage,
-    RecipeSourceImageId, RecipeSourceImageSummary, RecipeStep, RecipeTitle, RecipeWithContent,
-    RevisionVerification, Servings, Unit,
+    RecipeDurations, RecipeId, RecipeImage, RecipeImageId, RecipeImageMetadata, RecipeRevision,
+    RecipeRevisionId, RecipeSourceImage, RecipeSourceImageId, RecipeSourceImageSummary, RecipeStep,
+    RecipeStepId, RecipeTitle, RecipeWithContent, RevisionVerification, Servings, Unit,
 };
 use cookbook_domain::recipe::ports::{
-    AddSourceImagesError, DeleteSourceImageError, GetRecipeError, GetSourceImageError,
-    ListRecipeRevisionsError, ListRecipesError, ListSourceImagesError, RecipeRepository,
-    SaveRecipeError,
+    AddSourceImagesError, DeleteSourceImageError, GetRecipeError, GetRecipeImageError,
+    GetSourceImageError, ListRecipeImagesError, ListRecipeRevisionsError, ListRecipesError,
+    ListSourceImagesError, RecipeRepository, SaveRecipeError,
 };
 use cookbook_domain::user::models::UserId;
 
@@ -23,6 +23,7 @@ struct RecipeRecord {
     recipe: Recipe,
     revisions: Vec<RecipeRevision>,
     source_images: Vec<RecipeSourceImage>,
+    images: Vec<RecipeImage>,
 }
 
 impl RecipeRecord {
@@ -67,6 +68,7 @@ impl InMemoryRecipeRepository {
                     recipe: current.recipe().clone(),
                     revisions: vec![current.revision().clone()],
                     source_images: Vec::new(),
+                    images: Vec::new(),
                 },
             );
         }
@@ -93,6 +95,7 @@ fn seeded_recipe(
         servings,
         durations,
         ingredients,
+        Vec::new(),
         steps,
     );
     let revision = RecipeRevision::new(
@@ -136,14 +139,18 @@ fn seed_recipes() -> Vec<RecipeWithContent> {
             ]),
             vec![
                 RecipeStep::new(
+                    RecipeStepId::generate(),
                     Some("Soften the aromatics".to_string()),
                     Some(HashMap::from([("tomatoes".to_string(), 800.0)])),
                     "Warm the olive oil in a pot and cook the tomatoes until soft.".to_string(),
+                    Vec::new(),
                 ),
                 RecipeStep::new(
+                    RecipeStepId::generate(),
                     None,
                     None,
                     "Add the stock, simmer for 20 minutes, then blend until smooth.".to_string(),
+                    Vec::new(),
                 ),
             ],
         ),
@@ -173,14 +180,18 @@ fn seed_recipes() -> Vec<RecipeWithContent> {
             ]),
             vec![
                 RecipeStep::new(
+                    RecipeStepId::generate(),
                     None,
                     None,
                     "Cook the spaghetti in salted water until al dente.".to_string(),
+                    Vec::new(),
                 ),
                 RecipeStep::new(
+                    RecipeStepId::generate(),
                     None,
                     Some(HashMap::from([("lemon".to_string(), 100.0)])),
                     "Toss with lemon zest, lemon juice and olive oil.".to_string(),
+                    Vec::new(),
                 ),
             ],
         ),
@@ -214,14 +225,18 @@ fn seed_recipes() -> Vec<RecipeWithContent> {
             ]),
             vec![
                 RecipeStep::new(
+                    RecipeStepId::generate(),
                     None,
                     Some(HashMap::from([("bananas".to_string(), 300.0)])),
                     "Mash the bananas and mix them with the melted butter and sugar.".to_string(),
+                    Vec::new(),
                 ),
                 RecipeStep::new(
+                    RecipeStepId::generate(),
                     None,
                     None,
                     "Fold in the flour, pour into a loaf tin and bake until golden.".to_string(),
+                    Vec::new(),
                 ),
             ],
         ),
@@ -238,6 +253,7 @@ impl RecipeRepository for InMemoryRecipeRepository {
         recipe: Recipe,
         revision: RecipeRevision,
         source_images: Vec<RecipeSourceImage>,
+        images: Vec<RecipeImage>,
     ) -> Result<(), SaveRecipeError> {
         if revision.recipe_id() != recipe.id() {
             return Err(SaveRecipeError::RecipeIdMismatch);
@@ -253,6 +269,8 @@ impl RecipeRepository for InMemoryRecipeRepository {
                 recipe.id().as_str()
             )));
         }
+
+        validate_images(recipe.id(), &images)?;
 
         let mut store = self
             .store
@@ -272,6 +290,7 @@ impl RecipeRepository for InMemoryRecipeRepository {
                 recipe,
                 revisions: vec![revision],
                 source_images,
+                images,
             },
         );
 
@@ -282,10 +301,13 @@ impl RecipeRepository for InMemoryRecipeRepository {
         &self,
         recipe: Recipe,
         revision: RecipeRevision,
+        added_images: Vec<RecipeImage>,
     ) -> Result<(), SaveRecipeError> {
         if revision.recipe_id() != recipe.id() {
             return Err(SaveRecipeError::RecipeIdMismatch);
         }
+
+        validate_images(recipe.id(), &added_images)?;
 
         let mut store = self
             .store
@@ -297,7 +319,20 @@ impl RecipeRepository for InMemoryRecipeRepository {
                 return Err(SaveRecipeError::RecipeAuthorMismatch);
             }
 
+            if added_images.iter().any(|image| {
+                record
+                    .images
+                    .iter()
+                    .any(|existing| existing.id() == image.id())
+            }) {
+                return Err(SaveRecipeError::Storage(anyhow!(
+                    "a recipe image id already exists for recipe `{}`",
+                    recipe.id().as_str()
+                )));
+            }
+
             record.revisions.push(revision);
+            record.images.extend(added_images);
         } else {
             store.recipes.insert(
                 recipe.id().clone(),
@@ -305,6 +340,7 @@ impl RecipeRepository for InMemoryRecipeRepository {
                     recipe,
                     revisions: vec![revision],
                     source_images: Vec::new(),
+                    images: added_images,
                 },
             );
         }
@@ -472,6 +508,70 @@ impl RecipeRepository for InMemoryRecipeRepository {
 
         Ok(())
     }
+
+    async fn get_recipe_images(
+        &self,
+        recipe_id: RecipeId,
+    ) -> Result<Vec<RecipeImageMetadata>, ListRecipeImagesError> {
+        let store = self
+            .store
+            .read()
+            .map_err(|_| ListRecipeImagesError::Storage(anyhow!("recipe store lock poisoned")))?;
+
+        Ok(store
+            .recipes
+            .get(&recipe_id)
+            .map(|record| {
+                record
+                    .images
+                    .iter()
+                    .map(|image| image.metadata().clone())
+                    .collect()
+            })
+            .unwrap_or_default())
+    }
+
+    async fn get_recipe_image(
+        &self,
+        recipe_id: RecipeId,
+        image_id: RecipeImageId,
+    ) -> Result<Option<RecipeImage>, GetRecipeImageError> {
+        let store = self
+            .store
+            .read()
+            .map_err(|_| GetRecipeImageError::Storage(anyhow!("recipe store lock poisoned")))?;
+
+        Ok(store.recipes.get(&recipe_id).and_then(|record| {
+            record
+                .images
+                .iter()
+                .find(|image| image.id() == &image_id)
+                .cloned()
+        }))
+    }
+}
+
+fn validate_images(recipe_id: &RecipeId, images: &[RecipeImage]) -> Result<(), SaveRecipeError> {
+    let mut ids = std::collections::HashSet::with_capacity(images.len());
+
+    for image in images {
+        if image.recipe_id() != recipe_id {
+            return Err(SaveRecipeError::Storage(anyhow!(
+                "image `{}` does not belong to recipe `{}`",
+                image.id().as_str(),
+                recipe_id.as_str()
+            )));
+        }
+
+        if !ids.insert(image.id()) {
+            return Err(SaveRecipeError::Storage(anyhow!(
+                "duplicate image id `{}`",
+                image.id().as_str()
+            )));
+        }
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -500,6 +600,7 @@ mod tests {
                 RecipeDurations::new(None, None, None),
                 HashMap::new(),
                 Vec::new(),
+                Vec::new(),
             ),
             recipe.author().clone(),
             SystemTime::UNIX_EPOCH,
@@ -520,6 +621,7 @@ mod tests {
                 RecipeDurations::new(None, None, None),
                 HashMap::new(),
                 Vec::new(),
+                Vec::new(),
             ),
             recipe.author().clone(),
             SystemTime::UNIX_EPOCH,
@@ -532,7 +634,11 @@ mod tests {
 
     async fn save(repository: &InMemoryRecipeRepository, current: RecipeWithContent) {
         repository
-            .save_recipe_with_revision(current.recipe().clone(), current.revision().clone())
+            .save_recipe_with_revision(
+                current.recipe().clone(),
+                current.revision().clone(),
+                Vec::new(),
+            )
             .await
             .unwrap();
     }
@@ -639,11 +745,11 @@ mod tests {
         let second = revision("revision-2", &recipe);
 
         repository
-            .save_recipe_with_revision(recipe.clone(), first)
+            .save_recipe_with_revision(recipe.clone(), first, Vec::new())
             .await
             .unwrap();
         repository
-            .save_recipe_with_revision(recipe, second)
+            .save_recipe_with_revision(recipe, second, Vec::new())
             .await
             .unwrap();
 
@@ -675,7 +781,9 @@ mod tests {
         let soup = recipe("soup");
         let revision = revision("salad-revision", &recipe("salad"));
 
-        let result = repository.save_recipe_with_revision(soup, revision).await;
+        let result = repository
+            .save_recipe_with_revision(soup, revision, Vec::new())
+            .await;
 
         assert!(matches!(result, Err(SaveRecipeError::RecipeIdMismatch)));
     }
@@ -686,7 +794,7 @@ mod tests {
         let soup = recipe("soup");
         let first_revision = revision("revision-1", &soup);
         repository
-            .save_recipe_with_revision(soup, first_revision)
+            .save_recipe_with_revision(soup, first_revision, Vec::new())
             .await
             .unwrap();
 
@@ -697,7 +805,7 @@ mod tests {
         let second_revision = revision("revision-2", &other_recipe);
 
         let result = repository
-            .save_recipe_with_revision(other_recipe, second_revision)
+            .save_recipe_with_revision(other_recipe, second_revision, Vec::new())
             .await;
 
         assert!(matches!(result, Err(SaveRecipeError::RecipeAuthorMismatch)));
@@ -711,7 +819,7 @@ mod tests {
         let image = source_image(&recipe, "image-1", b"front");
 
         repository
-            .save_new_recipe(recipe.clone(), revision, vec![image])
+            .save_new_recipe(recipe.clone(), revision, vec![image], Vec::new())
             .await
             .unwrap();
 
@@ -740,6 +848,7 @@ mod tests {
                 RecipeDurations::new(None, None, None),
                 HashMap::new(),
                 Vec::new(),
+                Vec::new(),
             ),
             recipe.author().clone(),
             SystemTime::UNIX_EPOCH,
@@ -748,7 +857,7 @@ mod tests {
         );
 
         repository
-            .save_new_recipe(recipe.clone(), revision, Vec::new())
+            .save_new_recipe(recipe.clone(), revision, Vec::new(), Vec::new())
             .await
             .unwrap();
 
@@ -771,7 +880,7 @@ mod tests {
         let image = source_image(&salad, "image-1", b"front");
 
         let result = repository
-            .save_new_recipe(soup, revision, vec![image])
+            .save_new_recipe(soup, revision, vec![image], Vec::new())
             .await;
 
         assert!(matches!(result, Err(SaveRecipeError::Storage(_))));
@@ -783,7 +892,7 @@ mod tests {
         let recipe = recipe("soup");
         let revision = revision("revision-1", &recipe);
         repository
-            .save_new_recipe(recipe.clone(), revision, Vec::new())
+            .save_new_recipe(recipe.clone(), revision, Vec::new(), Vec::new())
             .await
             .unwrap();
 
@@ -815,6 +924,7 @@ mod tests {
                 recipe.clone(),
                 revision,
                 vec![source_image(&recipe, "image-1", b"front")],
+                Vec::new(),
             )
             .await
             .unwrap();
@@ -838,7 +948,7 @@ mod tests {
         let recipe = recipe("soup");
         let revision = revision("revision-1", &recipe);
         repository
-            .save_new_recipe(recipe, revision, Vec::new())
+            .save_new_recipe(recipe, revision, Vec::new(), Vec::new())
             .await
             .unwrap();
 
@@ -863,6 +973,7 @@ mod tests {
                 recipe.clone(),
                 revision,
                 vec![source_image(&recipe, "image-1", b"front")],
+                Vec::new(),
             )
             .await
             .unwrap();
@@ -900,7 +1011,7 @@ mod tests {
         let recipe = recipe("soup");
         let revision = revision("revision-1", &recipe);
         repository
-            .save_new_recipe(recipe, revision, Vec::new())
+            .save_new_recipe(recipe, revision, Vec::new(), Vec::new())
             .await
             .unwrap();
 
@@ -932,7 +1043,7 @@ mod tests {
         let recipe = recipe("soup");
         let revision = revision("revision-1", &recipe);
         repository
-            .save_new_recipe(recipe.clone(), revision, Vec::new())
+            .save_new_recipe(recipe.clone(), revision, Vec::new(), Vec::new())
             .await
             .unwrap();
 
@@ -959,7 +1070,7 @@ mod tests {
         let recipe = recipe("soup");
         let first = revision("revision-1", &recipe);
         repository
-            .save_new_recipe(recipe.clone(), first, Vec::new())
+            .save_new_recipe(recipe.clone(), first, Vec::new(), Vec::new())
             .await
             .unwrap();
 
@@ -968,7 +1079,7 @@ mod tests {
 
         let second = revision("revision-2", &viewable);
         repository
-            .save_recipe_with_revision(viewable, second)
+            .save_recipe_with_revision(viewable, second, Vec::new())
             .await
             .unwrap();
 
@@ -999,7 +1110,7 @@ mod tests {
         let recipe = recipe("soup");
         let revision = revision("revision-1", &recipe);
         repository
-            .save_new_recipe(recipe, revision, Vec::new())
+            .save_new_recipe(recipe, revision, Vec::new(), Vec::new())
             .await
             .unwrap();
 
@@ -1012,5 +1123,114 @@ mod tests {
         let result = repository.save_recipe(other).await;
 
         assert!(matches!(result, Err(SaveRecipeError::RecipeAuthorMismatch)));
+    }
+
+    fn revision_with_step(id: &str, recipe: &Recipe) -> RecipeRevision {
+        RecipeRevision::new(
+            RecipeRevisionId::new(id.to_string()),
+            recipe.id().clone(),
+            RecipeContent::new(
+                RecipeTitle::new("Soup".to_string()),
+                None,
+                None,
+                RecipeDurations::new(None, None, None),
+                HashMap::new(),
+                Vec::new(),
+                vec![RecipeStep::new(
+                    RecipeStepId::generate(),
+                    None,
+                    None,
+                    "Stir everything together.".to_string(),
+                    Vec::new(),
+                )],
+            ),
+            recipe.author().clone(),
+            SystemTime::UNIX_EPOCH,
+            None,
+            RevisionVerification::Verified,
+        )
+    }
+
+    fn recipe_image(recipe: &Recipe, id: &str, bytes: &[u8]) -> RecipeImage {
+        RecipeImage::new(
+            RecipeImageId::new(id.to_string()),
+            recipe.id().clone(),
+            "image/jpeg".to_string(),
+            bytes.to_vec(),
+            recipe.author().clone(),
+            SystemTime::UNIX_EPOCH,
+        )
+    }
+
+    #[tokio::test]
+    async fn saves_and_lists_recipe_images() {
+        let repository = InMemoryRecipeRepository::new();
+        let recipe = recipe("soup");
+        let revision = revision("revision-1", &recipe);
+        let image = recipe_image(&recipe, "image-1", b"finished");
+
+        repository
+            .save_new_recipe(recipe.clone(), revision, Vec::new(), vec![image])
+            .await
+            .unwrap();
+
+        let images = repository
+            .get_recipe_images(RecipeId::new("soup".to_string()))
+            .await
+            .unwrap();
+
+        assert_eq!(images.len(), 1);
+        assert_eq!(images[0].id().as_str(), "image-1");
+        assert_eq!(images[0].byte_len(), 8);
+    }
+
+    #[tokio::test]
+    async fn rejects_duplicate_image_ids() {
+        let repository = InMemoryRecipeRepository::new();
+        let recipe = recipe("soup");
+        let revision = revision("revision-1", &recipe);
+        let image = recipe_image(&recipe, "image-1", b"image");
+
+        let result = repository
+            .save_new_recipe(recipe, revision, Vec::new(), vec![image.clone(), image])
+            .await;
+
+        assert!(matches!(result, Err(SaveRecipeError::Storage(_))));
+    }
+
+    #[tokio::test]
+    async fn adds_recipe_images_with_a_revision() {
+        let repository = InMemoryRecipeRepository::new();
+        let recipe = recipe("soup");
+        let first = revision_with_step("revision-1", &recipe);
+        let content = first.content().clone();
+        let existing = recipe_image(&recipe, "image-existing", b"existing");
+        repository
+            .save_new_recipe(recipe.clone(), first, Vec::new(), vec![existing])
+            .await
+            .unwrap();
+
+        let added = recipe_image(&recipe, "image-added", b"added");
+        let second = RecipeRevision::new(
+            RecipeRevisionId::new("revision-2".to_string()),
+            recipe.id().clone(),
+            content,
+            recipe.author().clone(),
+            SystemTime::UNIX_EPOCH,
+            None,
+            RevisionVerification::Verified,
+        );
+        repository
+            .save_recipe_with_revision(recipe, second, vec![added])
+            .await
+            .unwrap();
+
+        let images = repository
+            .get_recipe_images(RecipeId::new("soup".to_string()))
+            .await
+            .unwrap();
+
+        assert_eq!(images.len(), 2);
+        assert_eq!(images[1].id().as_str(), "image-added");
     }
 }

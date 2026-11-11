@@ -1,18 +1,21 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use cookbook_domain::recipe::{
     models::{
-        DurationMinutes, IngredientName, Quantity, RecipeContent, RecipeDescription,
-        RecipeDurations, RecipeId as RecipeIdValue, RecipeRevisionId, RecipeStep, RecipeTitle,
+        DurationMinutes, IngredientName, NewRecipeImage, Quantity, RecipeContent,
+        RecipeDescription, RecipeDurations, RecipeId as RecipeIdValue, RecipeImageId,
+        RecipeImageMetadata, RecipeRevisionId, RecipeStep, RecipeStepId, RecipeTitle,
         RecipeWithContent, RevisionMessage, RevisionVerification, Servings, Unit,
     },
     ports::{CreateRecipeRequest, RecipeService, UpdateRecipeRequest},
 };
 use cookbook_domain::user::models::UserId;
+use cookbook_vision::detect_image_content_type;
 use topcoat::{
     Error, Result,
     context::{Cx, app_context},
     router::{
+        content::multipart::Multipart,
         error::{RouterErrorExt, bad_request},
         href,
     },
@@ -23,11 +26,12 @@ use topcoat::{
 use crate::{
     app::{
         AppRecipeService, auth,
-        recipes::{RecipeId, recipe_detail},
+        recipes::{ImageId, RecipeId, recipe_detail, recipe_image},
     },
     components::base::{
         button::{ButtonSize, ButtonVariant, button},
-        field::{field, field_label, field_legend, field_set},
+        field::{field, field_description, field_label, field_legend, field_set},
+        image_upload::image_upload,
         input::input,
     },
     t,
@@ -47,6 +51,8 @@ const SERVINGS_COUNT_FIELD: &str = "servings_count";
 const SERVINGS_LABEL_FIELD: &str = "servings_label";
 const MESSAGE_FIELD: &str = "message";
 const LATEST_REVISION_FIELD: &str = "latest_revision";
+const IMAGES_FIELD: &str = "images";
+const IMAGE_IDS_FIELD: &str = "image_ids";
 
 /// The fields of one ingredient row on the wire.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -91,17 +97,23 @@ impl IngredientField {
 /// The fields of one step row on the wire.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 enum StepField {
+    Id,
     Title,
     Instruction,
     Ingredients,
+    Images,
+    ImageIds,
 }
 
 impl StepField {
     const fn wire_name(self) -> &'static str {
         match self {
+            Self::Id => "id",
             Self::Title => "title",
             Self::Instruction => "instruction",
             Self::Ingredients => "ingredients",
+            Self::Images => "images",
+            Self::ImageIds => "image_ids",
         }
     }
 
@@ -111,9 +123,12 @@ impl StepField {
 
     fn parse(wire_field: &str) -> Option<Self> {
         match wire_field {
+            "id" => Some(Self::Id),
             "title" => Some(Self::Title),
             "instruction" => Some(Self::Instruction),
             "ingredients" => Some(Self::Ingredients),
+            // File and repeated image id fields are collected separately.
+            "images" | "image_ids" => None,
             _ => None,
         }
     }
@@ -128,6 +143,7 @@ struct RecipeFormData {
     rest: Option<usize>,
     cooking: Option<usize>,
     ingredients: Vec<IngredientFormData>,
+    images: Vec<RecipeImageId>,
     steps: Vec<StepFormData>,
     message: Option<String>,
     latest_revision: Option<String>,
@@ -148,9 +164,18 @@ impl RecipeFormData {
                 .into_iter()
                 .map(|ingredient| (IngredientName::new(ingredient.name), ingredient.quantity))
                 .collect(),
+            self.images,
             self.steps
                 .into_iter()
-                .map(|step| RecipeStep::new(step.title, step.ingredients, step.instruction))
+                .map(|step| {
+                    RecipeStep::new(
+                        step.id,
+                        step.title,
+                        step.ingredients,
+                        step.instruction,
+                        step.images,
+                    )
+                })
                 .collect(),
         )
     }
@@ -164,9 +189,12 @@ struct IngredientFormData {
 
 #[derive(Debug)]
 struct StepFormData {
+    row: usize,
+    id: RecipeStepId,
     title: Option<String>,
     instruction: String,
     ingredients: Option<HashMap<String, f32>>,
+    images: Vec<RecipeImageId>,
 }
 
 #[derive(Clone, Default)]
@@ -180,10 +208,19 @@ struct IngredientInitial {
 }
 
 #[derive(Clone, Default)]
+struct FormImageInitial {
+    id: String,
+    url: String,
+    alt: String,
+}
+
+#[derive(Clone, Default)]
 struct StepInitial {
+    id: String,
     title: String,
     instruction: String,
     ingredients: String,
+    images: Vec<FormImageInitial>,
 }
 
 #[derive(Default)]
@@ -198,10 +235,16 @@ struct FormInitial {
     cooking: String,
     ingredients: Vec<IngredientInitial>,
     steps: Vec<StepInitial>,
+    images: Vec<FormImageInitial>,
 }
 
 impl FormInitial {
-    fn from_recipe(recipe: &RecipeWithContent) -> Self {
+    fn from_recipe(
+        recipe: &RecipeWithContent,
+        images: &[RecipeImageMetadata],
+        recipe_id: &str,
+        cx: &Cx,
+    ) -> Self {
         let mut ingredients: Vec<_> = recipe
             .ingredients()
             .iter()
@@ -220,6 +263,30 @@ impl FormInitial {
             ),
             None => ("none".to_string(), String::new(), String::new()),
         };
+
+        let image_initial = |image: &RecipeImageMetadata| FormImageInitial {
+            id: image.id().as_str().to_string(),
+            url: href!(
+                recipe_image,
+                RecipeId(recipe_id),
+                ImageId(image.id().as_str())
+            )
+            .resolve(cx),
+            alt: t!(recipe_image_alt).resolve(cx).into_owned(),
+        };
+
+        let image_by_id: HashMap<&str, &RecipeImageMetadata> = images
+            .iter()
+            .map(|image| (image.id().as_str(), image))
+            .collect();
+
+        let recipe_images = recipe
+            .content()
+            .images()
+            .iter()
+            .filter_map(|image_id| image_by_id.get(image_id.as_str()).copied())
+            .map(image_initial)
+            .collect();
 
         Self {
             title: recipe.title().as_str().to_string(),
@@ -250,11 +317,19 @@ impl FormInitial {
                 .steps()
                 .iter()
                 .map(|step| StepInitial {
+                    id: step.id().as_str().to_string(),
                     title: step.title().unwrap_or_default().to_string(),
                     instruction: step.instruction().to_string(),
                     ingredients: step_ingredients_text(step.ingredients()),
+                    images: step
+                        .images()
+                        .iter()
+                        .filter_map(|image_id| image_by_id.get(image_id.as_str()).copied())
+                        .map(image_initial)
+                        .collect(),
                 })
                 .collect(),
+            images: recipe_images,
         }
     }
 }
@@ -400,9 +475,18 @@ async fn recipe_form_fields(
     auth::require_user(cx)?;
 
     let current = load_current_recipe(cx, &recipe_id).await?;
+    let images = if current.is_some() && !recipe_id.is_empty() {
+        let user = auth::require_user(cx)?;
+        let recipe_service: &AppRecipeService = app_context(cx);
+        recipe_service
+            .get_recipe_images(RecipeIdValue::new(recipe_id.clone()), user.id().clone())
+            .await?
+    } else {
+        Vec::new()
+    };
     let initial = current
         .as_ref()
-        .map(FormInitial::from_recipe)
+        .map(|recipe| FormInitial::from_recipe(recipe, &images, &recipe_id, cx))
         .unwrap_or_default();
     let is_edit = !latest_revision.is_empty();
     let initial_ingredient_count = initial.ingredients.len().max(1);
@@ -434,6 +518,7 @@ async fn recipe_form_fields(
 
     let ingredient_initials = initial.ingredients;
     let step_initials = initial.steps;
+    let recipe_image_initials = initial.images;
     let latest_revision = (!latest_revision.is_empty()).then_some(latest_revision);
 
     let title_id = element_id(cx);
@@ -444,6 +529,7 @@ async fn recipe_form_fields(
     let preparation_id = element_id(cx);
     let rest_id = element_id(cx);
     let cooking_id = element_id(cx);
+    let recipe_images_id = element_id(cx);
     let message_id = element_id(cx);
     let message_label = if needs_review {
         t!(form_verification_message).resolve(cx).into_owned()
@@ -464,7 +550,12 @@ async fn recipe_form_fields(
     };
 
     Ok(view! {
-        <form method="post" action=(action) class="flex flex-col gap-6">
+        <form
+            method="post"
+            action=(action)
+            enctype="multipart/form-data"
+            class="flex flex-col gap-6"
+        >
             if let Some(latest_revision) = &latest_revision {
                 <input
                     type="hidden"
@@ -526,7 +617,9 @@ async fn recipe_form_fields(
                             >
                                 <option value="none">(t!(form_servings_none))</option>
                                 <option value="people">(t!(form_servings_people))</option>
-                                <option value="portions">(t!(form_servings_portions))</option>
+                                <option value="portions">
+                                    (t!(form_servings_portions))
+                                </option>
                             </select>
                         )
                         field(
@@ -625,6 +718,35 @@ async fn recipe_form_fields(
                         )
                     )
                 </div>
+            )
+
+            field_set(
+                field_legend((t!(form_recipe_images)))
+                if recipe_image_initials.is_empty() {
+                    <p class="text-sm text-muted-foreground">
+                        (t!(form_recipe_images_empty))
+                    </p>
+                } else {
+                    <ul class="grid grid-cols-2 gap-3 sm:grid-cols-3">
+                        for image in &recipe_image_initials {
+                            form_image_row(
+                                image: image.clone(),
+                                image_ids_field: IMAGE_IDS_FIELD.to_string()
+                            )
+                        }
+                    </ul>
+                }
+                field(
+                    field_label(
+                        attrs: attributes! { for=(&recipe_images_id) },
+                        (t!(form_recipe_images_upload))
+                    )
+                    image_upload(
+                        multiple: true,
+                        attrs: attributes! { id=(&recipe_images_id) name=(IMAGES_FIELD) }
+                    )
+                    field_description((t!(form_recipe_images_upload_hint)))
+                )
             )
 
             field_set(
@@ -885,11 +1007,49 @@ async fn ingredient_row(
 }
 
 #[component]
+async fn form_image_row(
+    cx: &Cx,
+    image: FormImageInitial,
+    image_ids_field: String,
+) -> Result<impl View> {
+    let removed = signal(cx, || false);
+
+    Ok(view! {
+        <li class="flex flex-col gap-2" :hidden=$(removed.get())>
+            <a href=(image.url.clone()) target="_blank" rel="noreferrer">
+                <img
+                    src=(image.url.clone())
+                    alt=(image.alt.clone())
+                    loading="lazy"
+                    class="aspect-square w-full rounded-lg border border-border object-cover"
+                >
+            </a>
+            <input
+                type="hidden"
+                name=(image_ids_field)
+                value=(image.id)
+                :disabled=$(removed.get())
+            >
+            <div class="flex justify-end">
+                button(
+                    variant: ButtonVariant::Ghost,
+                    size: ButtonSize::Sm,
+                    attrs: attributes! { type="button" @click=$(|_e: Event| removed.set(true)) },
+                    (t!(form_recipe_images_remove))
+                )
+            </div>
+        </li>
+    })
+}
+
+#[component]
 async fn step_row(cx: &Cx, row: usize, initial: Option<StepInitial>) -> Result<impl View> {
     let initial = initial.unwrap_or_default();
+    let id_value = initial.id;
     let title_value = initial.title;
     let instruction_value = initial.instruction;
     let ingredients_value = initial.ingredients;
+    let step_images = initial.images;
     let title = signal(cx, move || title_value.clone());
     let instruction = signal(cx, move || instruction_value.clone());
     let ingredients = signal(cx, move || ingredients_value.clone());
@@ -898,10 +1058,14 @@ async fn step_row(cx: &Cx, row: usize, initial: Option<StepInitial>) -> Result<i
     let title_id = element_id(cx);
     let instruction_id = element_id(cx);
     let ingredients_id = element_id(cx);
+    let step_images_id = element_id(cx);
 
+    let id_field = StepField::Id.key(row);
     let title_field = StepField::Title.key(row);
     let instruction_field = StepField::Instruction.key(row);
     let ingredients_field = StepField::Ingredients.key(row);
+    let step_images_field = StepField::Images.key(row);
+    let image_ids_field = StepField::ImageIds.key(row);
 
     Ok(view! {
         <fieldset
@@ -909,6 +1073,7 @@ async fn step_row(cx: &Cx, row: usize, initial: Option<StepInitial>) -> Result<i
             :disabled=$(removed.get())
             class="m-0 flex min-w-0 flex-col gap-3 rounded-lg border border-border p-4"
         >
+            <input type="hidden" name=(id_field) value=(id_value)>
             field(
                 field_label(
                     attrs: attributes! { for=(&title_id) },
@@ -956,6 +1121,27 @@ async fn step_row(cx: &Cx, row: usize, initial: Option<StepInitial>) -> Result<i
                     @input=$(|e: Event| ingredients.set(e.target.value))
                 ></textarea>
             )
+            field(
+                field_label(
+                    attrs: attributes! { for=(&step_images_id) },
+                    (t!(form_step_images))
+                )
+                if !step_images.is_empty() {
+                    <ul class="mb-2 grid grid-cols-2 gap-3 sm:grid-cols-3">
+                        for image in &step_images {
+                            form_image_row(
+                                image: image.clone(),
+                                image_ids_field: image_ids_field.clone()
+                            )
+                        }
+                    </ul>
+                }
+                image_upload(
+                    multiple: true,
+                    attrs: attributes! { id=(&step_images_id) name=(step_images_field) }
+                )
+                field_description((t!(form_step_images_upload_hint)))
+            )
             <div class="flex justify-end">
                 button(
                     variant: ButtonVariant::Ghost,
@@ -980,11 +1166,14 @@ fn parse_recipe_form(pairs: &[(String, String)]) -> Result<RecipeFormData> {
     let mut cooking = None;
     let mut message = None;
     let mut latest_revision = None;
+    let mut images = Vec::new();
+    let mut step_images: BTreeMap<usize, Vec<String>> = BTreeMap::new();
     let mut ingredients: BTreeMap<usize, HashMap<IngredientField, String>> = BTreeMap::new();
     let mut steps: BTreeMap<usize, HashMap<StepField, String>> = BTreeMap::new();
 
     for (key, value) in pairs {
         match key.as_str() {
+            IMAGE_IDS_FIELD => images.push(value.clone()),
             TITLE_FIELD => set_once(&mut title, value, key)?,
             DESCRIPTION_FIELD => set_once(&mut description, value, key)?,
             SERVINGS_TYPE_FIELD => set_once(&mut servings_type, value, key)?,
@@ -996,7 +1185,12 @@ fn parse_recipe_form(pairs: &[(String, String)]) -> Result<RecipeFormData> {
             MESSAGE_FIELD => set_once(&mut message, value, key)?,
             LATEST_REVISION_FIELD => set_once(&mut latest_revision, value, key)?,
             _ => {
-                if let Some((row, wire_field)) =
+                let step_image_ids_suffix = format!("[{IMAGE_IDS_FIELD}]");
+                if key.starts_with("steps[") && key.ends_with(&step_image_ids_suffix) {
+                    if let Some((row, ())) = parse_indexed_key(key, "steps", |_| Some(()))? {
+                        step_images.entry(row).or_default().push(value.clone());
+                    }
+                } else if let Some((row, wire_field)) =
                     parse_indexed_key(key, "ingredients", IngredientField::parse)?
                 {
                     insert_row_value(&mut ingredients, row, wire_field, value, key)?;
@@ -1032,32 +1226,76 @@ fn parse_recipe_form(pairs: &[(String, String)]) -> Result<RecipeFormData> {
         rest: parse_optional_minutes(rest.as_deref(), REST_FIELD)?,
         cooking: parse_optional_minutes(cooking.as_deref(), COOKING_FIELD)?,
         ingredients: parse_ingredient_rows(ingredients)?,
-        steps: parse_step_rows(steps)?,
+        images: parse_image_ids(images)?,
+        steps: parse_step_rows(steps, step_images)?,
         message,
         latest_revision,
     })
 }
 
+pub(crate) struct RecipeFormSubmission {
+    pub fields: Vec<(String, String)>,
+    pub uploads: Vec<RecipeFormUpload>,
+}
+
+pub(crate) struct RecipeFormUpload {
+    field: String,
+    bytes: Vec<u8>,
+}
+
+pub(crate) async fn read_recipe_form(multipart: &mut Multipart) -> Result<RecipeFormSubmission> {
+    let mut fields = Vec::new();
+    let mut uploads = Vec::new();
+
+    while let Some(part) = multipart.next_field().await? {
+        let Some(field_name) = part.name().map(str::to_owned) else {
+            continue;
+        };
+
+        let file_name = part.file_name().map(str::to_owned);
+
+        if let Some(file_name) = file_name {
+            let bytes = part.bytes().await?;
+
+            if file_name.is_empty() && bytes.is_empty() {
+                continue;
+            }
+
+            uploads.push(RecipeFormUpload {
+                field: field_name,
+                bytes: bytes.to_vec(),
+            });
+        } else {
+            fields.push((field_name, part.text().await?));
+        }
+    }
+
+    Ok(RecipeFormSubmission { fields, uploads })
+}
+
 pub(crate) fn create_recipe_request(
-    pairs: Vec<(String, String)>,
+    submission: RecipeFormSubmission,
     author: UserId,
 ) -> Result<CreateRecipeRequest> {
-    let form = parse_recipe_form(&pairs)?;
+    let mut form = parse_recipe_form(&submission.fields)?;
+    let images = parse_recipe_uploads(&mut form, submission.uploads)?;
 
     Ok(CreateRecipeRequest {
         content: form.into_content(),
         author,
         source_images: Vec::new(),
+        images,
         verification: RevisionVerification::Verified,
     })
 }
 
 pub(crate) fn update_recipe_request(
-    pairs: Vec<(String, String)>,
+    submission: RecipeFormSubmission,
     id: RecipeIdValue,
     editor: UserId,
 ) -> Result<UpdateRecipeRequest> {
-    let form = parse_recipe_form(&pairs)?;
+    let mut form = parse_recipe_form(&submission.fields)?;
+    let images = parse_recipe_uploads(&mut form, submission.uploads)?;
 
     let latest_revision = form
         .latest_revision
@@ -1080,7 +1318,57 @@ pub(crate) fn update_recipe_request(
         editor,
         latest_revision: RecipeRevisionId::new(latest_revision),
         message,
+        new_images: images,
     })
+}
+
+fn parse_recipe_uploads(
+    form: &mut RecipeFormData,
+    uploads: Vec<RecipeFormUpload>,
+) -> Result<Vec<NewRecipeImage>> {
+    let mut images = Vec::with_capacity(uploads.len());
+
+    for upload in uploads {
+        let image_ids = if upload.field == IMAGES_FIELD {
+            &mut form.images
+        } else if let Some((row, ())) = parse_indexed_key(&upload.field, "steps", |wire_field| {
+            (wire_field == StepField::Images.wire_name()).then_some(())
+        })? {
+            &mut form
+                .steps
+                .iter_mut()
+                .find(|step| step.row == row)
+                .ok_or_else(|| {
+                    invalid(format!(
+                        "image upload `{}` targets an unknown step row",
+                        upload.field
+                    ))
+                })?
+                .images
+        } else {
+            return Err(invalid(format!(
+                "unknown image upload field `{}`",
+                upload.field
+            )));
+        };
+
+        let content_type = detect_image_content_type(&upload.bytes).ok_or_else(|| {
+            invalid(format!(
+                "image upload `{}` is not a supported JPEG or PNG image",
+                upload.field
+            ))
+        })?;
+        let id = RecipeImageId::generate();
+        image_ids.push(id.clone());
+
+        images.push(NewRecipeImage::new(
+            id,
+            content_type.to_string(),
+            upload.bytes,
+        ));
+    }
+
+    Ok(images)
 }
 
 fn set_once(target: &mut Option<String>, value: &str, key: &str) -> Result<()> {
@@ -1333,16 +1621,45 @@ fn parse_unit(value: &str, unit_other: &str) -> Result<Unit> {
     }
 }
 
-fn parse_step_rows(rows: BTreeMap<usize, HashMap<StepField, String>>) -> Result<Vec<StepFormData>> {
+fn parse_image_ids(values: Vec<String>) -> Result<Vec<RecipeImageId>> {
+    let mut seen = HashSet::new();
+    let mut ids = Vec::with_capacity(values.len());
+
+    for value in values {
+        let value = value.trim();
+
+        if value.is_empty() {
+            return Err(invalid("an image id cannot be empty"));
+        }
+
+        let id = RecipeImageId::new(value.to_string());
+
+        if !seen.insert(id.clone()) {
+            return Err(invalid(format!("duplicate image id `{value}`")));
+        }
+
+        ids.push(id);
+    }
+
+    Ok(ids)
+}
+
+fn parse_step_rows(
+    rows: BTreeMap<usize, HashMap<StepField, String>>,
+    mut image_ids: BTreeMap<usize, Vec<String>>,
+) -> Result<Vec<StepFormData>> {
+    let mut seen_ids = HashSet::new();
     let mut steps = Vec::new();
 
-    for (row, mut values) in rows {
-        let title = values.remove(&StepField::Title).unwrap_or_default();
-        let instruction = values.remove(&StepField::Instruction).unwrap_or_default();
-        let ingredients = values.remove(&StepField::Ingredients);
+    for (row, mut fields) in rows {
+        let id = fields.remove(&StepField::Id).unwrap_or_default();
+        let id = id.trim().to_string();
+        let title = fields.remove(&StepField::Title).unwrap_or_default();
+        let instruction = fields.remove(&StepField::Instruction).unwrap_or_default();
 
         let title = title.trim();
         let instruction = instruction.trim();
+        let ingredients = fields.remove(&StepField::Ingredients);
         let ingredients_text = ingredients.as_deref().map(str::trim).unwrap_or_default();
 
         if title.is_empty() && instruction.is_empty() && ingredients_text.is_empty() {
@@ -1356,6 +1673,19 @@ fn parse_step_rows(rows: BTreeMap<usize, HashMap<StepField, String>>) -> Result<
             )));
         }
 
+        let id = if id.is_empty() {
+            RecipeStepId::generate()
+        } else {
+            RecipeStepId::new(id)
+        };
+
+        if !seen_ids.insert(id.clone()) {
+            return Err(invalid(format!(
+                "step row {} reuses another step's identity",
+                row + 1
+            )));
+        }
+
         let ingredients = if ingredients_text.is_empty() {
             None
         } else {
@@ -1363,9 +1693,12 @@ fn parse_step_rows(rows: BTreeMap<usize, HashMap<StepField, String>>) -> Result<
         };
 
         steps.push(StepFormData {
+            row,
+            id,
             title: (!title.is_empty()).then(|| title.to_string()),
             instruction: instruction.to_string(),
             ingredients,
+            images: parse_image_ids(image_ids.remove(&row).unwrap_or_default())?,
         });
     }
 
@@ -1428,6 +1761,13 @@ mod tests {
             .iter()
             .map(|(key, value)| ((*key).to_string(), (*value).to_string()))
             .collect()
+    }
+
+    fn submission(entries: &[(&str, &str)]) -> RecipeFormSubmission {
+        RecipeFormSubmission {
+            fields: pairs(entries),
+            uploads: Vec::new(),
+        }
     }
 
     #[test]
@@ -1821,9 +2161,59 @@ mod tests {
     }
 
     #[test]
+    fn parses_recipe_and_step_image_ids() {
+        let form = parse_recipe_form(&pairs(&[
+            ("title", "Soup"),
+            ("image_ids", "image-1"),
+            ("image_ids", "image-2"),
+            ("steps[0][id]", "step-1"),
+            ("steps[0][instruction]", "Stir."),
+            ("steps[0][image_ids]", "step-image-1"),
+            ("steps[0][image_ids]", "step-image-2"),
+        ]))
+        .unwrap();
+
+        assert_eq!(form.images.len(), 2);
+        assert_eq!(form.images[0].as_str(), "image-1");
+        assert_eq!(form.images[1].as_str(), "image-2");
+        assert_eq!(form.steps[0].images.len(), 2);
+        assert_eq!(form.steps[0].images[0].as_str(), "step-image-1");
+        assert_eq!(form.steps[0].images[1].as_str(), "step-image-2");
+    }
+
+    #[test]
+    fn allows_the_same_image_reference_in_multiple_steps() {
+        let form = parse_recipe_form(&pairs(&[
+            ("title", "Soup"),
+            ("steps[0][id]", "step-1"),
+            ("steps[0][instruction]", "Stir."),
+            ("steps[0][image_ids]", "shared-image"),
+            ("steps[1][id]", "step-2"),
+            ("steps[1][instruction]", "Bake."),
+            ("steps[1][image_ids]", "shared-image"),
+        ]))
+        .unwrap();
+
+        assert_eq!(form.steps[0].images[0].as_str(), "shared-image");
+        assert_eq!(form.steps[1].images[0].as_str(), "shared-image");
+    }
+
+    #[test]
+    fn rejects_duplicate_image_ids() {
+        assert!(
+            parse_recipe_form(&pairs(&[
+                ("title", "Soup"),
+                ("image_ids", "image-1"),
+                ("image_ids", "image-1"),
+            ]))
+            .is_err()
+        );
+    }
+
+    #[test]
     fn converts_the_form_into_a_create_request() {
         let request = create_recipe_request(
-            pairs(&[
+            submission(&[
                 ("title", "Soup"),
                 ("description", "A warming soup."),
                 ("ingredients[0][name]", "Flour"),
@@ -1892,13 +2282,16 @@ mod tests {
                     Quantity::from_measure(1.0, Unit::Other("sachet".to_string())),
                 ),
             ]),
+            Vec::new(),
             vec![RecipeStep::new(
+                RecipeStepId::generate(),
                 Some("Mix".to_string()),
                 Some(HashMap::from([
                     ("milk".to_string(), 0.5),
                     ("flour".to_string(), 200.0),
                 ])),
                 "Stir everything together.".to_string(),
+                Vec::new(),
             )],
         );
         let revision = RecipeRevision::new(
@@ -1912,7 +2305,7 @@ mod tests {
         );
         let current = RecipeWithContent::new(recipe, revision).unwrap();
 
-        let initial = FormInitial::from_recipe(&current);
+        let initial = FormInitial::from_recipe(&current, &[], "soup", &Cx::default());
 
         assert_eq!(initial.title, "Soup");
         assert_eq!(initial.description, "A warming soup.");
@@ -1962,7 +2355,7 @@ mod tests {
     #[test]
     fn converts_the_form_into_an_update_request() {
         let request = update_recipe_request(
-            pairs(&[
+            submission(&[
                 ("title", "Soup"),
                 ("message", "reduced the salt"),
                 ("latest_revision", "revision-1"),
@@ -1986,7 +2379,7 @@ mod tests {
     fn update_request_requires_a_latest_revision() {
         assert!(
             update_recipe_request(
-                pairs(&[("title", "Soup")]),
+                submission(&[("title", "Soup")]),
                 RecipeIdValue::new("soup".to_string()),
                 UserId::new("editor-1".to_string()),
             )
@@ -1997,7 +2390,7 @@ mod tests {
     #[test]
     fn update_request_treats_a_blank_message_as_missing() {
         let request = update_recipe_request(
-            pairs(&[
+            submission(&[
                 ("title", "Soup"),
                 ("message", "   "),
                 ("latest_revision", "revision-1"),
@@ -2008,5 +2401,95 @@ mod tests {
         .unwrap();
 
         assert!(request.message.is_none());
+    }
+
+    #[test]
+    fn preserves_submitted_step_ids_and_generates_missing_ids() {
+        let form = parse_recipe_form(&pairs(&[
+            ("title", "Soup"),
+            ("steps[0][id]", "step-existing"),
+            ("steps[0][instruction]", "Stir."),
+            ("steps[1][instruction]", "Bake."),
+        ]))
+        .unwrap();
+
+        assert_eq!(form.steps[0].id.as_str(), "step-existing");
+        assert_ne!(form.steps[1].id.as_str(), "");
+        assert_ne!(form.steps[0].id, form.steps[1].id);
+    }
+
+    #[test]
+    fn rejects_duplicate_step_ids() {
+        assert!(
+            parse_recipe_form(&pairs(&[
+                ("title", "Soup"),
+                ("steps[0][id]", "step-1"),
+                ("steps[0][instruction]", "Stir."),
+                ("steps[1][id]", "step-1"),
+                ("steps[1][instruction]", "Bake."),
+            ]))
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn parses_recipe_and_step_image_uploads() {
+        let mut form = parse_recipe_form(&pairs(&[
+            ("title", "Soup"),
+            ("steps[0][id]", "step-1"),
+            ("steps[0][instruction]", "Stir."),
+        ]))
+        .unwrap();
+        let png = vec![0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A, 1, 2, 3];
+
+        let images = parse_recipe_uploads(
+            &mut form,
+            vec![
+                RecipeFormUpload {
+                    field: IMAGES_FIELD.to_string(),
+                    bytes: png.clone(),
+                },
+                RecipeFormUpload {
+                    field: "steps[0][images]".to_string(),
+                    bytes: png,
+                },
+            ],
+        )
+        .unwrap();
+
+        assert_eq!(images.len(), 2);
+        assert_eq!(images[0].content_type(), "image/png");
+        assert_eq!(form.images, vec![images[0].id().clone()]);
+        assert_eq!(form.steps[0].images, vec![images[1].id().clone()]);
+    }
+
+    #[test]
+    fn rejects_an_image_for_an_unknown_step_row() {
+        let mut form = parse_recipe_form(&pairs(&[("title", "Soup")])).unwrap();
+
+        let result = parse_recipe_uploads(
+            &mut form,
+            vec![RecipeFormUpload {
+                field: "steps[4][images]".to_string(),
+                bytes: vec![0xFF, 0xD8, 0xFF, 1],
+            }],
+        );
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn rejects_an_unsupported_image_upload() {
+        let mut form = parse_recipe_form(&pairs(&[("title", "Soup")])).unwrap();
+
+        let result = parse_recipe_uploads(
+            &mut form,
+            vec![RecipeFormUpload {
+                field: IMAGES_FIELD.to_string(),
+                bytes: b"not an image".to_vec(),
+            }],
+        );
+
+        assert!(result.is_err());
     }
 }
