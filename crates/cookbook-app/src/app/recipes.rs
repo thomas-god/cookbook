@@ -2,7 +2,7 @@ use std::time::SystemTime;
 
 use cookbook_domain::recipe::models::{
     NewRecipeSourceImage, RecipeId as RecipeIdValue, RecipeRevision, RecipeRevisionId,
-    RecipeSourceImageId as RecipeSourceImageIdValue,
+    RecipeSourceImageId as RecipeSourceImageIdValue, RevisionVerification,
 };
 use cookbook_domain::recipe::ports::{
     AddRecipeSourceImagesError, AddRecipeSourceImagesRequest, DeleteRecipeSourceImageError,
@@ -64,6 +64,13 @@ pub async fn page(cx: &Cx) -> Result<impl View> {
                         >
                             (recipe.title().as_str())
                         </a>
+                        if recipe.needs_review() {
+                            <span
+                                class="ml-2 inline-flex items-center rounded-full border border-warning/40 bg-warning/10 px-2 py-0.5 text-xs font-medium text-warning-foreground"
+                            >
+                                (t!(recipe_needs_review))
+                            </span>
+                        }
                     </li>
                 }
             </ul>
@@ -102,13 +109,26 @@ pub async fn recipe_detail(cx: &Cx) -> Result<impl View> {
                     (t!(recipe_back_to_list))
                 </a>
                 <div class="mt-3 flex items-start justify-between gap-4">
-                    <h2 class="text-3xl font-semibold">(recipe.title().as_str())</h2>
+                    <div class="flex flex-wrap items-center gap-3">
+                        <h2 class="text-3xl font-semibold">(recipe.title().as_str())</h2>
+                        if recipe.needs_review() {
+                            <span
+                                class="inline-flex items-center rounded-full border border-warning/40 bg-warning/10 px-2.5 py-0.5 text-sm font-medium text-warning-foreground"
+                            >
+                                (t!(recipe_needs_review))
+                            </span>
+                        }
+                    </div>
                     <div class="flex flex-col items-end gap-1 text-sm">
                         <a
                             class="underline underline-offset-4"
                             href=(href!(edit_recipe, RecipeId(recipe.id().as_str())))
                         >
-                            (t!(recipe_edit))
+                            if recipe.needs_review() {
+                                (t!(recipe_verify))
+                            } else {
+                                (t!(recipe_edit))
+                            }
                         </a>
                         <a
                             class="underline underline-offset-4"
@@ -121,6 +141,14 @@ pub async fn recipe_detail(cx: &Cx) -> Result<impl View> {
                 if let Some(description) = recipe.description() {
                     <p class="mt-2 text-sm text-muted-foreground">
                         (description.as_str())
+                    </p>
+                }
+                if recipe.needs_review() {
+                    <p
+                        role="status"
+                        class="mt-4 rounded-lg border border-warning/40 bg-warning/10 px-4 py-3 text-sm text-warning-foreground"
+                    >
+                        (t!(recipe_needs_review_notice))
                     </p>
                 }
                 <p class="mt-2 text-sm text-muted-foreground">
@@ -161,15 +189,22 @@ pub async fn edit_recipe(cx: &Cx) -> Result<impl View> {
     let source_images = recipe_service
         .get_source_images(recipe.id().clone())
         .await?;
+    let needs_review = recipe.needs_review();
     let mode = RecipeFormMode::Edit {
         recipe_id: RecipeIdValue::new(recipe_id.clone()),
         latest_revision: RecipeRevisionId::new(recipe.revision().id().as_str().to_string()),
+        needs_review,
+    };
+    let form_title = if needs_review {
+        t!(form_verify_recipe).resolve(cx).into_owned()
+    } else {
+        t!(form_edit_recipe).resolve(cx).into_owned()
     };
 
     Ok(view! {
         <div class="flex flex-col gap-6">
             card(
-                card_header(card_title((t!(form_edit_recipe))))
+                card_header(card_title((form_title)))
                 card_content(recipe_form(mode: mode))
             )
             card(
@@ -358,10 +393,29 @@ pub async fn recipe_history(cx: &Cx) -> Result<impl View> {
                                     if let Some(message) = entry.revision.message() {
                                         <p class="font-medium">(message.as_str())</p>
                                     } else if entry.is_first {
-                                        <p class="font-medium">(t!(recipe_history_created))</p>
+                                        if entry.revision.verification() == RevisionVerification::NeedsReview {
+                                            <p class="font-medium">(t!(recipe_history_imported))</p>
+                                        } else {
+                                            <p class="font-medium">(t!(recipe_history_created))</p>
+                                        }
                                     } else {
                                         <p class="font-medium">(t!(recipe_history_edited))</p>
                                     }
+                                    <p class="mt-1">
+                                        if entry.revision.verification() == RevisionVerification::NeedsReview {
+                                            <span
+                                                class="inline-flex items-center rounded-full border border-warning/40 bg-warning/10 px-2 py-0.5 text-xs font-medium text-warning-foreground"
+                                            >
+                                                (t!(recipe_needs_review))
+                                            </span>
+                                        } else {
+                                            <span
+                                                class="inline-flex items-center rounded-full border border-border px-2 py-0.5 text-xs font-medium text-muted-foreground"
+                                            >
+                                                (t!(recipe_verified))
+                                            </span>
+                                        }
+                                    </p>
                                     <p class="mt-1 text-muted-foreground">
                                         (t!(recipe_history_edited_by))
                                         " "
@@ -420,9 +474,24 @@ pub async fn recipe_revision(cx: &Cx) -> Result<impl View> {
                 >
                     (t!(recipe_back_to_history))
                 </a>
-                <h2 class="mt-3 text-3xl font-semibold">
-                    (revision.content().title().as_str())
-                </h2>
+                <div class="mt-3 flex flex-wrap items-center gap-3">
+                    <h2 class="text-3xl font-semibold">
+                        (revision.content().title().as_str())
+                    </h2>
+                    if revision.verification() == RevisionVerification::NeedsReview {
+                        <span
+                            class="inline-flex items-center rounded-full border border-warning/40 bg-warning/10 px-2.5 py-0.5 text-sm font-medium text-warning-foreground"
+                        >
+                            (t!(recipe_needs_review))
+                        </span>
+                    } else {
+                        <span
+                            class="inline-flex items-center rounded-full border border-border px-2.5 py-0.5 text-sm font-medium text-muted-foreground"
+                        >
+                            (t!(recipe_verified))
+                        </span>
+                    }
+                </div>
                 if let Some(description) = revision.content().description() {
                     <p class="mt-2 text-sm text-muted-foreground">
                         (description.as_str())

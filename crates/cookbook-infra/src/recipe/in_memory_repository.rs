@@ -8,7 +8,8 @@ use uuid::Uuid;
 use cookbook_domain::recipe::models::{
     DurationMinutes, IngredientName, Quantity, Recipe, RecipeContent, RecipeDescription, RecipeId,
     RecipeMetadata, RecipeRevision, RecipeRevisionId, RecipeSourceImage, RecipeSourceImageId,
-    RecipeSourceImageSummary, RecipeStep, RecipeTitle, RecipeWithContent, Unit,
+    RecipeSourceImageSummary, RecipeStep, RecipeTitle, RecipeWithContent, RevisionVerification,
+    Unit,
 };
 use cookbook_domain::recipe::ports::{
     AddSourceImagesError, DeleteSourceImageError, GetRecipeError, GetSourceImageError,
@@ -99,6 +100,7 @@ fn seeded_recipe(
         recipe.author().clone(),
         SystemTime::now(),
         None,
+        RevisionVerification::Verified,
     );
 
     RecipeWithContent::new(recipe, revision).expect("seed revision belongs to its recipe")
@@ -476,6 +478,7 @@ mod tests {
             recipe.author().clone(),
             SystemTime::UNIX_EPOCH,
             None,
+            RevisionVerification::Verified,
         )
     }
 
@@ -494,6 +497,7 @@ mod tests {
             recipe.author().clone(),
             SystemTime::UNIX_EPOCH,
             None,
+            RevisionVerification::Verified,
         );
 
         RecipeWithContent::new(recipe, revision).unwrap()
@@ -693,6 +697,41 @@ mod tests {
         assert_eq!(images[0].id().as_str(), "image-1");
         assert_eq!(images[0].content_type(), "image/jpeg");
         assert_eq!(images[0].byte_len(), 5);
+    }
+
+    #[tokio::test]
+    async fn preserves_the_verification_status_of_a_revision() {
+        let repository = InMemoryRecipeRepository::new();
+        let recipe = recipe("soup");
+        let revision = RecipeRevision::new(
+            RecipeRevisionId::new("revision-1".to_string()),
+            recipe.id().clone(),
+            RecipeContent::new(
+                RecipeTitle::new("Soup".to_string()),
+                None,
+                RecipeMetadata::new(None, None, None),
+                HashMap::new(),
+                Vec::new(),
+            ),
+            recipe.author().clone(),
+            SystemTime::UNIX_EPOCH,
+            None,
+            RevisionVerification::NeedsReview,
+        );
+
+        repository
+            .save_new_recipe(recipe.clone(), revision, Vec::new())
+            .await
+            .unwrap();
+
+        let stored = repository
+            .get_recipe(RecipeId::new("soup".to_string()))
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(stored.verification(), RevisionVerification::NeedsReview);
+        assert!(stored.needs_review());
     }
 
     #[tokio::test]

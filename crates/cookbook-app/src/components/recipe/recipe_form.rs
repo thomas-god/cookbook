@@ -4,7 +4,7 @@ use cookbook_domain::recipe::{
     models::{
         DurationMinutes, IngredientName, Quantity, RecipeContent, RecipeDescription,
         RecipeId as RecipeIdValue, RecipeMetadata, RecipeRevisionId, RecipeStep, RecipeTitle,
-        RecipeWithContent, RevisionMessage, Unit,
+        RecipeWithContent, RevisionMessage, RevisionVerification, Unit,
     },
     ports::{CreateRecipeRequest, RecipeService, UpdateRecipeRequest},
 };
@@ -312,6 +312,9 @@ pub enum RecipeFormMode {
     Edit {
         recipe_id: RecipeIdValue,
         latest_revision: RecipeRevisionId,
+        /// Whether the current revision still needs review. Saving the form
+        /// verifies it, so the wording changes accordingly.
+        needs_review: bool,
     },
 }
 
@@ -334,14 +337,16 @@ impl RecipeFormMode {
 #[component]
 pub async fn recipe_form(cx: &Cx, mode: RecipeFormMode) -> Result<impl View> {
     let action = mode.action();
-    let (recipe_id, latest_revision) = match &mode {
-        RecipeFormMode::New => (String::new(), String::new()),
+    let (recipe_id, latest_revision, needs_review) = match &mode {
+        RecipeFormMode::New => (String::new(), String::new(), false),
         RecipeFormMode::Edit {
             recipe_id,
             latest_revision,
+            needs_review,
         } => (
             recipe_id.as_str().to_string(),
             latest_revision.as_str().to_string(),
+            *needs_review,
         ),
     };
 
@@ -350,7 +355,8 @@ pub async fn recipe_form(cx: &Cx, mode: RecipeFormMode) -> Result<impl View> {
         recipe_form_fields(
             action: action,
             recipe_id: recipe_id,
-            latest_revision: latest_revision
+            latest_revision: latest_revision,
+            needs_review: needs_review
         )
     })
 }
@@ -365,6 +371,7 @@ async fn recipe_form_fields(
     action: String,
     recipe_id: String,
     latest_revision: String,
+    needs_review: bool,
 ) -> Result<impl View> {
     auth::require_user(cx)?;
 
@@ -401,6 +408,23 @@ async fn recipe_form_fields(
     let rest_id = element_id(cx);
     let cooking_id = element_id(cx);
     let message_id = element_id(cx);
+    let message_label = if needs_review {
+        t!(form_verification_message).resolve(cx).into_owned()
+    } else {
+        t!(form_edit_message).resolve(cx).into_owned()
+    };
+    let message_placeholder = if needs_review {
+        t!(form_verification_message.placeholder)
+            .resolve(cx)
+            .into_owned()
+    } else {
+        t!(form_edit_message.placeholder).resolve(cx).into_owned()
+    };
+    let submit_label = if needs_review {
+        t!(form_verify_and_save).resolve(cx).into_owned()
+    } else {
+        t!(form_save_recipe).resolve(cx).into_owned()
+    };
 
     Ok(view! {
         <form method="post" action=(action) class="flex flex-col gap-6">
@@ -410,6 +434,14 @@ async fn recipe_form_fields(
                     name=(LATEST_REVISION_FIELD)
                     value=(latest_revision)
                 >
+            }
+            if needs_review {
+                <p
+                    role="status"
+                    class="rounded-lg border border-warning/40 bg-warning/10 px-4 py-3 text-sm text-warning-foreground"
+                >
+                    (t!(recipe_needs_review_notice))
+                </p>
             }
             field_set(
                 field(
@@ -547,14 +579,14 @@ async fn recipe_form_fields(
                 field(
                     field_label(
                         attrs: attributes! { for=(&message_id) },
-                        (t!(form_edit_message))
+                        (message_label)
                     )
                     <textarea
                         id=(&message_id)
                         name=(MESSAGE_FIELD)
                         rows="2"
                         class=(TEXTAREA_CLASS)
-                        placeholder=(t!(form_edit_message.placeholder))
+                        placeholder=(message_placeholder)
                         :value=$(message.get())
                         @input=$(|e: Event| message.set(e.target.value))
                     ></textarea>
@@ -566,7 +598,7 @@ async fn recipe_form_fields(
                     <a href=(href!(recipe_detail, RecipeId(recipe_id)))>
                         button(variant: ButtonVariant::Secondary, (t!(form_cancel)))
                     </a>
-                    button(attrs: attributes! { type="submit" }, (t!(form_save_recipe)))
+                    button(attrs: attributes! { type="submit" }, (submit_label))
                 } else {
                     button(attrs: attributes! { type="submit" }, (t!(form_add_recipe)))
                 }
@@ -908,6 +940,7 @@ pub(crate) fn create_recipe_request(
         content: form.into_content(),
         author,
         source_images: Vec::new(),
+        verification: RevisionVerification::Verified,
     })
 }
 
@@ -1555,6 +1588,7 @@ mod tests {
 
         assert_eq!(request.content.title().as_str(), "Soup");
         assert_eq!(request.author.as_str(), "user-1");
+        assert_eq!(request.verification, RevisionVerification::Verified);
         assert_eq!(
             request.content.description().map(RecipeDescription::as_str),
             Some("A warming soup.")
@@ -1570,6 +1604,7 @@ mod tests {
         let edit = RecipeFormMode::Edit {
             recipe_id: RecipeIdValue::new("soup".to_string()),
             latest_revision: RecipeRevisionId::new("revision-1".to_string()),
+            needs_review: false,
         };
 
         assert_eq!(edit.action(), "/recipes/soup/edit");
@@ -1623,6 +1658,7 @@ mod tests {
             UserId::new("user-1".to_string()),
             SystemTime::UNIX_EPOCH,
             None,
+            RevisionVerification::Verified,
         );
         let current = RecipeWithContent::new(recipe, revision).unwrap();
 

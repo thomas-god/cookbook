@@ -4,7 +4,7 @@ use std::future::Future;
 use crate::recipe::models::{
     NewRecipeSourceImage, Recipe, RecipeContent, RecipeId, RecipeRevision, RecipeRevisionId,
     RecipeSourceImage, RecipeSourceImageId, RecipeSourceImageSummary, RecipeWithContent,
-    RevisionMessage,
+    RevisionMessage, RevisionVerification,
 };
 use crate::user::models::UserId;
 
@@ -13,6 +13,7 @@ pub struct CreateRecipeRequest {
     pub content: RecipeContent,
     pub author: UserId,
     pub source_images: Vec<NewRecipeSourceImage>,
+    pub verification: RevisionVerification,
 }
 
 #[derive(Debug, Clone)]
@@ -33,7 +34,12 @@ pub struct UpdateRecipeRequest {
 
 /// Inbound (driving) port for the recipe domain service.
 pub trait RecipeService: Clone + Send + Sync + 'static {
-    fn create_recipe(
+    fn create_verified_recipe(
+        &self,
+        request: CreateRecipeRequest,
+    ) -> impl Future<Output = Result<RecipeWithContent, CreateRecipeError>> + Send;
+
+    fn create_unverified_recipe(
         &self,
         request: CreateRecipeRequest,
     ) -> impl Future<Output = Result<RecipeWithContent, CreateRecipeError>> + Send;
@@ -136,12 +142,18 @@ pub trait RecipeRepository: Clone + Send + Sync + 'static {
 
 #[derive(Debug)]
 pub enum CreateRecipeError {
+    /// The request's verification status does not match the service
+    /// entrypoint that was called.
+    VerificationMismatch,
     Storage(anyhow::Error),
 }
 
 impl fmt::Display for CreateRecipeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::VerificationMismatch => f.write_str(
+                "the recipe entrypoint does not match the requested verification status",
+            ),
             Self::Storage(reason) => write!(f, "failed to store recipe: {reason}"),
         }
     }
@@ -399,7 +411,12 @@ mockall::mock! {
     }
 
     impl RecipeService for RecipeService {
-        async fn create_recipe(
+        async fn create_verified_recipe(
+            &self,
+            request: CreateRecipeRequest,
+        ) -> Result<RecipeWithContent, CreateRecipeError>;
+
+        async fn create_unverified_recipe(
             &self,
             request: CreateRecipeRequest,
         ) -> Result<RecipeWithContent, CreateRecipeError>;

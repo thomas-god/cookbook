@@ -3,7 +3,7 @@ use uuid::Uuid;
 use crate::clock::Clock;
 use crate::recipe::models::{
     NewRecipeSourceImage, Recipe, RecipeId, RecipeRevision, RecipeRevisionId, RecipeSourceImage,
-    RecipeSourceImageId, RecipeSourceImageSummary, RecipeWithContent,
+    RecipeSourceImageId, RecipeSourceImageSummary, RecipeWithContent, RevisionVerification,
 };
 use crate::recipe::ports::{
     AddRecipeSourceImagesError, AddRecipeSourceImagesRequest, AddSourceImagesError,
@@ -26,7 +26,7 @@ impl<R, C> RecipeServiceImpl<R, C> {
     }
 }
 
-impl<R, C> RecipeService for RecipeServiceImpl<R, C>
+impl<R, C> RecipeServiceImpl<R, C>
 where
     R: RecipeRepository,
     C: Clock,
@@ -34,11 +34,17 @@ where
     async fn create_recipe(
         &self,
         request: CreateRecipeRequest,
+        expected_verification: RevisionVerification,
     ) -> Result<RecipeWithContent, CreateRecipeError> {
+        if request.verification != expected_verification {
+            return Err(CreateRecipeError::VerificationMismatch);
+        }
+
         let CreateRecipeRequest {
             content,
             author,
             source_images,
+            ..
         } = request;
         let recipe = Recipe::new(RecipeId::new(Uuid::now_v7().to_string()), author.clone());
         let now = self.clock.now();
@@ -50,6 +56,7 @@ where
             author.clone(),
             now,
             None,
+            expected_verification,
         );
 
         let current = RecipeWithContent::new(recipe.clone(), revision.clone())
@@ -62,6 +69,28 @@ where
             .map_err(|error| CreateRecipeError::Storage(error.into()))?;
 
         Ok(current)
+    }
+}
+
+impl<R, C> RecipeService for RecipeServiceImpl<R, C>
+where
+    R: RecipeRepository,
+    C: Clock,
+{
+    async fn create_verified_recipe(
+        &self,
+        request: CreateRecipeRequest,
+    ) -> Result<RecipeWithContent, CreateRecipeError> {
+        self.create_recipe(request, RevisionVerification::Verified)
+            .await
+    }
+
+    async fn create_unverified_recipe(
+        &self,
+        request: CreateRecipeRequest,
+    ) -> Result<RecipeWithContent, CreateRecipeError> {
+        self.create_recipe(request, RevisionVerification::NeedsReview)
+            .await
     }
 
     async fn update_recipe(
@@ -79,8 +108,11 @@ where
             return Err(UpdateRecipeError::Conflict);
         }
 
-        // TODO: detect no-op edits by comparing the new content with the latest revision,
-        // and skip saving a new revision when they are identical.
+        // TODO: detect no-op edits by comparing the new content and verification
+        // status with the latest revision, and skip saving a new revision only
+        // when both are unchanged. Content equality alone is not enough: a
+        // verification save may keep the content identical while still needing
+        // to record the new verification status.
         let recipe = current.recipe().clone();
         let revision = RecipeRevision::new(
             RecipeRevisionId::new(Uuid::now_v7().to_string()),
@@ -89,6 +121,7 @@ where
             request.editor,
             self.clock.now(),
             request.message,
+            RevisionVerification::Verified,
         );
 
         let updated = RecipeWithContent::new(recipe.clone(), revision.clone())
@@ -262,6 +295,7 @@ mod tests {
             content: content("Soup"),
             author: UserId::new("user-1".to_string()),
             source_images: Vec::new(),
+            verification: RevisionVerification::Verified,
         }
     }
 
@@ -306,6 +340,7 @@ mod tests {
             UserId::new(editor.to_string()),
             edited_at,
             None,
+            RevisionVerification::Verified,
         )
     }
 
@@ -318,6 +353,7 @@ mod tests {
             recipe.author().clone(),
             FixedClock::new().0,
             None,
+            RevisionVerification::Verified,
         );
 
         RecipeWithContent::new(recipe, revision).unwrap()
@@ -333,7 +369,10 @@ mod tests {
 
         let service = RecipeServiceImpl::new(repository, FixedClock::new());
 
-        let recipe = service.create_recipe(create_request()).await.unwrap();
+        let recipe = service
+            .create_verified_recipe(create_request())
+            .await
+            .unwrap();
 
         assert_eq!(recipe.author().as_str(), "user-1");
     }
@@ -361,10 +400,49 @@ mod tests {
 
         let service = RecipeServiceImpl::new(repository, FixedClock::new());
 
-        let recipe = service.create_recipe(create_request()).await.unwrap();
+        let recipe = service
+            .create_verified_recipe(create_request())
+            .await
+            .unwrap();
 
         assert_eq!(recipe.title().as_str(), "Soup");
         assert_eq!(recipe.revision().editor(), recipe.author());
+    }
+
+    #[tokio::test]
+    async fn create_unverified_recipe_records_a_needs_review_revision() {
+        let mut repository = MockRecipeRepository::new();
+        repository
+            .expect_save_new_recipe()
+            .times(1)
+            .withf(
+                |_: &Recipe, revision: &RecipeRevision, _: &Vec<RecipeSourceImage>| {
+                    revision.verification() == RevisionVerification::NeedsReview
+                },
+            )
+            .returning(|_, _, _| Ok(()));
+
+        let service = RecipeServiceImpl::new(repository, FixedClock::new());
+        let mut request = create_request();
+        request.verification = RevisionVerification::NeedsReview;
+
+        let recipe = service.create_unverified_recipe(request).await.unwrap();
+
+        assert!(recipe.needs_review());
+    }
+
+    #[tokio::test]
+    async fn create_recipe_rejects_a_verification_mismatch() {
+        // No save expectation: a mismatched entrypoint must not persist anything.
+        let repository = MockRecipeRepository::new();
+        let service = RecipeServiceImpl::new(repository, FixedClock::new());
+
+        let result = service.create_unverified_recipe(create_request()).await;
+
+        assert!(matches!(
+            result,
+            Err(CreateRecipeError::VerificationMismatch)
+        ));
     }
 
     #[tokio::test]
@@ -377,8 +455,14 @@ mod tests {
 
         let service = RecipeServiceImpl::new(repository, FixedClock::new());
 
-        let first = service.create_recipe(create_request()).await.unwrap();
-        let second = service.create_recipe(create_request()).await.unwrap();
+        let first = service
+            .create_verified_recipe(create_request())
+            .await
+            .unwrap();
+        let second = service
+            .create_verified_recipe(create_request())
+            .await
+            .unwrap();
 
         assert_ne!(first.id(), second.id());
     }
@@ -392,7 +476,7 @@ mod tests {
 
         let service = RecipeServiceImpl::new(repository, FixedClock::new());
 
-        let result = service.create_recipe(create_request()).await;
+        let result = service.create_verified_recipe(create_request()).await;
 
         assert!(matches!(result, Err(CreateRecipeError::Storage(_))));
     }
@@ -421,7 +505,7 @@ mod tests {
         let mut request = create_request();
         request.source_images = vec![new_source_image("front.jpg", b"front")];
 
-        let recipe = service.create_recipe(request).await.unwrap();
+        let recipe = service.create_verified_recipe(request).await.unwrap();
 
         assert_eq!(recipe.title().as_str(), "Soup");
     }
@@ -600,6 +684,7 @@ mod tests {
                     && revision.editor().as_str() == "editor-2"
                     && revision.edited_at() == edited_at
                     && revision.message().map(RevisionMessage::as_str) == Some("Changed the title")
+                    && revision.verification() == RevisionVerification::Verified
             })
             .returning(|_, _| Ok(()));
 
@@ -619,6 +704,51 @@ mod tests {
         assert_eq!(updated.id(), current.id());
         assert_eq!(updated.author().as_str(), "user-1");
         assert_eq!(updated.title().as_str(), "Updated Soup");
+    }
+
+    #[tokio::test]
+    async fn update_recipe_verifies_a_needs_review_recipe() {
+        let recipe = recipe("soup");
+        let latest = RecipeRevision::new(
+            RecipeRevisionId::new("revision-1".to_string()),
+            recipe.id().clone(),
+            content("Soup"),
+            recipe.author().clone(),
+            FixedClock::new().0,
+            None,
+            RevisionVerification::NeedsReview,
+        );
+        let current = RecipeWithContent::new(recipe, latest).unwrap();
+        let latest_revision = current.revision().id().clone();
+
+        let mut repository = MockRecipeRepository::new();
+        repository.expect_get_recipe().times(1).returning({
+            let current = current.clone();
+            move |_| Ok(Some(current.clone()))
+        });
+        repository
+            .expect_save_recipe_with_revision()
+            .times(1)
+            .withf(|_: &Recipe, revision: &RecipeRevision| {
+                revision.verification() == RevisionVerification::Verified
+            })
+            .returning(|_, _| Ok(()));
+
+        let service = RecipeServiceImpl::new(repository, FixedClock::new());
+
+        let updated = service
+            .update_recipe(UpdateRecipeRequest {
+                id: current.id().clone(),
+                content: content("Soup"),
+                editor: UserId::new("editor-2".to_string()),
+                latest_revision,
+                message: None,
+            })
+            .await
+            .unwrap();
+
+        assert!(!updated.needs_review());
+        assert_eq!(updated.verification(), RevisionVerification::Verified);
     }
 
     #[tokio::test]

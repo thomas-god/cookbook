@@ -38,7 +38,7 @@ pub async fn create(cx: &Cx, Form(form): Form<Vec<(String, String)>>) -> Result<
     let recipe_service: &AppRecipeService = app_context(cx);
 
     recipe_service
-        .create_recipe(create_recipe_request(form, user.id().clone())?)
+        .create_verified_recipe(create_recipe_request(form, user.id().clone())?)
         .await?;
 
     Ok(see_other("/recipes"))

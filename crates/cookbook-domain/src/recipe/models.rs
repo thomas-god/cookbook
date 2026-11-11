@@ -60,6 +60,14 @@ impl RecipeWithContent {
         self.revision.content()
     }
 
+    pub fn verification(&self) -> RevisionVerification {
+        self.revision.verification()
+    }
+
+    pub fn needs_review(&self) -> bool {
+        self.verification() == RevisionVerification::NeedsReview
+    }
+
     pub fn title(&self) -> &RecipeTitle {
         self.content().title()
     }
@@ -124,6 +132,12 @@ impl RecipeContent {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RevisionVerification {
+    Verified,
+    NeedsReview,
+}
+
 /// An immutable snapshot of a recipe after a create or edit operation.
 #[derive(Debug, Clone, Constructor)]
 pub struct RecipeRevision {
@@ -133,6 +147,7 @@ pub struct RecipeRevision {
     editor: UserId,
     edited_at: SystemTime,
     message: Option<RevisionMessage>,
+    verification: RevisionVerification,
 }
 
 impl RecipeRevision {
@@ -146,6 +161,10 @@ impl RecipeRevision {
 
     pub fn content(&self) -> &RecipeContent {
         &self.content
+    }
+
+    pub fn verification(&self) -> RevisionVerification {
+        self.verification
     }
 
     pub fn editor(&self) -> &UserId {

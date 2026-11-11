@@ -12,7 +12,7 @@ mod recipe_parser;
 
 use std::fmt;
 
-use cookbook_domain::recipe::models::{NewRecipeSourceImage, RecipeContent};
+use cookbook_domain::recipe::models::{NewRecipeSourceImage, RecipeContent, RevisionVerification};
 use cookbook_domain::recipe::ports::CreateRecipeRequest;
 use cookbook_domain::user::models::UserId;
 
@@ -49,6 +49,8 @@ impl VisionRecipe {
             content: self.content,
             author,
             source_images: self.source_images,
+            /// Imported recipes always need review
+            verification: RevisionVerification::NeedsReview,
         }
     }
 }
@@ -94,3 +96,30 @@ impl fmt::Display for VisionError {
 }
 
 impl std::error::Error for VisionError {}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+
+    use cookbook_domain::recipe::models::{
+        RecipeContent, RecipeMetadata, RecipeTitle, RevisionVerification,
+    };
+
+    use super::*;
+
+    #[test]
+    fn imported_recipes_need_review() {
+        let content = RecipeContent::new(
+            RecipeTitle::new("Soup".to_string()),
+            None,
+            RecipeMetadata::new(None, None, None),
+            HashMap::new(),
+            Vec::new(),
+        );
+        let recipe = VisionRecipe::new(content, Vec::new());
+
+        let request = recipe.into_create_request(UserId::new("user-1".to_string()));
+
+        assert_eq!(request.verification, RevisionVerification::NeedsReview);
+    }
+}
