@@ -6,20 +6,72 @@ use derive_more::Constructor;
 
 use crate::user::models::UserId;
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum RecipeScope {
+    Private,
+    Viewable,
+    #[default]
+    Editable,
+}
+
+impl RecipeScope {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Private => "private",
+            Self::Viewable => "viewable",
+            Self::Editable => "editable",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "private" => Some(Self::Private),
+            "viewable" => Some(Self::Viewable),
+            "editable" => Some(Self::Editable),
+            _ => None,
+        }
+    }
+}
+
 /// A recipe's stable identity. Its content lives in revisions.
-#[derive(Debug, Clone, PartialEq, Eq, Constructor)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Recipe {
     id: RecipeId,
     author: UserId,
+    scope: RecipeScope,
 }
 
 impl Recipe {
+    pub fn new(id: RecipeId, author: UserId) -> Self {
+        Self::with_scope(id, author, RecipeScope::default())
+    }
+
+    pub fn with_scope(id: RecipeId, author: UserId, scope: RecipeScope) -> Self {
+        Self { id, author, scope }
+    }
+
     pub fn id(&self) -> &RecipeId {
         &self.id
     }
 
     pub fn author(&self) -> &UserId {
         &self.author
+    }
+
+    pub fn scope(&self) -> RecipeScope {
+        self.scope
+    }
+
+    pub fn can_view(&self, user: &UserId) -> bool {
+        self.scope != RecipeScope::Private || &self.author == user
+    }
+
+    pub fn can_edit(&self, user: &UserId) -> bool {
+        self.scope == RecipeScope::Editable || &self.author == user
+    }
+
+    pub fn update_scope(self, scope: RecipeScope) -> Self {
+        Self { scope, ..self }
     }
 }
 
@@ -54,6 +106,18 @@ impl RecipeWithContent {
 
     pub fn author(&self) -> &UserId {
         self.recipe.author()
+    }
+
+    pub fn scope(&self) -> RecipeScope {
+        self.recipe.scope()
+    }
+
+    pub fn can_view(&self, user: &UserId) -> bool {
+        self.recipe.can_view(user)
+    }
+
+    pub fn can_edit(&self, user: &UserId) -> bool {
+        self.recipe.can_edit(user)
     }
 
     pub fn content(&self) -> &RecipeContent {
@@ -674,5 +738,67 @@ mod tests {
             RevisionMessage::new("   "),
             Err(RevisionMessageError::Empty)
         );
+    }
+
+    #[test]
+    fn new_recipes_are_editable_by_default() {
+        let recipe = Recipe::new(
+            RecipeId::new("soup".to_string()),
+            UserId::new("author".to_string()),
+        );
+
+        assert_eq!(recipe.scope(), RecipeScope::Editable);
+    }
+
+    #[test]
+    fn private_recipes_are_visible_and_editable_only_by_their_author() {
+        let recipe = Recipe::with_scope(
+            RecipeId::new("soup".to_string()),
+            UserId::new("author".to_string()),
+            RecipeScope::Private,
+        );
+        let author = UserId::new("author".to_string());
+        let other = UserId::new("other".to_string());
+
+        assert!(recipe.can_view(&author));
+        assert!(recipe.can_edit(&author));
+        assert!(!recipe.can_view(&other));
+        assert!(!recipe.can_edit(&other));
+    }
+
+    #[test]
+    fn viewable_recipes_are_editable_only_by_their_author() {
+        let recipe = Recipe::with_scope(
+            RecipeId::new("soup".to_string()),
+            UserId::new("author".to_string()),
+            RecipeScope::Viewable,
+        );
+        let author = UserId::new("author".to_string());
+        let other = UserId::new("other".to_string());
+
+        assert!(recipe.can_view(&other));
+        assert!(!recipe.can_edit(&other));
+        assert!(recipe.can_edit(&author));
+    }
+
+    #[test]
+    fn editable_recipes_are_visible_and_editable_by_everyone() {
+        let recipe = Recipe::with_scope(
+            RecipeId::new("soup".to_string()),
+            UserId::new("author".to_string()),
+            RecipeScope::Editable,
+        );
+        let other = UserId::new("other".to_string());
+
+        assert!(recipe.can_view(&other));
+        assert!(recipe.can_edit(&other));
+    }
+
+    #[test]
+    fn recipe_scope_parses_only_known_wire_values() {
+        assert_eq!(RecipeScope::parse("private"), Some(RecipeScope::Private));
+        assert_eq!(RecipeScope::parse("viewable"), Some(RecipeScope::Viewable));
+        assert_eq!(RecipeScope::parse("editable"), Some(RecipeScope::Editable));
+        assert_eq!(RecipeScope::parse("public"), None);
     }
 }

@@ -5,8 +5,9 @@
 
 ## Context
 
-Recipes are edited by any authenticated user, not necessary by the original author. The app needs to
-keep a history of recipe modifications with:
+Recipes are edited by any authenticated user allowed by the recipe's scope, not necessarily by the
+original author. Authors can change a recipe's scope at any time. The app needs to keep a history of
+recipe modifications with:
 
 - the editor's user id (which may differ from the author),
 - the modification time,
@@ -30,8 +31,9 @@ updates is deemed acceptable given the expected low volume of updates for a self
 
 ### Separate recipe identity from content
 
-`Recipe` only holds stable identity: `RecipeId` and `UserId` author. The author never changes.
-Editable content lives in `RecipeContent`.
+`Recipe` only holds stable identity and access metadata: `RecipeId`, `UserId` author, and
+`RecipeScope`. The author never changes; the author alone can change the scope. Editable content
+lives in `RecipeContent`.
 
 `RecipeWithContent` pairs a `Recipe` with one of its revisions. Its constructor rejects a revision
 whose `recipe_id` does not match the recipe. Repositories return it with the latest revision, so

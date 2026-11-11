@@ -1,12 +1,12 @@
 use std::time::SystemTime;
 
 use cookbook_domain::recipe::models::{
-    NewRecipeSourceImage, RecipeId as RecipeIdValue, RecipeRevision, RecipeRevisionId,
+    NewRecipeSourceImage, RecipeId as RecipeIdValue, RecipeRevision, RecipeRevisionId, RecipeScope,
     RecipeSourceImageId as RecipeSourceImageIdValue, RevisionVerification,
 };
 use cookbook_domain::recipe::ports::{
     AddRecipeSourceImagesError, AddRecipeSourceImagesRequest, DeleteRecipeSourceImageError,
-    RecipeService, UpdateRecipeError,
+    RecipeService, UpdateRecipeError, UpdateRecipeScopeError, UpdateRecipeScopeRequest,
 };
 use cookbook_domain::user::models::UserId;
 use cookbook_infra::auth::ports::UserRepository;
@@ -17,7 +17,7 @@ use topcoat::{
     router::{
         Body,
         content::{Form, multipart::Multipart},
-        error::{RouterErrorExt, SeeOther, bad_request, not_found, see_other},
+        error::{RouterErrorExt, SeeOther, bad_request, forbidden, not_found, see_other},
         href, page, path_param,
         response::Response,
         route,
@@ -31,6 +31,7 @@ use crate::{
         base::card::{card, card_content, card_header, card_title},
         recipe::{
             recipe_form::{RecipeFormMode, recipe_form},
+            recipe_scope_form::recipe_scope_form,
             recipe_view::recipe_view,
             source_images::{source_image_editor, source_image_gallery},
         },
@@ -42,10 +43,10 @@ pub(crate) const MAX_UPLOAD_BYTES: usize = 100 * 1024 * 1024;
 
 #[page]
 pub async fn page(cx: &Cx) -> Result<impl View> {
-    auth::require_user(cx)?;
+    let user = auth::require_user(cx)?;
 
     let recipe_service: &AppRecipeService = app_context(cx);
-    let recipes = recipe_service.get_recipes().await?;
+    let recipes = recipe_service.get_recipes(user.id().clone()).await?;
 
     Ok(view! {
         <h2 class="mb-6 text-2xl font-semibold">(t!(recipes_list_heading))</h2>
@@ -84,18 +85,22 @@ path_param!(pub source_image_id);
 
 #[page("./{recipe_id}")]
 pub async fn recipe_detail(cx: &Cx) -> Result<impl View> {
-    auth::require_user(cx)?;
+    let user = auth::require_user(cx)?;
 
     let recipe_id = path_param::<RecipeId>(cx).to_string();
     let recipe_service: &AppRecipeService = app_context(cx);
     let recipe = recipe_service
-        .get_recipe(RecipeIdValue::new(recipe_id))
+        .get_recipe(RecipeIdValue::new(recipe_id), user.id().clone())
         .await?
         .ok_or_not_found()?;
     let source_images = recipe_service
-        .get_source_images(recipe.id().clone())
+        .get_source_images(recipe.id().clone(), user.id().clone())
         .await?;
 
+    let can_edit = recipe.can_edit(user.id());
+    let is_author = recipe.author() == user.id();
+    let scope = recipe.scope();
+    let scope_label = scope_label(cx, scope);
     let author_name = display_name(cx, recipe.author()).await?;
     let total_minutes = recipe.durations().total_duration().as_minutes();
 
@@ -118,18 +123,25 @@ pub async fn recipe_detail(cx: &Cx) -> Result<impl View> {
                                 (t!(recipe_needs_review))
                             </span>
                         }
+                        <span
+                            class="inline-flex items-center rounded-full border border-border px-2.5 py-0.5 text-sm font-medium text-muted-foreground"
+                        >
+                            (scope_label)
+                        </span>
                     </div>
                     <div class="flex flex-col items-end gap-1 text-sm">
-                        <a
-                            class="underline underline-offset-4"
-                            href=(href!(edit_recipe, RecipeId(recipe.id().as_str())))
-                        >
-                            if recipe.needs_review() {
-                                (t!(recipe_verify))
-                            } else {
-                                (t!(recipe_edit))
-                            }
-                        </a>
+                        if can_edit {
+                            <a
+                                class="underline underline-offset-4"
+                                href=(href!(edit_recipe, RecipeId(recipe.id().as_str())))
+                            >
+                                if recipe.needs_review() {
+                                    (t!(recipe_verify))
+                                } else {
+                                    (t!(recipe_edit))
+                                }
+                            </a>
+                        }
                         <a
                             class="underline underline-offset-4"
                             href=(href!(recipe_history, RecipeId(recipe.id().as_str())))
@@ -172,22 +184,36 @@ pub async fn recipe_detail(cx: &Cx) -> Result<impl View> {
                 recipe_id: recipe.id().as_str(),
                 images: &source_images
             )
+            if is_author {
+                <section class="rounded-lg border border-border bg-card p-4">
+                    <h3 class="mb-3 text-lg font-semibold">(t!(scope_heading))</h3>
+                    recipe_scope_form(
+                        recipe_id: recipe.id().as_str().to_string(),
+                        scope: scope
+                    )
+                </section>
+            }
         </div>
     })
 }
 
 #[page("./{recipe_id}/edit")]
 pub async fn edit_recipe(cx: &Cx) -> Result<impl View> {
-    auth::require_user(cx)?;
+    let user = auth::require_user(cx)?;
 
     let recipe_id = path_param::<RecipeId>(cx).to_string();
     let recipe_service: &AppRecipeService = app_context(cx);
     let recipe = recipe_service
-        .get_recipe(RecipeIdValue::new(recipe_id.clone()))
+        .get_recipe(RecipeIdValue::new(recipe_id.clone()), user.id().clone())
         .await?
         .ok_or_not_found()?;
+
+    if !recipe.can_edit(user.id()) {
+        return Err(forbidden().into());
+    }
+
     let source_images = recipe_service
-        .get_source_images(recipe.id().clone())
+        .get_source_images(recipe.id().clone(), user.id().clone())
         .await?;
     let needs_review = recipe.needs_review();
     let mode = RecipeFormMode::Edit {
@@ -239,13 +265,41 @@ pub async fn update_recipe(cx: &Cx, Form(form): Form<Vec<(String, String)>>) -> 
             Err(bad_request(t!(recipe_conflict).resolve(cx)).into())
         }
         Err(UpdateRecipeError::NotFound) => Err(not_found().into()),
+        Err(UpdateRecipeError::Forbidden) => Err(forbidden().into()),
+        Err(error) => Err(error.into()),
+    }
+}
+
+#[route(POST "./{recipe_id}/scope")]
+pub async fn update_recipe_scope(
+    cx: &Cx,
+    Form(form): Form<Vec<(String, String)>>,
+) -> Result<SeeOther> {
+    let user = auth::require_user(cx)?;
+    let recipe_id = path_param::<RecipeId>(cx).to_string();
+    let scope = parse_scope_form(form)?;
+    let recipe_service: &AppRecipeService = app_context(cx);
+
+    match recipe_service
+        .update_recipe_scope(UpdateRecipeScopeRequest {
+            id: RecipeIdValue::new(recipe_id.clone()),
+            scope,
+            actor: user.id().clone(),
+        })
+        .await
+    {
+        Ok(_) => Ok(see_other(
+            href!(recipe_detail, RecipeId(recipe_id.as_str())).resolve(cx),
+        )),
+        Err(UpdateRecipeScopeError::NotFound) => Err(not_found().into()),
+        Err(UpdateRecipeScopeError::Forbidden) => Err(forbidden().into()),
         Err(error) => Err(error.into()),
     }
 }
 
 #[route(GET "./{recipe_id}/source-images/{source_image_id}")]
 pub async fn source_image(cx: &Cx) -> Result<Response> {
-    auth::require_user(cx)?;
+    let user = auth::require_user(cx)?;
 
     let recipe_id = path_param::<RecipeId>(cx).to_string();
     let image_id = path_param::<SourceImageId>(cx).to_string();
@@ -254,6 +308,7 @@ pub async fn source_image(cx: &Cx) -> Result<Response> {
         .get_source_image(
             RecipeIdValue::new(recipe_id),
             RecipeSourceImageIdValue::new(image_id),
+            user.id().clone(),
         )
         .await?
         .ok_or_not_found()?;
@@ -307,6 +362,7 @@ pub async fn upload_source_images(cx: &Cx, mut multipart: Multipart) -> Result<S
             href!(edit_recipe, RecipeId(recipe_id.as_str())).resolve(cx),
         )),
         Err(AddRecipeSourceImagesError::RecipeNotFound) => Err(not_found().into()),
+        Err(AddRecipeSourceImagesError::Forbidden) => Err(forbidden().into()),
         Err(error) => Err(error.into()),
     }
 }
@@ -314,7 +370,7 @@ pub async fn upload_source_images(cx: &Cx, mut multipart: Multipart) -> Result<S
 // Not DELETE since its driven by an HTTP form that can only use POST
 #[route(POST "./{recipe_id}/source-images/{source_image_id}/delete")]
 pub async fn delete_source_image(cx: &Cx) -> Result<SeeOther> {
-    auth::require_user(cx)?;
+    let user = auth::require_user(cx)?;
 
     let recipe_id = path_param::<RecipeId>(cx).to_string();
     let image_id = path_param::<SourceImageId>(cx).to_string();
@@ -324,6 +380,7 @@ pub async fn delete_source_image(cx: &Cx) -> Result<SeeOther> {
         .delete_source_image(
             RecipeIdValue::new(recipe_id.clone()),
             RecipeSourceImageIdValue::new(image_id),
+            user.id().clone(),
         )
         .await
     {
@@ -331,6 +388,7 @@ pub async fn delete_source_image(cx: &Cx) -> Result<SeeOther> {
             href!(edit_recipe, RecipeId(recipe_id.as_str())).resolve(cx),
         )),
         Err(DeleteRecipeSourceImageError::NotFound) => Err(not_found().into()),
+        Err(DeleteRecipeSourceImageError::Forbidden) => Err(forbidden().into()),
         Err(error) => Err(error.into()),
     }
 }
@@ -343,16 +401,16 @@ struct HistoryEntry {
 
 #[page("./{recipe_id}/history")]
 pub async fn recipe_history(cx: &Cx) -> Result<impl View> {
-    auth::require_user(cx)?;
+    let user = auth::require_user(cx)?;
 
     let recipe_id = path_param::<RecipeId>(cx).to_string();
     let recipe_service: &AppRecipeService = app_context(cx);
     let recipe = recipe_service
-        .get_recipe(RecipeIdValue::new(recipe_id.clone()))
+        .get_recipe(RecipeIdValue::new(recipe_id.clone()), user.id().clone())
         .await?
         .ok_or_not_found()?;
     let revisions = recipe_service
-        .get_recipe_history(RecipeIdValue::new(recipe_id.clone()))
+        .get_recipe_history(RecipeIdValue::new(recipe_id.clone()), user.id().clone())
         .await?;
 
     let total = revisions.len();
@@ -445,17 +503,17 @@ pub async fn recipe_history(cx: &Cx) -> Result<impl View> {
 
 #[page("./{recipe_id}/history/{revision_id}")]
 pub async fn recipe_revision(cx: &Cx) -> Result<impl View> {
-    auth::require_user(cx)?;
+    let user = auth::require_user(cx)?;
 
     let recipe_id = path_param::<RecipeId>(cx).to_string();
     let revision_id = path_param::<RevisionId>(cx).to_string();
     let recipe_service: &AppRecipeService = app_context(cx);
     let recipe = recipe_service
-        .get_recipe(RecipeIdValue::new(recipe_id.clone()))
+        .get_recipe(RecipeIdValue::new(recipe_id.clone()), user.id().clone())
         .await?
         .ok_or_not_found()?;
     let revision = recipe_service
-        .get_recipe_history(RecipeIdValue::new(recipe_id.clone()))
+        .get_recipe_history(RecipeIdValue::new(recipe_id.clone()), user.id().clone())
         .await?
         .into_iter()
         .find(|revision| revision.id().as_str() == revision_id.as_str())
@@ -536,6 +594,33 @@ pub async fn recipe_revision(cx: &Cx) -> Result<impl View> {
     })
 }
 
+fn parse_scope_form(pairs: Vec<(String, String)>) -> Result<RecipeScope> {
+    let mut scope = None;
+
+    for (key, value) in pairs {
+        if key != "scope" {
+            return Err(bad_request(format!("unknown form field `{key}`")).into());
+        }
+
+        if scope.replace(value).is_some() {
+            return Err(bad_request("duplicate form field `scope`").into());
+        }
+    }
+
+    let scope =
+        scope.ok_or_else(|| -> topcoat::Error { bad_request("scope is required").into() })?;
+
+    RecipeScope::parse(scope.trim()).ok_or_else(|| bad_request("unknown recipe scope").into())
+}
+
+fn scope_label(cx: &Cx, scope: RecipeScope) -> String {
+    match scope {
+        RecipeScope::Private => t!(scope_private).resolve(cx).into_owned(),
+        RecipeScope::Viewable => t!(scope_viewable).resolve(cx).into_owned(),
+        RecipeScope::Editable => t!(scope_editable).resolve(cx).into_owned(),
+    }
+}
+
 async fn display_name(cx: &Cx, user_id: &UserId) -> Result<String> {
     let user_repository: &AppUserRepository = app_context(cx);
 
@@ -552,4 +637,55 @@ fn format_timestamp(edited_at: SystemTime) -> String {
     let datetime: chrono::DateTime<chrono::Local> = edited_at.into();
 
     datetime.format("%Y-%m-%d %H:%M").to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn pairs(entries: &[(&str, &str)]) -> Vec<(String, String)> {
+        entries
+            .iter()
+            .map(|(key, value)| ((*key).to_string(), (*value).to_string()))
+            .collect()
+    }
+
+    #[test]
+    fn parses_every_scope() {
+        assert_eq!(
+            parse_scope_form(pairs(&[("scope", "private")])).unwrap(),
+            RecipeScope::Private
+        );
+        assert_eq!(
+            parse_scope_form(pairs(&[("scope", "viewable")])).unwrap(),
+            RecipeScope::Viewable
+        );
+        assert_eq!(
+            parse_scope_form(pairs(&[("scope", "editable")])).unwrap(),
+            RecipeScope::Editable
+        );
+    }
+
+    #[test]
+    fn trims_the_scope_value() {
+        assert_eq!(
+            parse_scope_form(pairs(&[("scope", "  private  ")])).unwrap(),
+            RecipeScope::Private
+        );
+    }
+
+    #[test]
+    fn rejects_missing_unknown_duplicate_and_extra_fields() {
+        for entries in [
+            vec![],
+            vec![("scope", "public")],
+            vec![("scope", "private"), ("scope", "editable")],
+            vec![("scope", "private"), ("mystery", "x")],
+        ] {
+            assert!(
+                parse_scope_form(pairs(&entries)).is_err(),
+                "expected an error for {entries:?}"
+            );
+        }
+    }
 }

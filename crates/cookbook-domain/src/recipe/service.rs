@@ -10,7 +10,8 @@ use crate::recipe::ports::{
     CreateRecipeError, CreateRecipeRequest, DeleteRecipeSourceImageError, DeleteSourceImageError,
     GetRecipeError, GetRecipeHistoryError, GetRecipeSourceImageError, GetRecipeSourceImagesError,
     GetRecipesError, GetSourceImageError, ListSourceImagesError, RecipeRepository, RecipeService,
-    SaveRecipeError, UpdateRecipeError, UpdateRecipeRequest,
+    SaveRecipeError, UpdateRecipeError, UpdateRecipeRequest, UpdateRecipeScopeError,
+    UpdateRecipeScopeRequest,
 };
 use crate::user::models::UserId;
 
@@ -102,7 +103,12 @@ where
             .get_recipe(request.id.clone())
             .await
             .map_err(|error| UpdateRecipeError::Storage(error.into()))?
+            .filter(|recipe| recipe.can_view(&request.editor))
             .ok_or(UpdateRecipeError::NotFound)?;
+
+        if !current.can_edit(&request.editor) {
+            return Err(UpdateRecipeError::Forbidden);
+        }
 
         if current.revision().id() != &request.latest_revision {
             return Err(UpdateRecipeError::Conflict);
@@ -134,30 +140,85 @@ where
                 SaveRecipeError::RecipeIdMismatch | SaveRecipeError::RecipeAuthorMismatch => {
                     UpdateRecipeError::Conflict
                 }
+                SaveRecipeError::RecipeNotFound => UpdateRecipeError::NotFound,
                 SaveRecipeError::Storage(reason) => UpdateRecipeError::Storage(reason),
             })?;
 
         Ok(updated)
     }
 
-    async fn get_recipes(&self) -> Result<Vec<RecipeWithContent>, GetRecipesError> {
-        self.repository
-            .get_recipes()
+    async fn update_recipe_scope(
+        &self,
+        request: UpdateRecipeScopeRequest,
+    ) -> Result<RecipeWithContent, UpdateRecipeScopeError> {
+        let current = self
+            .repository
+            .get_recipe(request.id.clone())
             .await
-            .map_err(|error| GetRecipesError::Storage(error.into()))
+            .map_err(|error| UpdateRecipeScopeError::Storage(error.into()))?
+            .filter(|recipe| recipe.can_view(&request.actor))
+            .ok_or(UpdateRecipeScopeError::NotFound)?;
+
+        if current.author() != &request.actor {
+            return Err(UpdateRecipeScopeError::Forbidden);
+        }
+
+        let updated_recipe = current.recipe().clone().update_scope(request.scope);
+
+        self.repository
+            .save_recipe(updated_recipe.clone())
+            .await
+            .map_err(|error| match error {
+                SaveRecipeError::RecipeNotFound => UpdateRecipeScopeError::NotFound,
+                SaveRecipeError::RecipeAuthorMismatch => UpdateRecipeScopeError::Forbidden,
+                SaveRecipeError::RecipeIdMismatch | SaveRecipeError::Storage(_) => {
+                    UpdateRecipeScopeError::Storage(error.into())
+                }
+            })?;
+
+        RecipeWithContent::new(updated_recipe, current.revision().clone())
+            .map_err(|error| UpdateRecipeScopeError::Storage(error.into()))
     }
 
-    async fn get_recipe(&self, id: RecipeId) -> Result<Option<RecipeWithContent>, GetRecipeError> {
-        self.repository
+    async fn get_recipes(&self, viewer: UserId) -> Result<Vec<RecipeWithContent>, GetRecipesError> {
+        let recipes = self
+            .repository
+            .get_recipes()
+            .await
+            .map_err(|error| GetRecipesError::Storage(error.into()))?;
+
+        Ok(recipes
+            .into_iter()
+            .filter(|recipe| recipe.can_view(&viewer))
+            .collect())
+    }
+
+    async fn get_recipe(
+        &self,
+        id: RecipeId,
+        viewer: UserId,
+    ) -> Result<Option<RecipeWithContent>, GetRecipeError> {
+        let recipe = self
+            .repository
             .get_recipe(id)
             .await
-            .map_err(|error| GetRecipeError::Storage(error.into()))
+            .map_err(|error| GetRecipeError::Storage(error.into()))?;
+
+        Ok(recipe.filter(|recipe| recipe.can_view(&viewer)))
     }
 
     async fn get_recipe_history(
         &self,
         id: RecipeId,
+        viewer: UserId,
     ) -> Result<Vec<RecipeRevision>, GetRecipeHistoryError> {
+        self.repository
+            .get_recipe(id.clone())
+            .await
+            .map_err(|error| GetRecipeHistoryError::Storage(error.into()))?
+            .filter(|recipe| recipe.can_view(&viewer))
+            .ok_or(GetRecipeHistoryError::NotFound)?;
+
         self.repository
             .get_recipe_revisions(id)
             .await
@@ -168,6 +229,18 @@ where
         &self,
         request: AddRecipeSourceImagesRequest,
     ) -> Result<Vec<RecipeSourceImageSummary>, AddRecipeSourceImagesError> {
+        let current = self
+            .repository
+            .get_recipe(request.recipe_id.clone())
+            .await
+            .map_err(|error| AddRecipeSourceImagesError::Storage(error.into()))?
+            .filter(|recipe| recipe.can_view(&request.added_by))
+            .ok_or(AddRecipeSourceImagesError::RecipeNotFound)?;
+
+        if !current.can_edit(&request.added_by) {
+            return Err(AddRecipeSourceImagesError::Forbidden);
+        }
+
         if request.images.is_empty() {
             return Ok(Vec::new());
         }
@@ -196,7 +269,15 @@ where
     async fn get_source_images(
         &self,
         recipe_id: RecipeId,
+        viewer: UserId,
     ) -> Result<Vec<RecipeSourceImageSummary>, GetRecipeSourceImagesError> {
+        self.repository
+            .get_recipe(recipe_id.clone())
+            .await
+            .map_err(|error| GetRecipeSourceImagesError::Storage(error.into()))?
+            .filter(|recipe| recipe.can_view(&viewer))
+            .ok_or(GetRecipeSourceImagesError::NotFound)?;
+
         self.repository
             .get_source_images(recipe_id)
             .await
@@ -211,7 +292,19 @@ where
         &self,
         recipe_id: RecipeId,
         image_id: RecipeSourceImageId,
+        viewer: UserId,
     ) -> Result<Option<RecipeSourceImage>, GetRecipeSourceImageError> {
+        let visible = self
+            .repository
+            .get_recipe(recipe_id.clone())
+            .await
+            .map_err(|error| GetRecipeSourceImageError::Storage(error.into()))?
+            .is_some_and(|recipe| recipe.can_view(&viewer));
+
+        if !visible {
+            return Ok(None);
+        }
+
         self.repository
             .get_source_image(recipe_id, image_id)
             .await
@@ -224,7 +317,20 @@ where
         &self,
         recipe_id: RecipeId,
         image_id: RecipeSourceImageId,
+        actor: UserId,
     ) -> Result<(), DeleteRecipeSourceImageError> {
+        let current = self
+            .repository
+            .get_recipe(recipe_id.clone())
+            .await
+            .map_err(|error| DeleteRecipeSourceImageError::Storage(error.into()))?
+            .filter(|recipe| recipe.can_view(&actor))
+            .ok_or(DeleteRecipeSourceImageError::NotFound)?;
+
+        if !current.can_edit(&actor) {
+            return Err(DeleteRecipeSourceImageError::Forbidden);
+        }
+
         self.repository
             .delete_source_image(recipe_id, image_id)
             .await
@@ -268,7 +374,7 @@ mod tests {
 
     use super::*;
     use crate::recipe::models::{
-        RecipeContent, RecipeDurations, RecipeRevision, RecipeTitle, RevisionMessage,
+        RecipeContent, RecipeDurations, RecipeRevision, RecipeScope, RecipeTitle, RevisionMessage,
     };
     use crate::recipe::ports::{MockRecipeRepository, SaveRecipeError, UpdateRecipeRequest};
     use crate::user::models::UserId;
@@ -333,6 +439,14 @@ mod tests {
         )
     }
 
+    fn scoped_recipe(id: &str, author: &str, scope: RecipeScope) -> Recipe {
+        Recipe::with_scope(
+            RecipeId::new(id.to_string()),
+            UserId::new(author.to_string()),
+            scope,
+        )
+    }
+
     fn revision(id: &str, recipe: &Recipe, editor: &str, edited_at: SystemTime) -> RecipeRevision {
         RecipeRevision::new(
             RecipeRevisionId::new(id.to_string()),
@@ -349,6 +463,33 @@ mod tests {
         let recipe = recipe(id);
         let revision = RecipeRevision::new(
             RecipeRevisionId::new("revision-1".to_string()),
+            recipe.id().clone(),
+            content(title),
+            recipe.author().clone(),
+            FixedClock::new().0,
+            None,
+            RevisionVerification::Verified,
+        );
+
+        RecipeWithContent::new(recipe, revision).unwrap()
+    }
+
+    fn expect_visible_recipe(repository: &mut MockRecipeRepository, current: RecipeWithContent) {
+        repository
+            .expect_get_recipe()
+            .times(1)
+            .returning(move |_| Ok(Some(current.clone())));
+    }
+
+    fn current_recipe_with_scope(
+        id: &str,
+        title: &str,
+        author: &str,
+        scope: RecipeScope,
+    ) -> RecipeWithContent {
+        let recipe = scoped_recipe(id, author, scope);
+        let revision = RecipeRevision::new(
+            RecipeRevisionId::new(format!("{id}-revision")),
             recipe.id().clone(),
             content(title),
             recipe.author().clone(),
@@ -515,6 +656,7 @@ mod tests {
     async fn add_source_images_assigns_identity_and_metadata() {
         let added_at = FixedClock::new().0;
         let mut repository = MockRecipeRepository::new();
+        expect_visible_recipe(&mut repository, current_recipe("soup", "Soup"));
         repository
             .expect_add_source_images()
             .times(1)
@@ -560,7 +702,8 @@ mod tests {
 
     #[tokio::test]
     async fn add_source_images_is_a_no_op_for_an_empty_request() {
-        let repository = MockRecipeRepository::new();
+        let mut repository = MockRecipeRepository::new();
+        expect_visible_recipe(&mut repository, current_recipe("soup", "Soup"));
         let service = RecipeServiceImpl::new(repository, FixedClock::new());
 
         let summaries = service
@@ -579,8 +722,9 @@ mod tests {
     async fn add_source_images_maps_a_missing_recipe() {
         let mut repository = MockRecipeRepository::new();
         repository
-            .expect_add_source_images()
-            .returning(|_| Err(AddSourceImagesError::RecipeNotFound));
+            .expect_get_recipe()
+            .times(1)
+            .returning(|_| Ok(None));
 
         let service = RecipeServiceImpl::new(repository, FixedClock::new());
 
@@ -601,6 +745,7 @@ mod tests {
     #[tokio::test]
     async fn get_source_images_returns_the_repository_list() {
         let mut repository = MockRecipeRepository::new();
+        expect_visible_recipe(&mut repository, current_recipe("soup", "Soup"));
         repository
             .expect_get_source_images()
             .times(1)
@@ -608,7 +753,10 @@ mod tests {
 
         let service = RecipeServiceImpl::new(repository, FixedClock::new());
 
-        let images = service.get_source_images(recipe_id()).await.unwrap();
+        let images = service
+            .get_source_images(recipe_id(), user_id())
+            .await
+            .unwrap();
 
         assert!(images.is_empty());
     }
@@ -625,6 +773,7 @@ mod tests {
             FixedClock::new().0,
         );
         let mut repository = MockRecipeRepository::new();
+        expect_visible_recipe(&mut repository, current_recipe("soup", "Soup"));
         repository.expect_get_source_image().times(1).returning({
             let image = image.clone();
             move |_, _| Ok(Some(image.clone()))
@@ -633,7 +782,11 @@ mod tests {
         let service = RecipeServiceImpl::new(repository, FixedClock::new());
 
         let stored = service
-            .get_source_image(recipe_id(), RecipeSourceImageId::new("image-1".to_string()))
+            .get_source_image(
+                recipe_id(),
+                RecipeSourceImageId::new("image-1".to_string()),
+                user_id(),
+            )
             .await
             .unwrap()
             .unwrap();
@@ -646,6 +799,7 @@ mod tests {
     #[tokio::test]
     async fn delete_source_image_maps_a_missing_image() {
         let mut repository = MockRecipeRepository::new();
+        expect_visible_recipe(&mut repository, current_recipe("soup", "Soup"));
         repository
             .expect_delete_source_image()
             .returning(|_, _| Err(DeleteSourceImageError::NotFound));
@@ -653,7 +807,11 @@ mod tests {
         let service = RecipeServiceImpl::new(repository, FixedClock::new());
 
         let result = service
-            .delete_source_image(recipe_id(), RecipeSourceImageId::new("missing".to_string()))
+            .delete_source_image(
+                recipe_id(),
+                RecipeSourceImageId::new("missing".to_string()),
+                user_id(),
+            )
             .await;
 
         assert!(matches!(
@@ -892,7 +1050,7 @@ mod tests {
 
         let service = RecipeServiceImpl::new(repository, FixedClock::new());
 
-        let recipes = service.get_recipes().await.unwrap();
+        let recipes = service.get_recipes(user_id()).await.unwrap();
 
         assert!(recipes.is_empty());
     }
@@ -908,7 +1066,7 @@ mod tests {
 
         let service = RecipeServiceImpl::new(repository, FixedClock::new());
 
-        let result = service.get_recipes().await;
+        let result = service.get_recipes(user_id()).await;
 
         assert!(matches!(result, Err(GetRecipesError::Storage(_))));
     }
@@ -925,7 +1083,7 @@ mod tests {
 
         let service = RecipeServiceImpl::new(repository, FixedClock::new());
 
-        let recipe = service.get_recipe(id).await.unwrap();
+        let recipe = service.get_recipe(id, user_id()).await.unwrap();
 
         assert_eq!(
             recipe.map(|recipe| recipe.id().clone()),
@@ -942,7 +1100,9 @@ mod tests {
 
         let service = RecipeServiceImpl::new(repository, FixedClock::new());
 
-        let result = service.get_recipe(RecipeId::new("soup".to_string())).await;
+        let result = service
+            .get_recipe(RecipeId::new("soup".to_string()), user_id())
+            .await;
 
         assert!(matches!(result, Err(GetRecipeError::Storage(_))));
     }
@@ -953,6 +1113,7 @@ mod tests {
         let current = recipe("soup");
         let latest = revision("revision-1", &current, "user-1", FixedClock::new().0);
         let mut repository = MockRecipeRepository::new();
+        expect_visible_recipe(&mut repository, current_recipe("soup", "Soup"));
         repository
             .expect_get_recipe_revisions()
             .times(1)
@@ -960,7 +1121,7 @@ mod tests {
 
         let service = RecipeServiceImpl::new(repository, FixedClock::new());
 
-        let history = service.get_recipe_history(id).await.unwrap();
+        let history = service.get_recipe_history(id, user_id()).await.unwrap();
 
         assert_eq!(history.len(), 1);
     }
@@ -968,6 +1129,7 @@ mod tests {
     #[tokio::test]
     async fn get_recipe_history_maps_read_failures_to_storage_errors() {
         let mut repository = MockRecipeRepository::new();
+        expect_visible_recipe(&mut repository, current_recipe("soup", "Soup"));
         repository.expect_get_recipe_revisions().returning(|_| {
             Err(crate::recipe::ports::ListRecipeRevisionsError::Storage(
                 anyhow!("read unavailable"),
@@ -977,9 +1139,258 @@ mod tests {
         let service = RecipeServiceImpl::new(repository, FixedClock::new());
 
         let result = service
-            .get_recipe_history(RecipeId::new("soup".to_string()))
+            .get_recipe_history(RecipeId::new("soup".to_string()), user_id())
             .await;
 
         assert!(matches!(result, Err(GetRecipeHistoryError::Storage(_))));
+    }
+
+    #[tokio::test]
+    async fn get_recipes_filters_private_recipes_owned_by_others() {
+        let mut repository = MockRecipeRepository::new();
+        repository.expect_get_recipes().times(1).returning(|| {
+            Ok(vec![
+                current_recipe_with_scope("private", "Private", "author-1", RecipeScope::Private),
+                current_recipe_with_scope(
+                    "viewable",
+                    "Viewable",
+                    "author-1",
+                    RecipeScope::Viewable,
+                ),
+                current_recipe_with_scope(
+                    "editable",
+                    "Editable",
+                    "author-1",
+                    RecipeScope::Editable,
+                ),
+                current_recipe_with_scope("mine", "Mine", "viewer", RecipeScope::Private),
+            ])
+        });
+
+        let service = RecipeServiceImpl::new(repository, FixedClock::new());
+        let recipes = service
+            .get_recipes(UserId::new("viewer".to_string()))
+            .await
+            .unwrap();
+        let ids: Vec<_> = recipes.iter().map(|recipe| recipe.id().as_str()).collect();
+
+        assert_eq!(ids, ["viewable", "editable", "mine"]);
+    }
+
+    #[tokio::test]
+    async fn get_recipe_hides_a_private_recipe_from_other_users() {
+        let current = current_recipe_with_scope("soup", "Soup", "author-1", RecipeScope::Private);
+        let mut repository = MockRecipeRepository::new();
+        expect_visible_recipe(&mut repository, current);
+
+        let service = RecipeServiceImpl::new(repository, FixedClock::new());
+        let recipe = service
+            .get_recipe(
+                RecipeId::new("soup".to_string()),
+                UserId::new("viewer".to_string()),
+            )
+            .await
+            .unwrap();
+
+        assert!(recipe.is_none());
+    }
+
+    #[tokio::test]
+    async fn get_recipe_returns_a_private_recipe_to_its_author() {
+        let current = current_recipe_with_scope("soup", "Soup", "author-1", RecipeScope::Private);
+        let mut repository = MockRecipeRepository::new();
+        expect_visible_recipe(&mut repository, current);
+
+        let service = RecipeServiceImpl::new(repository, FixedClock::new());
+        let recipe = service
+            .get_recipe(
+                RecipeId::new("soup".to_string()),
+                UserId::new("author-1".to_string()),
+            )
+            .await
+            .unwrap();
+
+        assert!(recipe.is_some());
+    }
+
+    #[tokio::test]
+    async fn update_recipe_forbids_a_non_author_on_a_viewable_recipe() {
+        let current = current_recipe_with_scope("soup", "Soup", "author-1", RecipeScope::Viewable);
+        let latest_revision = current.revision().id().clone();
+        let mut repository = MockRecipeRepository::new();
+        expect_visible_recipe(&mut repository, current);
+        // No save expectation: a forbidden edit must not be persisted.
+
+        let service = RecipeServiceImpl::new(repository, FixedClock::new());
+        let result = service
+            .update_recipe(UpdateRecipeRequest {
+                id: RecipeId::new("soup".to_string()),
+                content: content("Updated Soup"),
+                editor: UserId::new("editor-2".to_string()),
+                latest_revision,
+                message: None,
+            })
+            .await;
+
+        assert!(matches!(result, Err(UpdateRecipeError::Forbidden)));
+    }
+
+    #[tokio::test]
+    async fn update_recipe_hides_a_private_recipe_from_a_non_author() {
+        let current = current_recipe_with_scope("soup", "Soup", "author-1", RecipeScope::Private);
+        let latest_revision = current.revision().id().clone();
+        let mut repository = MockRecipeRepository::new();
+        expect_visible_recipe(&mut repository, current);
+
+        let service = RecipeServiceImpl::new(repository, FixedClock::new());
+        let result = service
+            .update_recipe(UpdateRecipeRequest {
+                id: RecipeId::new("soup".to_string()),
+                content: content("Updated Soup"),
+                editor: UserId::new("editor-2".to_string()),
+                latest_revision,
+                message: None,
+            })
+            .await;
+
+        assert!(matches!(result, Err(UpdateRecipeError::NotFound)));
+    }
+
+    #[tokio::test]
+    async fn update_recipe_scope_saves_the_new_scope_for_the_author() {
+        let current = current_recipe_with_scope("soup", "Soup", "author-1", RecipeScope::Editable);
+        let mut repository = MockRecipeRepository::new();
+        expect_visible_recipe(&mut repository, current.clone());
+        repository
+            .expect_save_recipe()
+            .times(1)
+            .withf(|recipe: &Recipe| {
+                recipe.id().as_str() == "soup"
+                    && recipe.author().as_str() == "author-1"
+                    && recipe.scope() == RecipeScope::Private
+            })
+            .returning(|_| Ok(()));
+
+        let service = RecipeServiceImpl::new(repository, FixedClock::new());
+        let updated = service
+            .update_recipe_scope(UpdateRecipeScopeRequest {
+                id: RecipeId::new("soup".to_string()),
+                scope: RecipeScope::Private,
+                actor: UserId::new("author-1".to_string()),
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(updated.scope(), RecipeScope::Private);
+        assert_eq!(updated.revision().id(), current.revision().id());
+    }
+
+    #[tokio::test]
+    async fn update_recipe_scope_rejects_a_non_author() {
+        let current = current_recipe_with_scope("soup", "Soup", "author-1", RecipeScope::Editable);
+        let mut repository = MockRecipeRepository::new();
+        expect_visible_recipe(&mut repository, current);
+        // No save expectation: only the author may change the scope.
+
+        let service = RecipeServiceImpl::new(repository, FixedClock::new());
+        let result = service
+            .update_recipe_scope(UpdateRecipeScopeRequest {
+                id: RecipeId::new("soup".to_string()),
+                scope: RecipeScope::Private,
+                actor: UserId::new("editor-2".to_string()),
+            })
+            .await;
+
+        assert!(matches!(result, Err(UpdateRecipeScopeError::Forbidden)));
+    }
+
+    #[tokio::test]
+    async fn update_recipe_scope_hides_a_private_recipe_from_a_non_author() {
+        let current = current_recipe_with_scope("soup", "Soup", "author-1", RecipeScope::Private);
+        let mut repository = MockRecipeRepository::new();
+        expect_visible_recipe(&mut repository, current);
+
+        let service = RecipeServiceImpl::new(repository, FixedClock::new());
+        let result = service
+            .update_recipe_scope(UpdateRecipeScopeRequest {
+                id: RecipeId::new("soup".to_string()),
+                scope: RecipeScope::Editable,
+                actor: UserId::new("editor-2".to_string()),
+            })
+            .await;
+
+        assert!(matches!(result, Err(UpdateRecipeScopeError::NotFound)));
+    }
+
+    #[tokio::test]
+    async fn get_recipe_history_hides_a_private_recipe_from_a_non_author() {
+        let current = current_recipe_with_scope("soup", "Soup", "author-1", RecipeScope::Private);
+        let mut repository = MockRecipeRepository::new();
+        expect_visible_recipe(&mut repository, current);
+
+        let service = RecipeServiceImpl::new(repository, FixedClock::new());
+        let result = service
+            .get_recipe_history(
+                RecipeId::new("soup".to_string()),
+                UserId::new("viewer".to_string()),
+            )
+            .await;
+
+        assert!(matches!(result, Err(GetRecipeHistoryError::NotFound)));
+    }
+
+    #[tokio::test]
+    async fn get_source_images_hides_a_private_recipe_from_a_non_author() {
+        let current = current_recipe_with_scope("soup", "Soup", "author-1", RecipeScope::Private);
+        let mut repository = MockRecipeRepository::new();
+        expect_visible_recipe(&mut repository, current);
+
+        let service = RecipeServiceImpl::new(repository, FixedClock::new());
+        let result = service
+            .get_source_images(
+                RecipeId::new("soup".to_string()),
+                UserId::new("viewer".to_string()),
+            )
+            .await;
+
+        assert!(matches!(result, Err(GetRecipeSourceImagesError::NotFound)));
+    }
+
+    #[tokio::test]
+    async fn get_source_image_hides_a_private_recipe_from_a_non_author() {
+        let current = current_recipe_with_scope("soup", "Soup", "author-1", RecipeScope::Private);
+        let mut repository = MockRecipeRepository::new();
+        expect_visible_recipe(&mut repository, current);
+        // No image expectation: hidden recipes must not read their images.
+
+        let service = RecipeServiceImpl::new(repository, FixedClock::new());
+        let image = service
+            .get_source_image(
+                RecipeId::new("soup".to_string()),
+                RecipeSourceImageId::new("image-1".to_string()),
+                UserId::new("viewer".to_string()),
+            )
+            .await
+            .unwrap();
+
+        assert!(image.is_none());
+    }
+
+    #[tokio::test]
+    async fn add_source_images_forbids_a_non_author_on_a_viewable_recipe() {
+        let current = current_recipe_with_scope("soup", "Soup", "author-1", RecipeScope::Viewable);
+        let mut repository = MockRecipeRepository::new();
+        expect_visible_recipe(&mut repository, current);
+
+        let service = RecipeServiceImpl::new(repository, FixedClock::new());
+        let result = service
+            .add_source_images(AddRecipeSourceImagesRequest {
+                recipe_id: recipe_id(),
+                added_by: UserId::new("editor-2".to_string()),
+                images: vec![new_source_image("front.jpg", b"front")],
+            })
+            .await;
+
+        assert!(matches!(result, Err(AddRecipeSourceImagesError::Forbidden)));
     }
 }

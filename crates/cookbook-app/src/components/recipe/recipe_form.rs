@@ -264,9 +264,10 @@ async fn load_current_recipe(cx: &Cx, recipe_id: &str) -> Result<Option<RecipeWi
         return Ok(None);
     }
 
+    let user = auth::require_user(cx)?;
     let recipe_service: &AppRecipeService = app_context(cx);
     let recipe = recipe_service
-        .get_recipe(RecipeIdValue::new(recipe_id.to_string()))
+        .get_recipe(RecipeIdValue::new(recipe_id.to_string()), user.id().clone())
         .await?;
 
     Ok(Some(recipe.ok_or_not_found()?))

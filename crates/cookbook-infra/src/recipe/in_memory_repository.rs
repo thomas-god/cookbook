@@ -293,7 +293,7 @@ impl RecipeRepository for InMemoryRecipeRepository {
             .map_err(|_| SaveRecipeError::Storage(anyhow!("recipe store lock poisoned")))?;
 
         if let Some(record) = store.recipes.get_mut(recipe.id()) {
-            if record.recipe != recipe {
+            if record.recipe.author() != recipe.author() {
                 return Err(SaveRecipeError::RecipeAuthorMismatch);
             }
 
@@ -308,6 +308,26 @@ impl RecipeRepository for InMemoryRecipeRepository {
                 },
             );
         }
+
+        Ok(())
+    }
+
+    async fn save_recipe(&self, recipe: Recipe) -> Result<(), SaveRecipeError> {
+        let mut store = self
+            .store
+            .write()
+            .map_err(|_| SaveRecipeError::Storage(anyhow!("recipe store lock poisoned")))?;
+
+        let record = store
+            .recipes
+            .get_mut(recipe.id())
+            .ok_or(SaveRecipeError::RecipeNotFound)?;
+
+        if record.recipe.author() != recipe.author() {
+            return Err(SaveRecipeError::RecipeAuthorMismatch);
+        }
+
+        record.recipe = record.recipe.clone().update_scope(recipe.scope());
 
         Ok(())
     }
@@ -460,7 +480,7 @@ mod tests {
     use std::time::SystemTime;
 
     use super::*;
-    use cookbook_domain::recipe::models::{RecipeDurations, RecipeId, RecipeTitle};
+    use cookbook_domain::recipe::models::{RecipeDurations, RecipeId, RecipeScope, RecipeTitle};
 
     fn recipe(id: &str) -> Recipe {
         Recipe::new(
@@ -904,5 +924,93 @@ mod tests {
             .unwrap();
 
         assert!(images.is_empty());
+    }
+
+    #[tokio::test]
+    async fn saves_the_recipe_scope_without_adding_a_revision() {
+        let repository = InMemoryRecipeRepository::new();
+        let recipe = recipe("soup");
+        let revision = revision("revision-1", &recipe);
+        repository
+            .save_new_recipe(recipe.clone(), revision, Vec::new())
+            .await
+            .unwrap();
+
+        let private = recipe.clone().update_scope(RecipeScope::Private);
+        repository.save_recipe(private).await.unwrap();
+
+        let stored = repository
+            .get_recipe(RecipeId::new("soup".to_string()))
+            .await
+            .unwrap()
+            .unwrap();
+        let revisions = repository
+            .get_recipe_revisions(RecipeId::new("soup".to_string()))
+            .await
+            .unwrap();
+
+        assert_eq!(stored.scope(), RecipeScope::Private);
+        assert_eq!(revisions.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn persists_a_scope_change_across_content_revisions() {
+        let repository = InMemoryRecipeRepository::new();
+        let recipe = recipe("soup");
+        let first = revision("revision-1", &recipe);
+        repository
+            .save_new_recipe(recipe.clone(), first, Vec::new())
+            .await
+            .unwrap();
+
+        let viewable = recipe.clone().update_scope(RecipeScope::Viewable);
+        repository.save_recipe(viewable.clone()).await.unwrap();
+
+        let second = revision("revision-2", &viewable);
+        repository
+            .save_recipe_with_revision(viewable, second)
+            .await
+            .unwrap();
+
+        let stored = repository
+            .get_recipe(RecipeId::new("soup".to_string()))
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(stored.scope(), RecipeScope::Viewable);
+        assert_eq!(stored.title().as_str(), "Soup");
+    }
+
+    #[tokio::test]
+    async fn rejects_a_scope_change_for_an_unknown_recipe() {
+        let repository = InMemoryRecipeRepository::new();
+        let recipe = recipe("soup");
+        let recipe = recipe.update_scope(RecipeScope::Private);
+
+        let result = repository.save_recipe(recipe).await;
+
+        assert!(matches!(result, Err(SaveRecipeError::RecipeNotFound)));
+    }
+
+    #[tokio::test]
+    async fn rejects_a_scope_change_from_a_different_author() {
+        let repository = InMemoryRecipeRepository::new();
+        let recipe = recipe("soup");
+        let revision = revision("revision-1", &recipe);
+        repository
+            .save_new_recipe(recipe, revision, Vec::new())
+            .await
+            .unwrap();
+
+        let other = Recipe::new(
+            RecipeId::new("soup".to_string()),
+            UserId::new("user-2".to_string()),
+        )
+        .update_scope(RecipeScope::Private);
+
+        let result = repository.save_recipe(other).await;
+
+        assert!(matches!(result, Err(SaveRecipeError::RecipeAuthorMismatch)));
     }
 }

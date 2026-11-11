@@ -3,8 +3,8 @@ use std::future::Future;
 
 use crate::recipe::models::{
     NewRecipeSourceImage, Recipe, RecipeContent, RecipeId, RecipeRevision, RecipeRevisionId,
-    RecipeSourceImage, RecipeSourceImageId, RecipeSourceImageSummary, RecipeWithContent,
-    RevisionMessage, RevisionVerification,
+    RecipeScope, RecipeSourceImage, RecipeSourceImageId, RecipeSourceImageSummary,
+    RecipeWithContent, RevisionMessage, RevisionVerification,
 };
 use crate::user::models::UserId;
 
@@ -32,6 +32,13 @@ pub struct UpdateRecipeRequest {
     pub message: Option<RevisionMessage>,
 }
 
+#[derive(Debug, Clone)]
+pub struct UpdateRecipeScopeRequest {
+    pub id: RecipeId,
+    pub scope: RecipeScope,
+    pub actor: UserId,
+}
+
 /// Inbound (driving) port for the recipe domain service.
 pub trait RecipeService: Clone + Send + Sync + 'static {
     fn create_verified_recipe(
@@ -49,18 +56,26 @@ pub trait RecipeService: Clone + Send + Sync + 'static {
         request: UpdateRecipeRequest,
     ) -> impl Future<Output = Result<RecipeWithContent, UpdateRecipeError>> + Send;
 
+    fn update_recipe_scope(
+        &self,
+        request: UpdateRecipeScopeRequest,
+    ) -> impl Future<Output = Result<RecipeWithContent, UpdateRecipeScopeError>> + Send;
+
     fn get_recipes(
         &self,
+        viewer: UserId,
     ) -> impl Future<Output = Result<Vec<RecipeWithContent>, GetRecipesError>> + Send;
 
     fn get_recipe(
         &self,
         id: RecipeId,
+        viewer: UserId,
     ) -> impl Future<Output = Result<Option<RecipeWithContent>, GetRecipeError>> + Send;
 
     fn get_recipe_history(
         &self,
         id: RecipeId,
+        viewer: UserId,
     ) -> impl Future<Output = Result<Vec<RecipeRevision>, GetRecipeHistoryError>> + Send;
 
     fn add_source_images(
@@ -71,18 +86,21 @@ pub trait RecipeService: Clone + Send + Sync + 'static {
     fn get_source_images(
         &self,
         recipe_id: RecipeId,
+        viewer: UserId,
     ) -> impl Future<Output = Result<Vec<RecipeSourceImageSummary>, GetRecipeSourceImagesError>> + Send;
 
     fn get_source_image(
         &self,
         recipe_id: RecipeId,
         image_id: RecipeSourceImageId,
+        viewer: UserId,
     ) -> impl Future<Output = Result<Option<RecipeSourceImage>, GetRecipeSourceImageError>> + Send;
 
     fn delete_source_image(
         &self,
         recipe_id: RecipeId,
         image_id: RecipeSourceImageId,
+        actor: UserId,
     ) -> impl Future<Output = Result<(), DeleteRecipeSourceImageError>> + Send;
 }
 
@@ -101,6 +119,11 @@ pub trait RecipeRepository: Clone + Send + Sync + 'static {
         &self,
         recipe: Recipe,
         revision: RecipeRevision,
+    ) -> impl Future<Output = Result<(), SaveRecipeError>> + Send;
+
+    fn save_recipe(
+        &self,
+        recipe: Recipe,
     ) -> impl Future<Output = Result<(), SaveRecipeError>> + Send;
 
     fn get_recipe(
@@ -164,6 +187,7 @@ impl std::error::Error for CreateRecipeError {}
 #[derive(Debug)]
 pub enum UpdateRecipeError {
     NotFound,
+    Forbidden,
     Conflict,
     Storage(anyhow::Error),
 }
@@ -172,6 +196,7 @@ impl fmt::Display for UpdateRecipeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::NotFound => f.write_str("recipe not found"),
+            Self::Forbidden => f.write_str("the recipe cannot be edited by this user"),
             Self::Conflict => f.write_str("the recipe was changed since it was loaded"),
             Self::Storage(reason) => write!(f, "failed to update recipe: {reason}"),
         }
@@ -179,6 +204,25 @@ impl fmt::Display for UpdateRecipeError {
 }
 
 impl std::error::Error for UpdateRecipeError {}
+
+#[derive(Debug)]
+pub enum UpdateRecipeScopeError {
+    NotFound,
+    Forbidden,
+    Storage(anyhow::Error),
+}
+
+impl fmt::Display for UpdateRecipeScopeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NotFound => f.write_str("recipe not found"),
+            Self::Forbidden => f.write_str("only the recipe author can change its scope"),
+            Self::Storage(reason) => write!(f, "failed to update recipe scope: {reason}"),
+        }
+    }
+}
+
+impl std::error::Error for UpdateRecipeScopeError {}
 
 #[derive(Debug)]
 pub enum GetRecipesError {
@@ -197,12 +241,14 @@ impl std::error::Error for GetRecipesError {}
 
 #[derive(Debug)]
 pub enum GetRecipeHistoryError {
+    NotFound,
     Storage(anyhow::Error),
 }
 
 impl fmt::Display for GetRecipeHistoryError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::NotFound => f.write_str("recipe not found"),
             Self::Storage(reason) => write!(f, "failed to read recipe history: {reason}"),
         }
     }
@@ -214,6 +260,7 @@ impl std::error::Error for GetRecipeHistoryError {}
 pub enum SaveRecipeError {
     RecipeIdMismatch,
     RecipeAuthorMismatch,
+    RecipeNotFound,
     Storage(anyhow::Error),
 }
 
@@ -222,6 +269,7 @@ impl fmt::Display for SaveRecipeError {
         match self {
             Self::RecipeIdMismatch => f.write_str("revision does not belong to the recipe"),
             Self::RecipeAuthorMismatch => f.write_str("a recipe author cannot be changed"),
+            Self::RecipeNotFound => f.write_str("recipe not found"),
             Self::Storage(reason) => write!(f, "failed to save recipe: {reason}"),
         }
     }
@@ -277,6 +325,7 @@ impl std::error::Error for ListRecipeRevisionsError {}
 #[derive(Debug)]
 pub enum AddRecipeSourceImagesError {
     RecipeNotFound,
+    Forbidden,
     Storage(anyhow::Error),
 }
 
@@ -284,6 +333,7 @@ impl fmt::Display for AddRecipeSourceImagesError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::RecipeNotFound => f.write_str("recipe not found"),
+            Self::Forbidden => f.write_str("the recipe cannot be edited by this user"),
             Self::Storage(reason) => write!(f, "failed to store source images: {reason}"),
         }
     }
@@ -293,12 +343,14 @@ impl std::error::Error for AddRecipeSourceImagesError {}
 
 #[derive(Debug)]
 pub enum GetRecipeSourceImagesError {
+    NotFound,
     Storage(anyhow::Error),
 }
 
 impl fmt::Display for GetRecipeSourceImagesError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::NotFound => f.write_str("recipe not found"),
             Self::Storage(reason) => write!(f, "failed to read source images: {reason}"),
         }
     }
@@ -324,6 +376,7 @@ impl std::error::Error for GetRecipeSourceImageError {}
 #[derive(Debug)]
 pub enum DeleteRecipeSourceImageError {
     NotFound,
+    Forbidden,
     Storage(anyhow::Error),
 }
 
@@ -331,6 +384,7 @@ impl fmt::Display for DeleteRecipeSourceImageError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::NotFound => f.write_str("source image not found"),
+            Self::Forbidden => f.write_str("the recipe cannot be edited by this user"),
             Self::Storage(reason) => write!(f, "failed to delete source image: {reason}"),
         }
     }
@@ -426,16 +480,26 @@ mockall::mock! {
             request: UpdateRecipeRequest,
         ) -> Result<RecipeWithContent, UpdateRecipeError>;
 
-        async fn get_recipes(&self) -> Result<Vec<RecipeWithContent>, GetRecipesError>;
+        async fn update_recipe_scope(
+            &self,
+            request: UpdateRecipeScopeRequest,
+        ) -> Result<RecipeWithContent, UpdateRecipeScopeError>;
+
+        async fn get_recipes(
+            &self,
+            viewer: UserId,
+        ) -> Result<Vec<RecipeWithContent>, GetRecipesError>;
 
         async fn get_recipe(
             &self,
             id: RecipeId,
+            viewer: UserId,
         ) -> Result<Option<RecipeWithContent>, GetRecipeError>;
 
         async fn get_recipe_history(
             &self,
             id: RecipeId,
+            viewer: UserId,
         ) -> Result<Vec<RecipeRevision>, GetRecipeHistoryError>;
 
         async fn add_source_images(
@@ -446,18 +510,21 @@ mockall::mock! {
         async fn get_source_images(
             &self,
             recipe_id: RecipeId,
+            viewer: UserId,
         ) -> Result<Vec<RecipeSourceImageSummary>, GetRecipeSourceImagesError>;
 
         async fn get_source_image(
             &self,
             recipe_id: RecipeId,
             image_id: RecipeSourceImageId,
+            viewer: UserId,
         ) -> Result<Option<RecipeSourceImage>, GetRecipeSourceImageError>;
 
         async fn delete_source_image(
             &self,
             recipe_id: RecipeId,
             image_id: RecipeSourceImageId,
+            actor: UserId,
         ) -> Result<(), DeleteRecipeSourceImageError>;
     }
 }
@@ -483,6 +550,8 @@ mockall::mock! {
             recipe: Recipe,
             revision: RecipeRevision,
         ) -> Result<(), SaveRecipeError>;
+
+        async fn save_recipe(&self, recipe: Recipe) -> Result<(), SaveRecipeError>;
 
         async fn get_recipe(
             &self,
