@@ -151,6 +151,10 @@ unit_other = Other
 
 form_steps = Steps
 form_add_step = Add step
+form_insert_step_below = Add step below
+form_move_step_up = Move step up
+form_move_step_down = Move step down
+form_split_step = Duplicate step
 form_step_title = Step title (optional)
     .placeholder = Make the dough
 form_instruction = Instruction

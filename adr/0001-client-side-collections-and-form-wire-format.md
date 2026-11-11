@@ -2,6 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-11-09
+- Amended by: ADR 0003 for the ordered step list (insertion, movement, splitting, and removal)
 
 ## Context
 

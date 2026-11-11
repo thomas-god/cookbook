@@ -151,6 +151,10 @@ unit_other = Autre
 
 form_steps = Étapes
 form_add_step = Ajouter une étape
+form_insert_step_below = Ajouter une étape
+form_move_step_up = Déplacer l'étape vers le haut
+form_move_step_down = Déplacer l'étape vers le bas
+form_split_step = Dupliquer l'étape
 form_step_title = Titre de l'étape (facultatif)
     .placeholder = Préparer la pâte
 form_instruction = Instruction

@@ -19,7 +19,7 @@ use topcoat::{
         error::{RouterErrorExt, bad_request},
         href,
     },
-    runtime::{Event, shard, signal},
+    runtime::{Event, Signal, procedure, shard, signal},
     view::{View, attributes, component, element_id, view},
 };
 
@@ -53,6 +53,64 @@ const MESSAGE_FIELD: &str = "message";
 const LATEST_REVISION_FIELD: &str = "latest_revision";
 const IMAGES_FIELD: &str = "images";
 const IMAGE_IDS_FIELD: &str = "image_ids";
+
+/// Inserts a step slot at a display position, clamping past the end.
+fn insert_step_key(mut order: Vec<usize>, index: usize, key: usize) -> Vec<usize> {
+    order.insert(index.min(order.len()), key);
+    order
+}
+
+/// Removes a step slot, if it is still present.
+fn remove_step_key(mut order: Vec<usize>, key: usize) -> Vec<usize> {
+    order.retain(|candidate| *candidate != key);
+    order
+}
+
+/// Swaps a step slot with its neighbour. Boundary moves are no-ops.
+fn move_step_key(mut order: Vec<usize>, key: usize, up: bool) -> Vec<usize> {
+    let Some(index) = order.iter().position(|candidate| *candidate == key) else {
+        return order;
+    };
+
+    let target = if up {
+        index.checked_sub(1)
+    } else {
+        index.checked_add(1).filter(|target| *target < order.len())
+    };
+
+    if let Some(target) = target {
+        order.swap(index, target);
+    }
+
+    order
+}
+
+/// Removes an image reference from a step's ordered image list.
+fn remove_step_image_id(ids: Vec<String>, id: &str) -> Vec<String> {
+    ids.into_iter()
+        .filter(|candidate| candidate != id)
+        .collect()
+}
+
+#[procedure]
+async fn form_insert_step(order: Vec<usize>, index: usize, key: usize) -> Result<Vec<usize>> {
+    Ok(insert_step_key(order, index, key))
+}
+
+#[procedure]
+async fn form_remove_step(order: Vec<usize>, key: usize) -> Result<Vec<usize>> {
+    Ok(remove_step_key(order, key))
+}
+
+#[procedure]
+async fn form_move_step(order: Vec<usize>, key: usize, up: bool) -> Result<Vec<usize>> {
+    Ok(move_step_key(order, key, up))
+}
+
+#[procedure]
+async fn form_remove_step_image(ids: Vec<String>, id: String) -> Result<Vec<String>> {
+    Ok(remove_step_image_id(ids, &id))
+}
 
 /// The fields of one ingredient row on the wire.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -220,7 +278,19 @@ struct StepInitial {
     title: String,
     instruction: String,
     ingredients: String,
-    images: Vec<FormImageInitial>,
+    images: Vec<String>,
+}
+
+/// Signals shared by every step row in the form's ordered step list.
+#[derive(Clone)]
+struct StepListState {
+    order: Signal<Vec<usize>>,
+    next_key: Signal<usize>,
+    inserted_slot: Signal<Option<usize>>,
+    insert_title: Signal<String>,
+    insert_instruction: Signal<String>,
+    insert_ingredients: Signal<String>,
+    insert_images: Signal<Vec<String>>,
 }
 
 #[derive(Default)]
@@ -236,6 +306,19 @@ struct FormInitial {
     ingredients: Vec<IngredientInitial>,
     steps: Vec<StepInitial>,
     images: Vec<FormImageInitial>,
+}
+
+fn form_image_initial(image: &RecipeImageMetadata, recipe_id: &str, cx: &Cx) -> FormImageInitial {
+    FormImageInitial {
+        id: image.id().as_str().to_string(),
+        url: href!(
+            recipe_image,
+            RecipeId(recipe_id),
+            ImageId(image.id().as_str())
+        )
+        .resolve(cx),
+        alt: t!(recipe_image_alt).resolve(cx).into_owned(),
+    }
 }
 
 impl FormInitial {
@@ -264,17 +347,6 @@ impl FormInitial {
             None => ("none".to_string(), String::new(), String::new()),
         };
 
-        let image_initial = |image: &RecipeImageMetadata| FormImageInitial {
-            id: image.id().as_str().to_string(),
-            url: href!(
-                recipe_image,
-                RecipeId(recipe_id),
-                ImageId(image.id().as_str())
-            )
-            .resolve(cx),
-            alt: t!(recipe_image_alt).resolve(cx).into_owned(),
-        };
-
         let image_by_id: HashMap<&str, &RecipeImageMetadata> = images
             .iter()
             .map(|image| (image.id().as_str(), image))
@@ -285,7 +357,7 @@ impl FormInitial {
             .images()
             .iter()
             .filter_map(|image_id| image_by_id.get(image_id.as_str()).copied())
-            .map(image_initial)
+            .map(|image| form_image_initial(image, recipe_id, cx))
             .collect();
 
         Self {
@@ -324,8 +396,8 @@ impl FormInitial {
                     images: step
                         .images()
                         .iter()
-                        .filter_map(|image_id| image_by_id.get(image_id.as_str()).copied())
-                        .map(image_initial)
+                        .filter(|image_id| image_by_id.contains_key(image_id.as_str()))
+                        .map(|image_id| image_id.as_str().to_string())
                         .collect(),
                 })
                 .collect(),
@@ -491,6 +563,16 @@ async fn recipe_form_fields(
     let is_edit = !latest_revision.is_empty();
     let initial_ingredient_count = initial.ingredients.len().max(1);
     let initial_step_count = initial.steps.len().max(1);
+    let initial_step_order: Vec<usize> = (0..initial_step_count).collect();
+    let image_lookup: HashMap<String, FormImageInitial> = images
+        .iter()
+        .map(|image| {
+            (
+                image.id().as_str().to_string(),
+                form_image_initial(image, &recipe_id, cx),
+            )
+        })
+        .collect();
 
     let title_value = initial.title.clone();
     let title = signal(cx, move || title_value.clone());
@@ -514,7 +596,22 @@ async fn recipe_form_fields(
     let cooking = signal(cx, move || cooking_value.clone());
     let message = signal(cx, String::new);
     let ingredient_count = signal(cx, move || initial_ingredient_count);
-    let step_count = signal(cx, move || initial_step_count);
+    let step_order = signal(cx, move || initial_step_order.clone());
+    let next_step_key = signal(cx, move || initial_step_count);
+    let inserted_slot = signal(cx, || None::<usize>);
+    let insert_title = signal(cx, String::new);
+    let insert_instruction = signal(cx, String::new);
+    let insert_ingredients = signal(cx, String::new);
+    let insert_images = signal(cx, Vec::<String>::new);
+    let step_list = StepListState {
+        order: step_order.clone(),
+        next_key: next_step_key.clone(),
+        inserted_slot: inserted_slot.clone(),
+        insert_title: insert_title.clone(),
+        insert_instruction: insert_instruction.clone(),
+        insert_ingredients: insert_ingredients.clone(),
+        insert_images: insert_images.clone(),
+    };
 
     let ingredient_initials = initial.ingredients;
     let step_initials = initial.steps;
@@ -776,9 +873,25 @@ async fn recipe_form_fields(
             field_set(
                 field_legend((t!(form_steps)))
                 <div id="steps" class="flex flex-col gap-4">
-                    #[key(index)]
-                    for index in 0..step_count.get() {
-                        step_row(row: index, initial: step_initials.get(index).cloned())
+                    #[key(key)]
+                    for (position, key) in step_order.get().into_iter().enumerate() {
+                        step_row(
+                            row: position,
+                            key: key,
+                            initial: if inserted_slot.get() == Some(key) {
+                                Some(StepInitial {
+                                    id: String::new(),
+                                    title: insert_title.get(),
+                                    instruction: insert_instruction.get(),
+                                    ingredients: insert_ingredients.get(),
+                                    images: insert_images.get(),
+                                })
+                            } else {
+                                step_initials.get(key).cloned()
+                            },
+                            list: step_list.clone(),
+                            image_lookup: image_lookup.clone()
+                        )
                     }
                 </div>
                 <div class="flex flex-wrap gap-2">
@@ -787,7 +900,15 @@ async fn recipe_form_fields(
                         size: ButtonSize::Sm,
                         attrs: attributes! {
                             type="button"
-                            @click=$(|_e: Event| step_count.increment())
+                            @click=$(async |_e: Event| {
+                                let new_key = next_step_key.get();
+                                next_step_key.increment();
+                                let order = step_order.get();
+                                let index = order.len();
+                                let next = form_insert_step(order, index, new_key).await;
+                                inserted_slot.set(None);
+                                step_order.set(next);
+                            })
                         },
                         (t!(form_add_step))
                     )
@@ -1043,17 +1164,33 @@ async fn form_image_row(
 }
 
 #[component]
-async fn step_row(cx: &Cx, row: usize, initial: Option<StepInitial>) -> Result<impl View> {
+async fn step_row(
+    cx: &Cx,
+    row: usize,
+    key: usize,
+    initial: Option<StepInitial>,
+    list: StepListState,
+    image_lookup: HashMap<String, FormImageInitial>,
+) -> Result<impl View> {
+    let StepListState {
+        order,
+        next_key,
+        inserted_slot,
+        insert_title,
+        insert_instruction,
+        insert_ingredients,
+        insert_images,
+    } = list;
     let initial = initial.unwrap_or_default();
     let id_value = initial.id;
     let title_value = initial.title;
     let instruction_value = initial.instruction;
     let ingredients_value = initial.ingredients;
-    let step_images = initial.images;
+    let image_ids_value = initial.images;
     let title = signal(cx, move || title_value.clone());
     let instruction = signal(cx, move || instruction_value.clone());
     let ingredients = signal(cx, move || ingredients_value.clone());
-    let removed = signal(cx, || false);
+    let step_image_ids = signal(cx, move || image_ids_value.clone());
 
     let title_id = element_id(cx);
     let instruction_id = element_id(cx);
@@ -1069,8 +1206,6 @@ async fn step_row(cx: &Cx, row: usize, initial: Option<StepInitial>) -> Result<i
 
     Ok(view! {
         <fieldset
-            :hidden=$(removed.get())
-            :disabled=$(removed.get())
             class="m-0 flex min-w-0 flex-col gap-3 rounded-lg border border-border p-4"
         >
             <input type="hidden" name=(id_field) value=(id_value)>
@@ -1126,13 +1261,17 @@ async fn step_row(cx: &Cx, row: usize, initial: Option<StepInitial>) -> Result<i
                     attrs: attributes! { for=(&step_images_id) },
                     (t!(form_step_images))
                 )
-                if !step_images.is_empty() {
+                if !step_image_ids.get().is_empty() {
                     <ul class="mb-2 grid grid-cols-2 gap-3 sm:grid-cols-3">
-                        for image in &step_images {
-                            form_image_row(
-                                image: image.clone(),
-                                image_ids_field: image_ids_field.clone()
-                            )
+                        #[key(image_id.clone())]
+                        for image_id in step_image_ids.get() {
+                            if let Some(image) = image_lookup.get(&image_id) {
+                                step_image_row(
+                                    image: image.clone(),
+                                    image_ids: step_image_ids.clone(),
+                                    image_ids_field: image_ids_field.clone()
+                                )
+                            }
                         }
                     </ul>
                 }
@@ -1142,15 +1281,126 @@ async fn step_row(cx: &Cx, row: usize, initial: Option<StepInitial>) -> Result<i
                 )
                 field_description((t!(form_step_images_upload_hint)))
             )
-            <div class="flex justify-end">
+            <div class="flex flex-wrap items-center justify-end gap-2">
                 button(
                     variant: ButtonVariant::Ghost,
                     size: ButtonSize::Sm,
-                    attrs: attributes! { type="button" @click=$(|_e: Event| removed.set(true)) },
+                    attrs: attributes! {
+                        type="button"
+                        aria-label=(t!(form_insert_step_below))
+                        title=(t!(form_insert_step_below))
+                        @click=$(async |_e: Event| {
+                            let new_key = next_key.get();
+                            next_key.increment();
+                            let next = form_insert_step(order.get(), row + 1, new_key).await;
+                            inserted_slot.set(None);
+                            order.set(next);
+                        })
+                    },
+                    ("+")
+                )
+                button(
+                    variant: ButtonVariant::Ghost,
+                    size: ButtonSize::Sm,
+                    attrs: attributes! {
+                        type="button"
+                        aria-label=(t!(form_move_step_up))
+                        title=(t!(form_move_step_up))
+                        :disabled=$(row == 0)
+                        @click=$(async |_e: Event| {
+                            let next = form_move_step(order.get(), key, true).await;
+                            order.set(next);
+                        })
+                    },
+                    ("↑")
+                )
+                button(
+                    variant: ButtonVariant::Ghost,
+                    size: ButtonSize::Sm,
+                    attrs: attributes! {
+                        type="button"
+                        aria-label=(t!(form_move_step_down))
+                        title=(t!(form_move_step_down))
+                        :disabled=$(row + 1 == order.get().len())
+                        @click=$(async |_e: Event| {
+                            let next = form_move_step(order.get(), key, false).await;
+                            order.set(next);
+                        })
+                    },
+                    ("↓")
+                )
+                button(
+                    variant: ButtonVariant::Ghost,
+                    size: ButtonSize::Sm,
+                    attrs: attributes! {
+                        type="button"
+                        @click=$(async |_e: Event| {
+                            let new_key = next_key.get();
+                            next_key.increment();
+                            let next = form_insert_step(order.get(), row + 1, new_key).await;
+                            insert_title.set(title.get());
+                            insert_instruction.set(instruction.get());
+                            insert_ingredients.set(ingredients.get());
+                            insert_images.set(step_image_ids.get());
+                            inserted_slot.set(Some(new_key));
+                            order.set(next);
+                        })
+                    },
+                    (t!(form_split_step))
+                )
+                button(
+                    variant: ButtonVariant::Ghost,
+                    size: ButtonSize::Sm,
+                    attrs: attributes! {
+                        type="button"
+                        @click=$(async |_e: Event| {
+                            let next = form_remove_step(order.get(), key).await;
+                            order.set(next);
+                        })
+                    },
                     (t!(form_remove))
                 )
             </div>
         </fieldset>
+    })
+}
+
+#[component]
+async fn step_image_row(
+    cx: &Cx,
+    image: FormImageInitial,
+    image_ids: Signal<Vec<String>>,
+    image_ids_field: String,
+) -> Result<impl View> {
+    let _ = cx;
+    let image_id = image.id.clone();
+
+    Ok(view! {
+        <li class="flex flex-col gap-2">
+            <a href=(image.url.clone()) target="_blank" rel="noreferrer">
+                <img
+                    src=(image.url.clone())
+                    alt=(image.alt.clone())
+                    loading="lazy"
+                    class="aspect-square w-full rounded-lg border border-border object-cover"
+                >
+            </a>
+            <input type="hidden" name=(image_ids_field) value=(image.id)>
+            <div class="flex justify-end">
+                button(
+                    variant: ButtonVariant::Ghost,
+                    size: ButtonSize::Sm,
+                    attrs: attributes! {
+                        type="button"
+                        @click=$(async |_e: Event| {
+                            let next = form_remove_step_image(image_ids.get(), image_id).await;
+                            image_ids.set(next);
+                        })
+                    },
+                    (t!(form_recipe_images_remove))
+                )
+            </div>
+        </li>
     })
 }
 
@@ -1768,6 +2018,37 @@ mod tests {
             fields: pairs(entries),
             uploads: Vec::new(),
         }
+    }
+
+    #[test]
+    fn inserts_step_keys_at_a_display_position() {
+        assert_eq!(insert_step_key(vec![1, 2], 1, 3), vec![1, 3, 2]);
+        assert_eq!(insert_step_key(vec![1, 2], 2, 3), vec![1, 2, 3]);
+        assert_eq!(insert_step_key(vec![1, 2], 9, 3), vec![1, 2, 3]);
+        assert_eq!(insert_step_key(Vec::new(), 0, 3), vec![3]);
+    }
+
+    #[test]
+    fn removes_step_keys() {
+        assert_eq!(remove_step_key(vec![1, 2, 3], 2), vec![1, 3]);
+        assert_eq!(remove_step_key(vec![1, 2, 3], 9), vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn moves_step_keys_one_position_and_stops_at_the_edges() {
+        assert_eq!(move_step_key(vec![1, 2, 3], 2, true), vec![2, 1, 3]);
+        assert_eq!(move_step_key(vec![1, 2, 3], 2, false), vec![1, 3, 2]);
+        assert_eq!(move_step_key(vec![1, 2, 3], 1, true), vec![1, 2, 3]);
+        assert_eq!(move_step_key(vec![1, 2, 3], 3, false), vec![1, 2, 3]);
+        assert_eq!(move_step_key(vec![1, 2, 3], 9, true), vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn removes_every_reference_to_a_step_image() {
+        assert_eq!(
+            remove_step_image_id(vec!["a".to_string(), "b".to_string(), "a".to_string()], "a"),
+            vec!["b".to_string()]
+        );
     }
 
     #[test]
