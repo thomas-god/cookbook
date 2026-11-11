@@ -1598,7 +1598,6 @@ mod tests {
                 vec![RecipeStep::new(
                     RecipeStepId::generate(),
                     None,
-                    None,
                     instruction.to_string(),
                     Vec::new(),
                 )],
@@ -1706,7 +1705,6 @@ mod tests {
             vec![RecipeImageId::new("kept".to_string())],
             vec![RecipeStep::new(
                 retained_step_id,
-                None,
                 None,
                 "Stir.".to_string(),
                 vec![RecipeImageId::new("step-image".to_string())],

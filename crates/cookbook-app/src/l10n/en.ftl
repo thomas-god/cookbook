@@ -159,5 +159,3 @@ form_step_title = Step title (optional)
     .placeholder = Make the dough
 form_instruction = Instruction
     .placeholder = Mix the flour and butter until crumbly.
-form_step_ingredients = Ingredients used (optional)
-    .placeholder = flour: 200

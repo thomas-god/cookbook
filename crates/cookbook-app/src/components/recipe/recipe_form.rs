@@ -158,7 +158,6 @@ enum StepField {
     Id,
     Title,
     Instruction,
-    Ingredients,
     Images,
     ImageIds,
 }
@@ -169,7 +168,6 @@ impl StepField {
             Self::Id => "id",
             Self::Title => "title",
             Self::Instruction => "instruction",
-            Self::Ingredients => "ingredients",
             Self::Images => "images",
             Self::ImageIds => "image_ids",
         }
@@ -184,7 +182,6 @@ impl StepField {
             "id" => Some(Self::Id),
             "title" => Some(Self::Title),
             "instruction" => Some(Self::Instruction),
-            "ingredients" => Some(Self::Ingredients),
             // File and repeated image id fields are collected separately.
             "images" | "image_ids" => None,
             _ => None,
@@ -225,15 +222,7 @@ impl RecipeFormData {
             self.images,
             self.steps
                 .into_iter()
-                .map(|step| {
-                    RecipeStep::new(
-                        step.id,
-                        step.title,
-                        step.ingredients,
-                        step.instruction,
-                        step.images,
-                    )
-                })
+                .map(|step| RecipeStep::new(step.id, step.title, step.instruction, step.images))
                 .collect(),
         )
     }
@@ -251,7 +240,6 @@ struct StepFormData {
     id: RecipeStepId,
     title: Option<String>,
     instruction: String,
-    ingredients: Option<HashMap<String, f32>>,
     images: Vec<RecipeImageId>,
 }
 
@@ -277,7 +265,6 @@ struct StepInitial {
     id: String,
     title: String,
     instruction: String,
-    ingredients: String,
     images: Vec<String>,
 }
 
@@ -289,7 +276,6 @@ struct StepListState {
     inserted_slot: Signal<Option<usize>>,
     insert_title: Signal<String>,
     insert_instruction: Signal<String>,
-    insert_ingredients: Signal<String>,
     insert_images: Signal<Vec<String>>,
 }
 
@@ -392,7 +378,6 @@ impl FormInitial {
                     id: step.id().as_str().to_string(),
                     title: step.title().unwrap_or_default().to_string(),
                     instruction: step.instruction().to_string(),
-                    ingredients: step_ingredients_text(step.ingredients()),
                     images: step
                         .images()
                         .iter()
@@ -460,21 +445,6 @@ fn unit_wire(unit: &Unit) -> &'static str {
         Unit::Tablespoon => "tablespoon",
         Unit::Other(_) => "other",
     }
-}
-
-fn step_ingredients_text(ingredients: Option<&HashMap<String, f32>>) -> String {
-    let Some(ingredients) = ingredients else {
-        return String::new();
-    };
-
-    let mut entries: Vec<_> = ingredients.iter().collect();
-    entries.sort_by(|(left, _), (right, _)| left.cmp(right));
-
-    entries
-        .into_iter()
-        .map(|(name, quantity)| format!("{name}: {quantity}"))
-        .collect::<Vec<_>>()
-        .join("\n")
 }
 
 #[derive(Clone)]
@@ -601,7 +571,6 @@ async fn recipe_form_fields(
     let inserted_slot = signal(cx, || None::<usize>);
     let insert_title = signal(cx, String::new);
     let insert_instruction = signal(cx, String::new);
-    let insert_ingredients = signal(cx, String::new);
     let insert_images = signal(cx, Vec::<String>::new);
     let step_list = StepListState {
         order: step_order.clone(),
@@ -609,7 +578,6 @@ async fn recipe_form_fields(
         inserted_slot: inserted_slot.clone(),
         insert_title: insert_title.clone(),
         insert_instruction: insert_instruction.clone(),
-        insert_ingredients: insert_ingredients.clone(),
         insert_images: insert_images.clone(),
     };
 
@@ -879,13 +847,14 @@ async fn recipe_form_fields(
                             row: position,
                             key: key,
                             initial: if inserted_slot.get() == Some(key) {
-                                Some(StepInitial {
-                                    id: String::new(),
-                                    title: insert_title.get(),
-                                    instruction: insert_instruction.get(),
-                                    ingredients: insert_ingredients.get(),
-                                    images: insert_images.get(),
-                                })
+                                Some(
+                                    StepInitial {
+                                        id: String::new(),
+                                        title: insert_title.get(),
+                                        instruction: insert_instruction.get(),
+                                        images: insert_images.get(),
+                                    },
+                                )
                             } else {
                                 step_initials.get(key).cloned()
                             },
@@ -1178,29 +1147,24 @@ async fn step_row(
         inserted_slot,
         insert_title,
         insert_instruction,
-        insert_ingredients,
         insert_images,
     } = list;
     let initial = initial.unwrap_or_default();
     let id_value = initial.id;
     let title_value = initial.title;
     let instruction_value = initial.instruction;
-    let ingredients_value = initial.ingredients;
     let image_ids_value = initial.images;
     let title = signal(cx, move || title_value.clone());
     let instruction = signal(cx, move || instruction_value.clone());
-    let ingredients = signal(cx, move || ingredients_value.clone());
     let step_image_ids = signal(cx, move || image_ids_value.clone());
 
     let title_id = element_id(cx);
     let instruction_id = element_id(cx);
-    let ingredients_id = element_id(cx);
     let step_images_id = element_id(cx);
 
     let id_field = StepField::Id.key(row);
     let title_field = StepField::Title.key(row);
     let instruction_field = StepField::Instruction.key(row);
-    let ingredients_field = StepField::Ingredients.key(row);
     let step_images_field = StepField::Images.key(row);
     let image_ids_field = StepField::ImageIds.key(row);
 
@@ -1239,21 +1203,6 @@ async fn step_row(
                     required=""
                     :value=$(instruction.get())
                     @input=$(|e: Event| instruction.set(e.target.value))
-                ></textarea>
-            )
-            field(
-                field_label(
-                    attrs: attributes! { for=(&ingredients_id) },
-                    (t!(form_step_ingredients))
-                )
-                <textarea
-                    id=(&ingredients_id)
-                    name=(ingredients_field)
-                    rows="2"
-                    class=(TEXTAREA_CLASS)
-                    placeholder=(t!(form_step_ingredients.placeholder))
-                    :value=$(ingredients.get())
-                    @input=$(|e: Event| ingredients.set(e.target.value))
                 ></textarea>
             )
             field(
@@ -1340,7 +1289,6 @@ async fn step_row(
                             let next = form_insert_step(order.get(), row + 1, new_key).await;
                             insert_title.set(title.get());
                             insert_instruction.set(instruction.get());
-                            insert_ingredients.set(ingredients.get());
                             insert_images.set(step_image_ids.get());
                             inserted_slot.set(Some(new_key));
                             order.set(next);
@@ -1909,10 +1857,8 @@ fn parse_step_rows(
 
         let title = title.trim();
         let instruction = instruction.trim();
-        let ingredients = fields.remove(&StepField::Ingredients);
-        let ingredients_text = ingredients.as_deref().map(str::trim).unwrap_or_default();
 
-        if title.is_empty() && instruction.is_empty() && ingredients_text.is_empty() {
+        if title.is_empty() && instruction.is_empty() {
             continue;
         }
 
@@ -1936,66 +1882,16 @@ fn parse_step_rows(
             )));
         }
 
-        let ingredients = if ingredients_text.is_empty() {
-            None
-        } else {
-            parse_step_ingredients(ingredients_text)?
-        };
-
         steps.push(StepFormData {
             row,
             id,
             title: (!title.is_empty()).then(|| title.to_string()),
             instruction: instruction.to_string(),
-            ingredients,
             images: parse_image_ids(image_ids.remove(&row).unwrap_or_default())?,
         });
     }
 
     Ok(steps)
-}
-
-fn parse_step_ingredients(value: &str) -> Result<Option<HashMap<String, f32>>> {
-    let mut ingredients = HashMap::new();
-
-    for line in value.lines() {
-        let line = line.trim();
-
-        if line.is_empty() {
-            continue;
-        }
-
-        let Some((name, quantity)) = line.split_once(':') else {
-            return Err(invalid(format!(
-                "step ingredient `{line}` must be written as `name: quantity`"
-            )));
-        };
-
-        let name = name.trim();
-
-        if name.is_empty() {
-            return Err(invalid("a step ingredient needs a name"));
-        }
-
-        let quantity = quantity
-            .trim()
-            .parse::<f32>()
-            .map_err(|_| invalid(format!("step ingredient `{name}` needs a number")))?;
-
-        if !quantity.is_finite() || quantity < 0.0 {
-            return Err(invalid(format!(
-                "step ingredient `{name}` must be zero or greater"
-            )));
-        }
-
-        ingredients.insert(name.to_string(), quantity);
-    }
-
-    if ingredients.is_empty() {
-        Ok(None)
-    } else {
-        Ok(Some(ingredients))
-    }
 }
 
 #[cfg(test)]
@@ -2067,7 +1963,6 @@ mod tests {
             ("ingredients[1][unit]", "litre"),
             ("steps[0][title]", "Mix"),
             ("steps[0][instruction]", "Stir everything together."),
-            ("steps[0][ingredients]", "flour: 200"),
         ]))
         .unwrap();
 
@@ -2092,13 +1987,6 @@ mod tests {
         assert_eq!(form.steps.len(), 1);
         assert_eq!(form.steps[0].title.as_deref(), Some("Mix"));
         assert_eq!(form.steps[0].instruction, "Stir everything together.");
-        assert_eq!(
-            form.steps[0]
-                .ingredients
-                .as_ref()
-                .expect("step ingredients")["flour"],
-            200.0
-        );
     }
 
     #[test]
@@ -2329,11 +2217,7 @@ mod tests {
             );
         }
 
-        for wire_field in [
-            StepField::Title,
-            StepField::Instruction,
-            StepField::Ingredients,
-        ] {
+        for wire_field in [StepField::Title, StepField::Instruction] {
             assert_eq!(
                 parse_indexed_key(&wire_field.key(7), "steps", StepField::parse).unwrap(),
                 Some((7, wire_field))
@@ -2350,7 +2234,6 @@ mod tests {
             ("ingredients[0][unit]", "gram"),
             ("steps[0][title]", ""),
             ("steps[0][instruction]", ""),
-            ("steps[0][ingredients]", ""),
         ]))
         .unwrap();
 
@@ -2390,20 +2273,6 @@ mod tests {
                 ("title", "Soup"),
                 ("steps[0][title]", "Mix"),
                 ("steps[0][instruction]", ""),
-                ("steps[0][ingredients]", ""),
-            ]))
-            .is_err()
-        );
-    }
-
-    #[test]
-    fn rejects_a_malformed_step_ingredient() {
-        assert!(
-            parse_recipe_form(&pairs(&[
-                ("title", "Soup"),
-                ("steps[0][title]", "Mix"),
-                ("steps[0][instruction]", "Stir."),
-                ("steps[0][ingredients]", "flour without a quantity"),
             ]))
             .is_err()
         );
@@ -2567,10 +2436,6 @@ mod tests {
             vec![RecipeStep::new(
                 RecipeStepId::generate(),
                 Some("Mix".to_string()),
-                Some(HashMap::from([
-                    ("milk".to_string(), 0.5),
-                    ("flour".to_string(), 200.0),
-                ])),
                 "Stir everything together.".to_string(),
                 Vec::new(),
             )],
@@ -2617,7 +2482,6 @@ mod tests {
         assert_eq!(initial.ingredients[3].unit_other, "sachet");
         assert_eq!(initial.steps[0].title, "Mix");
         assert_eq!(initial.steps[0].instruction, "Stir everything together.");
-        assert_eq!(initial.steps[0].ingredients, "flour: 200\nmilk: 0.5");
     }
 
     #[test]

@@ -20,7 +20,6 @@ Rules for ingredient amounts:
 - Use "amount_text" instead of amount/unit for free-form amounts such as "a pinch" or
   "to taste".
 - Every ingredient must have either a numeric amount or an amount_text.
-- Step-level ingredients contain only names and numeric amounts from the ingredient list.
 
 Rules for servings:
 - Use "servings_people" for a number of people, such as 4.
@@ -227,8 +226,6 @@ struct RawStep {
     title: Option<String>,
     #[serde(default)]
     instruction: String,
-    #[serde(default)]
-    ingredients: Vec<RawStepIngredient>,
 }
 
 impl RawStep {
@@ -244,40 +241,12 @@ impl RawStep {
             .map(|value| value.trim().to_string())
             .filter(|value| !value.is_empty());
 
-        let ingredients = self
-            .ingredients
-            .into_iter()
-            .filter_map(RawStepIngredient::into_pair)
-            .collect::<HashMap<_, _>>();
-
         Some(Ok(RecipeStep::new(
             RecipeStepId::generate(),
             title,
-            (!ingredients.is_empty()).then_some(ingredients),
             instruction,
             Vec::new(),
         )))
-    }
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-struct RawStepIngredient {
-    #[serde(default)]
-    name: String,
-    amount: Option<f64>,
-}
-
-impl RawStepIngredient {
-    fn into_pair(self) -> Option<(String, f32)> {
-        let name = self.name.trim().to_string();
-        let amount = self.amount?;
-
-        if name.is_empty() || !amount.is_finite() || amount < 0.0 {
-            return None;
-        }
-
-        Some((name, amount as f32))
     }
 }
 
@@ -384,8 +353,7 @@ mod tests {
                 "steps": [
                     {
                         "title": "Cook",
-                        "instruction": "Simmer everything.",
-                        "ingredients": [{"name": "tomatoes", "amount": 800}]
+                        "instruction": "Simmer everything."
                     }
                 ]
             }"#,

@@ -698,7 +698,6 @@ impl RecipeStepId {
 pub struct RecipeStep {
     id: RecipeStepId,
     title: Option<String>,
-    ingredients: Option<HashMap<String, f32>>,
     instruction: String,
     images: Vec<RecipeImageId>,
 }
@@ -710,10 +709,6 @@ impl RecipeStep {
 
     pub fn title(&self) -> Option<&str> {
         self.title.as_deref()
-    }
-
-    pub fn ingredients(&self) -> Option<&HashMap<String, f32>> {
-        self.ingredients.as_ref()
     }
 
     pub fn instruction(&self) -> &str {

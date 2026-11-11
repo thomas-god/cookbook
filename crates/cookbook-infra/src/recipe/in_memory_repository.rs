@@ -141,13 +141,11 @@ fn seed_recipes() -> Vec<RecipeWithContent> {
                 RecipeStep::new(
                     RecipeStepId::generate(),
                     Some("Soften the aromatics".to_string()),
-                    Some(HashMap::from([("tomatoes".to_string(), 800.0)])),
                     "Warm the olive oil in a pot and cook the tomatoes until soft.".to_string(),
                     Vec::new(),
                 ),
                 RecipeStep::new(
                     RecipeStepId::generate(),
-                    None,
                     None,
                     "Add the stock, simmer for 20 minutes, then blend until smooth.".to_string(),
                     Vec::new(),
@@ -182,14 +180,12 @@ fn seed_recipes() -> Vec<RecipeWithContent> {
                 RecipeStep::new(
                     RecipeStepId::generate(),
                     None,
-                    None,
                     "Cook the spaghetti in salted water until al dente.".to_string(),
                     Vec::new(),
                 ),
                 RecipeStep::new(
                     RecipeStepId::generate(),
                     None,
-                    Some(HashMap::from([("lemon".to_string(), 100.0)])),
                     "Toss with lemon zest, lemon juice and olive oil.".to_string(),
                     Vec::new(),
                 ),
@@ -227,13 +223,11 @@ fn seed_recipes() -> Vec<RecipeWithContent> {
                 RecipeStep::new(
                     RecipeStepId::generate(),
                     None,
-                    Some(HashMap::from([("bananas".to_string(), 300.0)])),
                     "Mash the bananas and mix them with the melted butter and sugar.".to_string(),
                     Vec::new(),
                 ),
                 RecipeStep::new(
                     RecipeStepId::generate(),
-                    None,
                     None,
                     "Fold in the flour, pour into a loaf tin and bake until golden.".to_string(),
                     Vec::new(),
@@ -1138,7 +1132,6 @@ mod tests {
                 Vec::new(),
                 vec![RecipeStep::new(
                     RecipeStepId::generate(),
-                    None,
                     None,
                     "Stir everything together.".to_string(),
                     Vec::new(),

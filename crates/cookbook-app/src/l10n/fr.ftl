@@ -159,5 +159,3 @@ form_step_title = Titre de l'étape (facultatif)
     .placeholder = Préparer la pâte
 form_instruction = Instruction
     .placeholder = Mélangez la farine et le beurre jusqu'à obtenir une texture sableuse.
-form_step_ingredients = Ingrédients utilisés (facultatif)
-    .placeholder = farine : 200
