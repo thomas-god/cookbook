@@ -214,9 +214,11 @@ mod tests {
 
     #[test]
     fn resizes_a_large_jpeg_for_the_vlm() {
+        // Just over the edge is enough to exercise resizing; a photo-sized
+        // canvas would only make encoding and resizing slower.
         let prepared = prepare_images(vec![SourcePhoto::new(
             Some("large.jpg".to_string()),
-            jpeg_bytes(4096, 2048),
+            jpeg_bytes(MAX_VLM_IMAGE_EDGE + 1, 8),
         )])
         .unwrap();
 
