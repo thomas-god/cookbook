@@ -6,10 +6,11 @@ use anyhow::anyhow;
 use uuid::Uuid;
 
 use cookbook_domain::recipe::models::{
-    DurationMinutes, IngredientName, Quantity, Recipe, RecipeContent, RecipeDescription,
-    RecipeDurations, RecipeId, RecipeImage, RecipeImageId, RecipeImageMetadata, RecipeRevision,
-    RecipeRevisionId, RecipeSourceImage, RecipeSourceImageId, RecipeSourceImageSummary, RecipeStep,
-    RecipeStepId, RecipeTitle, RecipeWithContent, RevisionVerification, Servings, Unit,
+    DurationMinutes, IngredientName, Quantity, Recipe, RecipeCategory, RecipeContent,
+    RecipeDescription, RecipeDurations, RecipeId, RecipeImage, RecipeImageId, RecipeImageMetadata,
+    RecipeRevision, RecipeRevisionId, RecipeSourceImage, RecipeSourceImageId,
+    RecipeSourceImageSummary, RecipeStep, RecipeStepId, RecipeTitle, RecipeWithContent,
+    RevisionVerification, Servings, Unit,
 };
 use cookbook_domain::recipe::ports::{
     AddSourceImagesError, DeleteSourceImageError, GetRecipeError, GetRecipeImageError,
@@ -79,11 +80,13 @@ impl InMemoryRecipeRepository {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn seeded_recipe(
     id: &str,
     title: &str,
     description: &str,
     servings: Option<Servings>,
+    category: Option<RecipeCategory>,
     durations: RecipeDurations,
     ingredients: HashMap<IngredientName, Quantity>,
     steps: Vec<RecipeStep>,
@@ -93,6 +96,7 @@ fn seeded_recipe(
         RecipeTitle::new(title.to_string()),
         Some(RecipeDescription::new(description.to_string())),
         servings,
+        category,
         durations,
         ingredients,
         Vec::new(),
@@ -118,6 +122,7 @@ fn seed_recipes() -> Vec<RecipeWithContent> {
             "Tomato Soup",
             "A comforting weeknight soup made with ripe tomatoes.",
             Some(Servings::people(4)),
+            Some(RecipeCategory::Main),
             RecipeDurations::new(
                 Some(DurationMinutes::new(10)),
                 None,
@@ -157,6 +162,7 @@ fn seed_recipes() -> Vec<RecipeWithContent> {
             "Lemon Pasta",
             "A bright pasta dish that comes together in minutes.",
             Some(Servings::people(2)),
+            Some(RecipeCategory::Main),
             RecipeDurations::new(
                 Some(DurationMinutes::new(10)),
                 None,
@@ -196,6 +202,7 @@ fn seed_recipes() -> Vec<RecipeWithContent> {
             "Banana Bread",
             "A moist loaf that is perfect for using up ripe bananas.",
             Some(Servings::portions_with_label(12, "slices")),
+            Some(RecipeCategory::Dessert),
             RecipeDurations::new(
                 Some(DurationMinutes::new(15)),
                 Some(DurationMinutes::new(10)),
@@ -591,6 +598,7 @@ mod tests {
                 RecipeTitle::new("Soup".to_string()),
                 None,
                 None,
+                None,
                 RecipeDurations::new(None, None, None),
                 HashMap::new(),
                 Vec::new(),
@@ -610,6 +618,7 @@ mod tests {
             recipe.id().clone(),
             RecipeContent::new(
                 RecipeTitle::new(title.to_string()),
+                None,
                 None,
                 None,
                 RecipeDurations::new(None, None, None),
@@ -837,6 +846,7 @@ mod tests {
             recipe.id().clone(),
             RecipeContent::new(
                 RecipeTitle::new("Soup".to_string()),
+                None,
                 None,
                 None,
                 RecipeDurations::new(None, None, None),
@@ -1125,6 +1135,7 @@ mod tests {
             recipe.id().clone(),
             RecipeContent::new(
                 RecipeTitle::new("Soup".to_string()),
+                None,
                 None,
                 None,
                 RecipeDurations::new(None, None, None),

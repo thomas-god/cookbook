@@ -558,6 +558,7 @@ mod tests {
             RecipeTitle::new(title.to_string()),
             None,
             None,
+            None,
             RecipeDurations::new(None, None, None),
             HashMap::new(),
             Vec::new(),
@@ -1592,6 +1593,7 @@ mod tests {
                 RecipeTitle::new("Soup".to_string()),
                 None,
                 None,
+                None,
                 RecipeDurations::new(None, None, None),
                 HashMap::new(),
                 Vec::new(),
@@ -1640,6 +1642,7 @@ mod tests {
             RecipeTitle::new("Soup".to_string()),
             None,
             None,
+            None,
             RecipeDurations::new(None, None, None),
             HashMap::new(),
             vec![RecipeImageId::new("image-1".to_string())],
@@ -1656,6 +1659,7 @@ mod tests {
         let mut request = create_request();
         request.content = RecipeContent::new(
             RecipeTitle::new("Soup".to_string()),
+            None,
             None,
             None,
             RecipeDurations::new(None, None, None),
@@ -1698,6 +1702,7 @@ mod tests {
         let service = RecipeServiceImpl::new(repository, FixedClock::new());
         let content = RecipeContent::new(
             RecipeTitle::new("Soup".to_string()),
+            None,
             None,
             None,
             RecipeDurations::new(None, None, None),

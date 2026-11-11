@@ -34,6 +34,62 @@ impl RecipeScope {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum RecipeCategory {
+    Aperitif,
+    Starter,
+    Main,
+    Side,
+    Dessert,
+    Breakfast,
+    Snack,
+    Drink,
+    Other,
+}
+
+impl RecipeCategory {
+    pub const ALL: [Self; 9] = [
+        Self::Aperitif,
+        Self::Starter,
+        Self::Main,
+        Self::Side,
+        Self::Dessert,
+        Self::Breakfast,
+        Self::Snack,
+        Self::Drink,
+        Self::Other,
+    ];
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Aperitif => "aperitif",
+            Self::Starter => "starter",
+            Self::Main => "main",
+            Self::Side => "side",
+            Self::Dessert => "dessert",
+            Self::Breakfast => "breakfast",
+            Self::Snack => "snack",
+            Self::Drink => "drink",
+            Self::Other => "other",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "aperitif" => Some(Self::Aperitif),
+            "starter" => Some(Self::Starter),
+            "main" => Some(Self::Main),
+            "side" => Some(Self::Side),
+            "dessert" => Some(Self::Dessert),
+            "breakfast" => Some(Self::Breakfast),
+            "snack" => Some(Self::Snack),
+            "drink" => Some(Self::Drink),
+            "other" => Some(Self::Other),
+            _ => None,
+        }
+    }
+}
+
 /// A recipe's stable identity. Its content lives in revisions.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Recipe {
@@ -145,6 +201,10 @@ impl RecipeWithContent {
         self.content().servings()
     }
 
+    pub fn category(&self) -> Option<RecipeCategory> {
+        self.content().category()
+    }
+
     pub fn durations(&self) -> &RecipeDurations {
         self.content().durations()
     }
@@ -175,6 +235,7 @@ pub struct RecipeContent {
     title: RecipeTitle,
     description: Option<RecipeDescription>,
     servings: Option<Servings>,
+    category: Option<RecipeCategory>,
     durations: RecipeDurations,
     ingredients: HashMap<IngredientName, Quantity>,
     images: Vec<RecipeImageId>,
@@ -192,6 +253,10 @@ impl RecipeContent {
 
     pub fn servings(&self) -> Option<&Servings> {
         self.servings.as_ref()
+    }
+
+    pub fn category(&self) -> Option<RecipeCategory> {
+        self.category
     }
 
     pub fn durations(&self) -> &RecipeDurations {
@@ -939,6 +1004,27 @@ mod tests {
 
         assert!(recipe.can_view(&other));
         assert!(recipe.can_edit(&other));
+    }
+
+    #[test]
+    fn recipe_category_round_trips_every_variant() {
+        for category in RecipeCategory::ALL {
+            assert_eq!(RecipeCategory::parse(category.as_str()), Some(category));
+        }
+    }
+
+    #[test]
+    fn recipe_category_parses_only_known_wire_values() {
+        assert_eq!(
+            RecipeCategory::parse("aperitif"),
+            Some(RecipeCategory::Aperitif)
+        );
+        assert_eq!(
+            RecipeCategory::parse("dessert"),
+            Some(RecipeCategory::Dessert)
+        );
+        assert_eq!(RecipeCategory::parse("Dessert"), None);
+        assert_eq!(RecipeCategory::parse(""), None);
     }
 
     #[test]

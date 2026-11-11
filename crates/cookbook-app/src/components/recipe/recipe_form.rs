@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 
 use cookbook_domain::recipe::{
     models::{
-        DurationMinutes, IngredientName, NewRecipeImage, Quantity, RecipeContent,
+        DurationMinutes, IngredientName, NewRecipeImage, Quantity, RecipeCategory, RecipeContent,
         RecipeDescription, RecipeDurations, RecipeId as RecipeIdValue, RecipeImageId,
         RecipeImageMetadata, RecipeRevisionId, RecipeStep, RecipeStepId, RecipeTitle,
         RecipeWithContent, RevisionMessage, RevisionVerification, Servings, Unit,
@@ -28,11 +28,14 @@ use crate::{
         AppRecipeService, auth,
         recipes::{ImageId, RecipeId, recipe_detail, recipe_image},
     },
-    components::base::{
-        button::{ButtonSize, ButtonVariant, button},
-        field::{field, field_description, field_label, field_legend, field_set},
-        image_upload::image_upload,
-        input::input,
+    components::{
+        base::{
+            button::{ButtonSize, ButtonVariant, button},
+            field::{field, field_description, field_label, field_legend, field_set},
+            image_upload::image_upload,
+            input::input,
+        },
+        recipe::category::category_label,
     },
     t,
 };
@@ -43,6 +46,7 @@ const SELECT_CLASS: &str = "h-9 w-full rounded-lg border border-border bg-transp
 
 const TITLE_FIELD: &str = "title";
 const DESCRIPTION_FIELD: &str = "description";
+const CATEGORY_FIELD: &str = "category";
 const PREPARATION_FIELD: &str = "preparation";
 const REST_FIELD: &str = "rest";
 const COOKING_FIELD: &str = "cooking";
@@ -194,6 +198,7 @@ struct RecipeFormData {
     title: String,
     description: Option<String>,
     servings: Option<Servings>,
+    category: Option<RecipeCategory>,
     preparation: Option<usize>,
     rest: Option<usize>,
     cooking: Option<usize>,
@@ -210,6 +215,7 @@ impl RecipeFormData {
             RecipeTitle::new(self.title),
             self.description.map(RecipeDescription::new),
             self.servings,
+            self.category,
             RecipeDurations::new(
                 self.preparation.map(DurationMinutes::new),
                 self.rest.map(DurationMinutes::new),
@@ -283,6 +289,7 @@ struct StepListState {
 struct FormInitial {
     title: String,
     description: String,
+    category: String,
     servings_type: String,
     servings_count: String,
     servings_label: String,
@@ -351,6 +358,10 @@ impl FormInitial {
             description: recipe
                 .description()
                 .map(|description| description.as_str().to_string())
+                .unwrap_or_default(),
+            category: recipe
+                .category()
+                .map(|category| category.as_str().to_string())
                 .unwrap_or_default(),
             servings_type,
             servings_count,
@@ -548,6 +559,8 @@ async fn recipe_form_fields(
     let title = signal(cx, move || title_value.clone());
     let description_value = initial.description.clone();
     let description = signal(cx, move || description_value.clone());
+    let category_value = initial.category.clone();
+    let category = signal(cx, move || category_value.clone());
     let servings_type_value = if initial.servings_type.is_empty() {
         "none".to_string()
     } else {
@@ -588,6 +601,7 @@ async fn recipe_form_fields(
 
     let title_id = element_id(cx);
     let description_id = element_id(cx);
+    let category_id = element_id(cx);
     let servings_type_id = element_id(cx);
     let servings_count_id = element_id(cx);
     let servings_label_id = element_id(cx);
@@ -664,6 +678,26 @@ async fn recipe_form_fields(
                         :value=$(description.get())
                         @input=$(|e: Event| description.set(e.target.value))
                     ></textarea>
+                )
+                field(
+                    field_label(
+                        attrs: attributes! { for=(&category_id) },
+                        (t!(category_label))
+                    )
+                    <select
+                        id=(&category_id)
+                        name=(CATEGORY_FIELD)
+                        class=(SELECT_CLASS)
+                        :value=$(category.get())
+                        @change=$(|e: Event| category.set(e.target.value))
+                    >
+                        <option value="">(t!(category_none))</option>
+                        for option_category in RecipeCategory::ALL {
+                            <option value=(option_category.as_str())>
+                                (category_label(cx, option_category))
+                            </option>
+                        }
+                    </select>
                 )
                 field_set(
                     field_legend((t!(form_servings)))
@@ -1356,6 +1390,7 @@ async fn step_image_row(
 fn parse_recipe_form(pairs: &[(String, String)]) -> Result<RecipeFormData> {
     let mut title = None;
     let mut description = None;
+    let mut category = None;
     let mut servings_type = None;
     let mut servings_count = None;
     let mut servings_label = None;
@@ -1374,6 +1409,7 @@ fn parse_recipe_form(pairs: &[(String, String)]) -> Result<RecipeFormData> {
             IMAGE_IDS_FIELD => images.push(value.clone()),
             TITLE_FIELD => set_once(&mut title, value, key)?,
             DESCRIPTION_FIELD => set_once(&mut description, value, key)?,
+            CATEGORY_FIELD => set_once(&mut category, value, key)?,
             SERVINGS_TYPE_FIELD => set_once(&mut servings_type, value, key)?,
             SERVINGS_COUNT_FIELD => set_once(&mut servings_count, value, key)?,
             SERVINGS_LABEL_FIELD => set_once(&mut servings_label, value, key)?,
@@ -1411,6 +1447,15 @@ fn parse_recipe_form(pairs: &[(String, String)]) -> Result<RecipeFormData> {
     let description = description
         .map(|description| description.trim().to_string())
         .filter(|description| !description.is_empty());
+    let category = category
+        .as_deref()
+        .map(str::trim)
+        .filter(|category| !category.is_empty())
+        .map(|category| {
+            RecipeCategory::parse(category)
+                .ok_or_else(|| invalid(format!("unknown recipe category `{category}`")))
+        })
+        .transpose()?;
 
     Ok(RecipeFormData {
         title,
@@ -1420,6 +1465,7 @@ fn parse_recipe_form(pairs: &[(String, String)]) -> Result<RecipeFormData> {
             servings_count.as_deref(),
             servings_label.as_deref(),
         )?,
+        category,
         preparation: parse_optional_minutes(preparation.as_deref(), PREPARATION_FIELD)?,
         rest: parse_optional_minutes(rest.as_deref(), REST_FIELD)?,
         cooking: parse_optional_minutes(cooking.as_deref(), COOKING_FIELD)?,
@@ -2038,6 +2084,22 @@ mod tests {
     }
 
     #[test]
+    fn parses_an_optional_category() {
+        let with_category =
+            parse_recipe_form(&pairs(&[("title", "Soup"), ("category", "main")])).unwrap();
+        let without_category =
+            parse_recipe_form(&pairs(&[("title", "Soup"), ("category", "   ")])).unwrap();
+
+        assert_eq!(with_category.category, Some(RecipeCategory::Main));
+        assert_eq!(without_category.category, None);
+    }
+
+    #[test]
+    fn rejects_an_unknown_category() {
+        assert!(parse_recipe_form(&pairs(&[("title", "Soup"), ("category", "brunch")])).is_err());
+    }
+
+    #[test]
     fn rejects_servings_with_a_missing_or_zero_count() {
         for entries in [
             vec![("title", "Soup"), ("servings_type", "people")],
@@ -2366,6 +2428,7 @@ mod tests {
             submission(&[
                 ("title", "Soup"),
                 ("description", "A warming soup."),
+                ("category", "main"),
                 ("ingredients[0][name]", "Flour"),
                 ("ingredients[0][quantity]", "200"),
                 ("ingredients[0][unit]", "gram"),
@@ -2382,6 +2445,7 @@ mod tests {
             request.content.description().map(RecipeDescription::as_str),
             Some("A warming soup.")
         );
+        assert_eq!(request.content.category(), Some(RecipeCategory::Main));
         assert_eq!(request.content.ingredients().len(), 1);
         assert_eq!(request.content.steps().len(), 1);
     }
@@ -2409,6 +2473,7 @@ mod tests {
             RecipeTitle::new("Soup".to_string()),
             Some(RecipeDescription::new("A warming soup.".to_string())),
             Some(Servings::portions_with_label(12, "cookies")),
+            Some(RecipeCategory::Main),
             RecipeDurations::new(
                 Some(DurationMinutes::new(10)),
                 None,
@@ -2455,6 +2520,7 @@ mod tests {
 
         assert_eq!(initial.title, "Soup");
         assert_eq!(initial.description, "A warming soup.");
+        assert_eq!(initial.category, "main");
         assert_eq!(initial.servings_type, "portions");
         assert_eq!(initial.servings_count, "12");
         assert_eq!(initial.servings_label, "cookies");

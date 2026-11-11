@@ -114,6 +114,7 @@ mod tests {
             RecipeTitle::new("Soup".to_string()),
             None,
             None,
+            None,
             RecipeDurations::new(None, None, None),
             HashMap::new(),
             Vec::new(),

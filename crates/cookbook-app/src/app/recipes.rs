@@ -31,6 +31,7 @@ use crate::{
     components::{
         base::card::{card, card_content, card_header, card_title},
         recipe::{
+            category::category_label,
             recipe_form::{RecipeFormMode, read_recipe_form, recipe_form},
             recipe_images::recipe_image_gallery,
             recipe_scope_form::recipe_scope_form,
@@ -67,6 +68,13 @@ pub async fn page(cx: &Cx) -> Result<impl View> {
                         >
                             (recipe.title().as_str())
                         </a>
+                        if let Some(category) = recipe.category() {
+                            <span
+                                class="ml-2 inline-flex items-center rounded-full border border-border px-2 py-0.5 text-xs font-medium text-muted-foreground"
+                            >
+                                (category_label(cx, category))
+                            </span>
+                        }
                         if recipe.needs_review() {
                             <span
                                 class="ml-2 inline-flex items-center rounded-full border border-warning/40 bg-warning/10 px-2 py-0.5 text-xs font-medium text-warning-foreground"
@@ -136,6 +144,13 @@ pub async fn recipe_detail(cx: &Cx) -> Result<impl View> {
                         >
                             (scope_label)
                         </span>
+                        if let Some(category) = recipe.category() {
+                            <span
+                                class="inline-flex items-center rounded-full border border-border px-2.5 py-0.5 text-sm font-medium text-muted-foreground"
+                            >
+                                (category_label(cx, category))
+                            </span>
+                        }
                     </div>
                     <div class="flex flex-col items-end gap-1 text-sm">
                         if can_edit {
@@ -619,6 +634,13 @@ pub async fn recipe_revision(cx: &Cx) -> Result<impl View> {
                             class="inline-flex items-center rounded-full border border-border px-2.5 py-0.5 text-sm font-medium text-muted-foreground"
                         >
                             (t!(recipe_verified))
+                        </span>
+                    }
+                    if let Some(category) = revision.content().category() {
+                        <span
+                            class="inline-flex items-center rounded-full border border-border px-2.5 py-0.5 text-sm font-medium text-muted-foreground"
+                        >
+                            (category_label(cx, category))
                         </span>
                     }
                 </div>

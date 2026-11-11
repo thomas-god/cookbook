@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
 use cookbook_domain::recipe::models::{
-    DurationMinutes, IngredientName, Quantity, RecipeContent, RecipeDescription, RecipeDurations,
-    RecipeStep, RecipeStepId, RecipeTitle, Servings, Unit,
+    DurationMinutes, IngredientName, Quantity, RecipeCategory, RecipeContent, RecipeDescription,
+    RecipeDurations, RecipeStep, RecipeStepId, RecipeTitle, Servings, Unit,
 };
 use schemars::{JsonSchema, generate::SchemaSettings};
 use serde::Deserialize;
@@ -28,7 +28,12 @@ Rules for servings:
 - Leave all three servings fields null when the source does not state a yield.
 - Do not fill both a people count and an item count.
 
-Durations are whole minutes. Use null when a duration is not written in the source."#;
+Durations are whole minutes. Use null when a duration is not written in the source.
+
+Rules for category:
+- Choose exactly one of: aperitif, starter, main, side, dessert, breakfast, snack, drink, other.
+- Use "other" when the recipe clearly does not fit any other category.
+- Use null only when the source does not make the category clear enough to choose."#;
 
 pub(crate) fn user_prompt(image_count: usize) -> String {
     format!("Extract the recipe from these {image_count} photo(s).")
@@ -125,6 +130,51 @@ fn extract_json(response: &str) -> &str {
     trimmed
 }
 
+#[derive(Debug, Clone, Copy, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+enum RawCategory {
+    Aperitif,
+    Starter,
+    Main,
+    Side,
+    Dessert,
+    Breakfast,
+    Snack,
+    Drink,
+    Other,
+}
+
+impl RawCategory {
+    #[cfg(test)]
+    const ALL: [Self; 9] = [
+        Self::Aperitif,
+        Self::Starter,
+        Self::Main,
+        Self::Side,
+        Self::Dessert,
+        Self::Breakfast,
+        Self::Snack,
+        Self::Drink,
+        Self::Other,
+    ];
+}
+
+impl From<RawCategory> for RecipeCategory {
+    fn from(category: RawCategory) -> Self {
+        match category {
+            RawCategory::Aperitif => Self::Aperitif,
+            RawCategory::Starter => Self::Starter,
+            RawCategory::Main => Self::Main,
+            RawCategory::Side => Self::Side,
+            RawCategory::Dessert => Self::Dessert,
+            RawCategory::Breakfast => Self::Breakfast,
+            RawCategory::Snack => Self::Snack,
+            RawCategory::Drink => Self::Drink,
+            RawCategory::Other => Self::Other,
+        }
+    }
+}
+
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct RawRecipe {
@@ -137,6 +187,8 @@ struct RawRecipe {
     servings_people: Option<f64>,
     servings_amount: Option<f64>,
     servings_label: Option<String>,
+    #[serde(default)]
+    category: Option<RawCategory>,
     #[serde(default)]
     ingredients: Vec<RawIngredient>,
     #[serde(default)]
@@ -161,6 +213,7 @@ impl RawRecipe {
             self.servings_amount,
             self.servings_label.as_deref(),
         );
+        let category = self.category.map(RecipeCategory::from);
 
         let ingredients = self
             .ingredients
@@ -178,6 +231,7 @@ impl RawRecipe {
             RecipeTitle::new(title),
             description,
             servings,
+            category,
             RecipeDurations::new(
                 duration_minutes(self.preparation_minutes),
                 duration_minutes(self.rest_minutes),
@@ -346,6 +400,7 @@ mod tests {
                 "servings_people": 4,
                 "servings_amount": null,
                 "servings_label": null,
+                "category": "main",
                 "ingredients": [
                     {"name": "tomatoes", "amount": 800, "unit": "gram", "amount_text": null},
                     {"name": "salt", "amount": null, "unit": null, "amount_text": "to taste"}
@@ -367,6 +422,7 @@ mod tests {
         );
         assert_eq!(content.durations().total_duration().as_minutes(), 40);
         assert_eq!(content.servings(), Some(&Servings::people(4)));
+        assert_eq!(content.category(), Some(RecipeCategory::Main));
         assert_eq!(
             content.ingredients()[&IngredientName::new("tomatoes".to_string())],
             Quantity::from_measure(800.0, Unit::Gram)
@@ -420,6 +476,38 @@ mod tests {
         );
         assert_eq!(without_label.servings(), Some(&Servings::portions(12)));
         assert_eq!(without_servings.servings(), None);
+    }
+
+    #[test]
+    fn parses_an_optional_category() {
+        let with_category = parse_recipe_json(
+            r#"{
+                "title": "Cookies",
+                "category": "dessert",
+                "ingredients": [],
+                "steps": []
+            }"#,
+        )
+        .unwrap();
+        let without_category = parse_recipe_json(
+            r#"{
+                "title": "Soup",
+                "ingredients": [],
+                "steps": []
+            }"#,
+        )
+        .unwrap();
+
+        assert_eq!(with_category.category(), Some(RecipeCategory::Dessert));
+        assert_eq!(without_category.category(), None);
+    }
+
+    #[test]
+    fn raw_categories_match_the_domain_categories() {
+        assert_eq!(
+            RawCategory::ALL.map(RecipeCategory::from),
+            RecipeCategory::ALL
+        );
     }
 
     #[test]
@@ -488,6 +576,7 @@ mod tests {
             "servings_people",
             "servings_amount",
             "servings_label",
+            "category",
             "ingredients",
             "steps",
         ] {
