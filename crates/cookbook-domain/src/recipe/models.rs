@@ -365,6 +365,12 @@ impl Ingredient {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RecipeStructureKind {
+    Simple,
+    Multipart,
+}
+
 #[derive(Debug, Clone)]
 pub enum RecipeStructure {
     Simple(RecipeBody),
@@ -488,6 +494,13 @@ impl RecipeContent {
 
     pub fn is_multipart(&self) -> bool {
         matches!(self.structure, RecipeStructure::Multipart(_))
+    }
+
+    pub fn structure_kind(&self) -> RecipeStructureKind {
+        match self.structure {
+            RecipeStructure::Simple(_) => RecipeStructureKind::Simple,
+            RecipeStructure::Multipart(_) => RecipeStructureKind::Multipart,
+        }
     }
 
     pub fn simple_body(&self) -> Option<&RecipeBody> {
@@ -688,7 +701,7 @@ pub struct RecipeRevision {
     content: RecipeContent,
     editor: UserId,
     edited_at: SystemTime,
-    message: Option<RevisionMessage>,
+    origin: RevisionOrigin,
     verification: RevisionVerification,
 }
 
@@ -717,8 +730,8 @@ impl RecipeRevision {
         self.edited_at
     }
 
-    pub fn message(&self) -> Option<&RevisionMessage> {
-        self.message.as_ref()
+    pub fn origin(&self) -> &RevisionOrigin {
+        &self.origin
     }
 }
 
@@ -1227,6 +1240,15 @@ impl RecipeStep {
     pub fn images(&self) -> &[RecipeImageId] {
         &self.images
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RevisionOrigin {
+    Created,
+    Imported,
+    UserEdit { message: Option<RevisionMessage> },
+    StructureConverted { to: RecipeStructureKind },
+    Restored { revision_id: RecipeRevisionId },
 }
 
 /// An optional edit note, similar to a commit message.

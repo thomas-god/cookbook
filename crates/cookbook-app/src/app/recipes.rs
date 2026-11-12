@@ -3,11 +3,11 @@ use std::time::SystemTime;
 use cookbook_domain::recipe::models::{
     NewRecipeSourceImage, RecipeId as RecipeIdValue, RecipeImageId as RecipeImageIdValue,
     RecipeRevision, RecipeRevisionId, RecipeScope, RecipeSourceImageId as RecipeSourceImageIdValue,
-    RevisionVerification, Servings,
+    RecipeStructureKind, RevisionOrigin, RevisionVerification, Servings,
 };
 use cookbook_domain::recipe::ports::{
-    AddRecipeSourceImagesError, AddRecipeSourceImagesRequest, DeleteRecipeSourceImageError,
-    RecipeService, UpdateRecipeError, UpdateRecipeRequest, UpdateRecipeScopeError,
+    AddRecipeSourceImagesError, AddRecipeSourceImagesRequest, ConvertRecipeStructureRequest,
+    DeleteRecipeSourceImageError, RecipeService, UpdateRecipeError, UpdateRecipeScopeError,
     UpdateRecipeScopeRequest,
 };
 use cookbook_domain::user::models::UserId;
@@ -409,20 +409,18 @@ async fn convert_recipe_type(
         return Err(forbidden().into());
     }
 
-    let content = if multipart {
-        recipe.content().clone().into_multipart()
+    let to = if multipart {
+        RecipeStructureKind::Multipart
     } else {
-        recipe.content().clone().into_simple()
+        RecipeStructureKind::Simple
     };
 
     match recipe_service
-        .update_recipe(UpdateRecipeRequest {
+        .convert_recipe_structure(ConvertRecipeStructureRequest {
             id: RecipeIdValue::new(recipe_id.clone()),
-            content,
+            to,
             editor: user.id().clone(),
             latest_revision,
-            message: None,
-            new_images: Vec::new(),
         })
         .await
     {
@@ -611,7 +609,28 @@ pub async fn delete_source_image(cx: &Cx) -> Result<SeeOther> {
 struct HistoryEntry {
     revision: RecipeRevision,
     editor: String,
-    is_first: bool,
+}
+
+fn revision_origin_label(cx: &Cx, origin: &RevisionOrigin) -> String {
+    match origin {
+        RevisionOrigin::Created => t!(recipe_history_created).resolve(cx).into_owned(),
+        RevisionOrigin::Imported => t!(recipe_history_imported).resolve(cx).into_owned(),
+        RevisionOrigin::UserEdit {
+            message: Some(message),
+        } => message.as_str().to_owned(),
+        RevisionOrigin::UserEdit { message: None } => {
+            t!(recipe_history_edited).resolve(cx).into_owned()
+        }
+        RevisionOrigin::StructureConverted { to } => match to {
+            RecipeStructureKind::Simple => t!(recipe_history_converted_to_simple)
+                .resolve(cx)
+                .into_owned(),
+            RecipeStructureKind::Multipart => t!(recipe_history_converted_to_multipart)
+                .resolve(cx)
+                .into_owned(),
+        },
+        RevisionOrigin::Restored { .. } => t!(recipe_history_restored).resolve(cx).into_owned(),
+    }
 }
 
 #[page("./{recipe_id}/history")]
@@ -628,14 +647,12 @@ pub async fn recipe_history(cx: &Cx) -> Result<impl View> {
         .get_recipe_history(RecipeIdValue::new(recipe_id.clone()), user.id().clone())
         .await?;
 
-    let total = revisions.len();
-    let mut entries = Vec::with_capacity(total);
+    let mut entries = Vec::with_capacity(revisions.len());
 
-    for (index, revision) in revisions.iter().rev().enumerate() {
+    for revision in revisions.iter().rev() {
         entries.push(HistoryEntry {
             revision: revision.clone(),
             editor: display_name(cx, revision.editor()).await?,
-            is_first: index + 1 == total,
         });
     }
 
@@ -663,18 +680,9 @@ pub async fn recipe_history(cx: &Cx) -> Result<impl View> {
                         >
                             <div class="flex items-start justify-between gap-4">
                                 <div>
-                                    if let Some(message) = entry.revision.message() {
-                                        <p class="font-medium">(message.as_str())</p>
-                                    } else if entry.is_first {
-                                        if entry.revision.verification()
-                                            == RevisionVerification::NeedsReview {
-                                            <p class="font-medium">(t!(recipe_history_imported))</p>
-                                        } else {
-                                            <p class="font-medium">(t!(recipe_history_created))</p>
-                                        }
-                                    } else {
-                                        <p class="font-medium">(t!(recipe_history_edited))</p>
-                                    }
+                                    <p class="font-medium">
+                                        (revision_origin_label(cx, entry.revision.origin()))
+                                    </p>
                                     <p class="mt-1">
                                         if entry.revision.verification()
                                             == RevisionVerification::NeedsReview {
@@ -789,9 +797,9 @@ pub async fn recipe_revision(cx: &Cx) -> Result<impl View> {
                     " · "
                     (format_timestamp(revision.edited_at()))
                 </p>
-                if let Some(message) = revision.message() {
-                    <p class="mt-2 text-sm">(message.as_str())</p>
-                }
+                <p class="mt-2 text-sm">
+                    (revision_origin_label(cx, revision.origin()))
+                </p>
                 if total_minutes > 0 {
                     <p class="mt-2 text-sm text-muted-foreground">
                         (t!(recipe_total_duration))

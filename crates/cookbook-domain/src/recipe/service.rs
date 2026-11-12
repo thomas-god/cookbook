@@ -6,15 +6,17 @@ use crate::clock::Clock;
 use crate::recipe::models::{
     NewRecipeImage, NewRecipeSourceImage, Recipe, RecipeContent, RecipeId, RecipeImage,
     RecipeImageId, RecipeImageMetadata, RecipeRevision, RecipeRevisionId, RecipeSourceImage,
-    RecipeSourceImageId, RecipeSourceImageSummary, RecipeWithContent, RevisionVerification,
+    RecipeSourceImageId, RecipeSourceImageSummary, RecipeStructureKind, RecipeWithContent,
+    RevisionOrigin, RevisionVerification,
 };
 use crate::recipe::ports::{
     AddRecipeSourceImagesError, AddRecipeSourceImagesRequest, AddSourceImagesError,
-    CreateRecipeError, CreateRecipeRequest, DeleteRecipeSourceImageError, DeleteSourceImageError,
-    GetRecipeError, GetRecipeHistoryError, GetRecipeImageError, GetRecipeImagesError,
-    GetRecipeSourceImageError, GetRecipeSourceImagesError, GetRecipesError, GetSourceImageError,
-    ListRecipeImagesError, ListSourceImagesError, RecipeRepository, RecipeService, SaveRecipeError,
-    UpdateRecipeError, UpdateRecipeRequest, UpdateRecipeScopeError, UpdateRecipeScopeRequest,
+    ConvertRecipeStructureRequest, CreateRecipeError, CreateRecipeRequest,
+    DeleteRecipeSourceImageError, DeleteSourceImageError, GetRecipeError, GetRecipeHistoryError,
+    GetRecipeImageError, GetRecipeImagesError, GetRecipeSourceImageError,
+    GetRecipeSourceImagesError, GetRecipesError, GetSourceImageError, ListRecipeImagesError,
+    ListSourceImagesError, RecipeRepository, RecipeService, SaveRecipeError, UpdateRecipeError,
+    UpdateRecipeRequest, UpdateRecipeScopeError, UpdateRecipeScopeRequest,
 };
 use crate::user::models::UserId;
 
@@ -39,6 +41,7 @@ where
         &self,
         request: CreateRecipeRequest,
         expected_verification: RevisionVerification,
+        origin: RevisionOrigin,
     ) -> Result<RecipeWithContent, CreateRecipeError> {
         if request.verification != expected_verification {
             return Err(CreateRecipeError::VerificationMismatch);
@@ -66,7 +69,7 @@ where
             content,
             author.clone(),
             now,
-            None,
+            origin,
             expected_verification,
         );
 
@@ -96,16 +99,24 @@ where
         &self,
         request: CreateRecipeRequest,
     ) -> Result<RecipeWithContent, CreateRecipeError> {
-        self.create_recipe(request, RevisionVerification::Verified)
-            .await
+        self.create_recipe(
+            request,
+            RevisionVerification::Verified,
+            RevisionOrigin::Created,
+        )
+        .await
     }
 
-    async fn create_unverified_recipe(
+    async fn create_imported_recipe(
         &self,
         request: CreateRecipeRequest,
     ) -> Result<RecipeWithContent, CreateRecipeError> {
-        self.create_recipe(request, RevisionVerification::NeedsReview)
-            .await
+        self.create_recipe(
+            request,
+            RevisionVerification::NeedsReview,
+            RevisionOrigin::Imported,
+        )
+        .await
     }
 
     async fn update_recipe(
@@ -169,7 +180,7 @@ where
             content,
             editor.clone(),
             self.clock.now(),
-            message,
+            RevisionOrigin::UserEdit { message },
             RevisionVerification::Verified,
         );
 
@@ -179,6 +190,59 @@ where
 
         self.repository
             .save_recipe_with_revision(recipe, revision, added_images)
+            .await
+            .map_err(|error| match error {
+                SaveRecipeError::RecipeIdMismatch | SaveRecipeError::RecipeAuthorMismatch => {
+                    UpdateRecipeError::Conflict
+                }
+                SaveRecipeError::RecipeNotFound => UpdateRecipeError::NotFound,
+                SaveRecipeError::InvalidImageReference => UpdateRecipeError::InvalidImageReference,
+                SaveRecipeError::Storage(reason) => UpdateRecipeError::Storage(reason),
+            })?;
+
+        Ok(updated)
+    }
+
+    async fn convert_recipe_structure(
+        &self,
+        request: ConvertRecipeStructureRequest,
+    ) -> Result<RecipeWithContent, UpdateRecipeError> {
+        let current = self
+            .repository
+            .get_recipe(request.id.clone())
+            .await
+            .map_err(|error| UpdateRecipeError::Storage(error.into()))?
+            .filter(|recipe| recipe.can_view(&request.editor))
+            .ok_or(UpdateRecipeError::NotFound)?;
+
+        if !current.can_edit(&request.editor) {
+            return Err(UpdateRecipeError::Forbidden);
+        }
+
+        if current.revision().id() != &request.latest_revision {
+            return Err(UpdateRecipeError::Conflict);
+        }
+
+        let content = match request.to {
+            RecipeStructureKind::Simple => current.content().clone().into_simple(),
+            RecipeStructureKind::Multipart => current.content().clone().into_multipart(),
+        };
+        let recipe = current.recipe().clone();
+        let revision = RecipeRevision::new(
+            RecipeRevisionId::new(Uuid::now_v7().to_string()),
+            recipe.id().clone(),
+            content,
+            request.editor,
+            self.clock.now(),
+            RevisionOrigin::StructureConverted { to: request.to },
+            RevisionVerification::Verified,
+        );
+
+        let updated = RecipeWithContent::new(recipe.clone(), revision.clone())
+            .map_err(|error| UpdateRecipeError::Storage(error.into()))?;
+
+        self.repository
+            .save_recipe_with_revision(recipe, revision, Vec::new())
             .await
             .map_err(|error| match error {
                 SaveRecipeError::RecipeIdMismatch | SaveRecipeError::RecipeAuthorMismatch => {
@@ -588,7 +652,7 @@ mod tests {
             content("Soup"),
             UserId::new(editor.to_string()),
             edited_at,
-            None,
+            RevisionOrigin::Created,
             RevisionVerification::Verified,
         )
     }
@@ -601,7 +665,7 @@ mod tests {
             content(title),
             recipe.author().clone(),
             FixedClock::new().0,
-            None,
+            RevisionOrigin::Created,
             RevisionVerification::Verified,
         );
 
@@ -628,7 +692,7 @@ mod tests {
             content(title),
             recipe.author().clone(),
             FixedClock::new().0,
-            None,
+            RevisionOrigin::Created,
             RevisionVerification::Verified,
         );
 
@@ -669,7 +733,7 @@ mod tests {
                         && revision.content().title().as_str() == "Soup"
                         && revision.editor() == recipe.author()
                         && revision.edited_at() == edited_at
-                        && revision.message().is_none()
+                        && revision.origin() == &RevisionOrigin::Created
                         && source_images.is_empty()
                 },
             )
@@ -687,7 +751,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn create_unverified_recipe_records_a_needs_review_revision() {
+    async fn create_imported_recipe_records_an_imported_needs_review_revision() {
         let mut repository = MockRecipeRepository::new();
         repository
             .expect_save_new_recipe()
@@ -698,6 +762,7 @@ mod tests {
                  _: &Vec<RecipeSourceImage>,
                  _: &Vec<RecipeImage>| {
                     revision.verification() == RevisionVerification::NeedsReview
+                        && revision.origin() == &RevisionOrigin::Imported
                 },
             )
             .returning(|_, _, _, _| Ok(()));
@@ -706,7 +771,7 @@ mod tests {
         let mut request = create_request();
         request.verification = RevisionVerification::NeedsReview;
 
-        let recipe = service.create_unverified_recipe(request).await.unwrap();
+        let recipe = service.create_imported_recipe(request).await.unwrap();
 
         assert!(recipe.needs_review());
     }
@@ -717,7 +782,7 @@ mod tests {
         let repository = MockRecipeRepository::new();
         let service = RecipeServiceImpl::new(repository, FixedClock::new());
 
-        let result = service.create_unverified_recipe(create_request()).await;
+        let result = service.create_imported_recipe(create_request()).await;
 
         assert!(matches!(
             result,
@@ -988,8 +1053,11 @@ mod tests {
                         && revision.content().title().as_str() == "Updated Soup"
                         && revision.editor().as_str() == "editor-2"
                         && revision.edited_at() == edited_at
-                        && revision.message().map(RevisionMessage::as_str)
-                            == Some("Changed the title")
+                        && matches!(
+                            revision.origin(),
+                            RevisionOrigin::UserEdit { message: Some(message) }
+                                if message.as_str() == "Changed the title"
+                        )
                         && revision.verification() == RevisionVerification::Verified
                 },
             )
@@ -1015,6 +1083,49 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn convert_recipe_structure_saves_a_conversion_revision() {
+        let current = current_recipe("soup", "Soup");
+        let latest_revision = current.revision().id().clone();
+        let expected_id = current.id().clone();
+
+        let mut repository = MockRecipeRepository::new();
+        repository.expect_get_recipe().times(1).returning({
+            let current = current.clone();
+            move |_| Ok(Some(current.clone()))
+        });
+        repository
+            .expect_save_recipe_with_revision()
+            .times(1)
+            .withf(
+                move |recipe: &Recipe, revision: &RecipeRevision, images: &Vec<RecipeImage>| {
+                    recipe.id() == &expected_id
+                        && revision.origin()
+                            == &RevisionOrigin::StructureConverted {
+                                to: RecipeStructureKind::Multipart,
+                            }
+                        && revision.content().is_multipart()
+                        && revision.verification() == RevisionVerification::Verified
+                        && images.is_empty()
+                },
+            )
+            .returning(|_, _, _| Ok(()));
+
+        let service = RecipeServiceImpl::new(repository, FixedClock::new());
+
+        let converted = service
+            .convert_recipe_structure(ConvertRecipeStructureRequest {
+                id: current.id().clone(),
+                to: RecipeStructureKind::Multipart,
+                editor: user_id(),
+                latest_revision,
+            })
+            .await
+            .unwrap();
+
+        assert!(converted.content().is_multipart());
+    }
+
+    #[tokio::test]
     async fn update_recipe_verifies_a_needs_review_recipe() {
         let recipe = recipe("soup");
         let latest = RecipeRevision::new(
@@ -1023,7 +1134,7 @@ mod tests {
             content("Soup"),
             recipe.author().clone(),
             FixedClock::new().0,
-            None,
+            RevisionOrigin::Created,
             RevisionVerification::NeedsReview,
         );
         let current = RecipeWithContent::new(recipe, latest).unwrap();
@@ -1609,7 +1720,7 @@ mod tests {
             .unwrap(),
             recipe.author().clone(),
             FixedClock::new().0,
-            None,
+            RevisionOrigin::Created,
             RevisionVerification::Verified,
         );
 

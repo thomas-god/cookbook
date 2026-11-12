@@ -10,7 +10,7 @@ use cookbook_domain::recipe::models::{
     RecipeContent, RecipeDescription, RecipeDurations, RecipeId, RecipeImage, RecipeImageId,
     RecipeImageMetadata, RecipeRevision, RecipeRevisionId, RecipeSourceImage, RecipeSourceImageId,
     RecipeSourceImageSummary, RecipeStep, RecipeStepId, RecipeTitle, RecipeWithContent,
-    RevisionVerification, Servings, Unit,
+    RevisionOrigin, RevisionVerification, Servings, Unit,
 };
 use cookbook_domain::recipe::ports::{
     AddSourceImagesError, DeleteSourceImageError, GetRecipeError, GetRecipeImageError,
@@ -106,7 +106,7 @@ fn seeded_recipe(
         content,
         recipe.author().clone(),
         SystemTime::now(),
-        None,
+        RevisionOrigin::Created,
         RevisionVerification::Verified,
     );
 
@@ -606,7 +606,7 @@ mod tests {
             .unwrap(),
             recipe.author().clone(),
             SystemTime::UNIX_EPOCH,
-            None,
+            RevisionOrigin::Created,
             RevisionVerification::Verified,
         )
     }
@@ -631,7 +631,7 @@ mod tests {
             .unwrap(),
             recipe.author().clone(),
             SystemTime::UNIX_EPOCH,
-            None,
+            RevisionOrigin::Created,
             RevisionVerification::Verified,
         );
 
@@ -689,7 +689,7 @@ mod tests {
 
             assert_eq!(revisions.len(), 1);
             assert_eq!(revisions[0].editor(), recipe.author());
-            assert!(revisions[0].message().is_none());
+            assert!(matches!(revisions[0].origin(), RevisionOrigin::Created));
         }
     }
 
@@ -862,7 +862,7 @@ mod tests {
             .unwrap(),
             recipe.author().clone(),
             SystemTime::UNIX_EPOCH,
-            None,
+            RevisionOrigin::Created,
             RevisionVerification::NeedsReview,
         );
 
@@ -1159,7 +1159,7 @@ mod tests {
             .unwrap(),
             recipe.author().clone(),
             SystemTime::UNIX_EPOCH,
-            None,
+            RevisionOrigin::Created,
             RevisionVerification::Verified,
         )
     }
@@ -1230,7 +1230,7 @@ mod tests {
             content,
             recipe.author().clone(),
             SystemTime::UNIX_EPOCH,
-            None,
+            RevisionOrigin::Created,
             RevisionVerification::Verified,
         );
         repository

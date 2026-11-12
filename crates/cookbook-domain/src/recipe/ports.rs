@@ -4,8 +4,8 @@ use std::future::Future;
 use crate::recipe::models::{
     NewRecipeImage, NewRecipeSourceImage, Recipe, RecipeContent, RecipeId, RecipeImage,
     RecipeImageId, RecipeImageMetadata, RecipeRevision, RecipeRevisionId, RecipeScope,
-    RecipeSourceImage, RecipeSourceImageId, RecipeSourceImageSummary, RecipeWithContent,
-    RevisionMessage, RevisionVerification,
+    RecipeSourceImage, RecipeSourceImageId, RecipeSourceImageSummary, RecipeStructureKind,
+    RecipeWithContent, RevisionMessage, RevisionVerification,
 };
 use crate::user::models::UserId;
 
@@ -42,6 +42,14 @@ pub struct UpdateRecipeScopeRequest {
     pub actor: UserId,
 }
 
+#[derive(Debug, Clone)]
+pub struct ConvertRecipeStructureRequest {
+    pub id: RecipeId,
+    pub to: RecipeStructureKind,
+    pub editor: UserId,
+    pub latest_revision: RecipeRevisionId,
+}
+
 /// Inbound (driving) port for the recipe domain service.
 pub trait RecipeService: Clone + Send + Sync + 'static {
     fn create_verified_recipe(
@@ -49,7 +57,7 @@ pub trait RecipeService: Clone + Send + Sync + 'static {
         request: CreateRecipeRequest,
     ) -> impl Future<Output = Result<RecipeWithContent, CreateRecipeError>> + Send;
 
-    fn create_unverified_recipe(
+    fn create_imported_recipe(
         &self,
         request: CreateRecipeRequest,
     ) -> impl Future<Output = Result<RecipeWithContent, CreateRecipeError>> + Send;
@@ -57,6 +65,11 @@ pub trait RecipeService: Clone + Send + Sync + 'static {
     fn update_recipe(
         &self,
         request: UpdateRecipeRequest,
+    ) -> impl Future<Output = Result<RecipeWithContent, UpdateRecipeError>> + Send;
+
+    fn convert_recipe_structure(
+        &self,
+        request: ConvertRecipeStructureRequest,
     ) -> impl Future<Output = Result<RecipeWithContent, UpdateRecipeError>> + Send;
 
     fn update_recipe_scope(
@@ -561,7 +574,7 @@ mockall::mock! {
             request: CreateRecipeRequest,
         ) -> Result<RecipeWithContent, CreateRecipeError>;
 
-        async fn create_unverified_recipe(
+        async fn create_imported_recipe(
             &self,
             request: CreateRecipeRequest,
         ) -> Result<RecipeWithContent, CreateRecipeError>;
@@ -569,6 +582,11 @@ mockall::mock! {
         async fn update_recipe(
             &self,
             request: UpdateRecipeRequest,
+        ) -> Result<RecipeWithContent, UpdateRecipeError>;
+
+        async fn convert_recipe_structure(
+            &self,
+            request: ConvertRecipeStructureRequest,
         ) -> Result<RecipeWithContent, UpdateRecipeError>;
 
         async fn update_recipe_scope(

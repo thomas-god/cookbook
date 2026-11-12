@@ -48,10 +48,14 @@ callers never read content from a separate mutable field that could drift from s
 - a full `RecipeContent` snapshot,
 - the editor user id,
 - the edit time,
-- an optional `RevisionMessage`.
+- a `RevisionOrigin` describing why the revision exists,
+- a verification state.
 
-Creation records the first revision, using the author as editor and no message. Revisions are
-returned oldest first.
+`RevisionOrigin` distinguishes a manual creation (`Created`), a photo import (`Imported`), a user
+edit with an optional `RevisionMessage` (`UserEdit`), a simple/multipart structure conversion
+(`StructureConverted`), and a future restore from older history (`Restored`). Creation records the
+first revision using the origin matching its entrypoint and no user note. Revisions are returned
+oldest first.
 
 ### Atomic persistence
 

@@ -291,8 +291,8 @@ mod tests {
         recipe::models::{
             DurationMinutes, Ingredient, IngredientName, Recipe, RecipeBody, RecipeCategory,
             RecipeContent, RecipeDescription, RecipeDurations, RecipeRevision, RecipeRevisionId,
-            RecipeStep, RecipeStepId, RecipeTitle, RecipeWithContent, RevisionVerification,
-            Servings,
+            RecipeStep, RecipeStepId, RecipeTitle, RecipeWithContent, RevisionOrigin,
+            RevisionVerification, Servings,
         },
         user::models::UserId,
     };
@@ -350,7 +350,7 @@ mod tests {
             content,
             UserId::new("user-1".to_string()),
             SystemTime::UNIX_EPOCH,
-            None,
+            RevisionOrigin::Created,
             RevisionVerification::Verified,
         );
         let current = RecipeWithContent::new(recipe, revision).unwrap();

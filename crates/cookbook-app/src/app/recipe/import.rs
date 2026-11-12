@@ -74,7 +74,7 @@ pub async fn create(cx: &Cx, mut multipart: Multipart) -> Result<impl View> {
 
     let request = vision_recipe.into_create_request(user.id().clone());
     let recipe_service: &AppRecipeService = app_context(cx);
-    let recipe = match recipe_service.create_unverified_recipe(request).await {
+    let recipe = match recipe_service.create_imported_recipe(request).await {
         Ok(recipe) => recipe,
         Err(_) => return import_page(cx, Some(ImportError::SaveFailed)),
     };
