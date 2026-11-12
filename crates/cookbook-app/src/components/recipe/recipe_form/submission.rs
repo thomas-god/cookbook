@@ -14,7 +14,7 @@ use topcoat::{Result, router::content::multipart::Multipart};
 use super::{
     fields::{IMAGES_FIELD, StepField},
     parse::{
-        RecipeFormData, StructureFormData, invalid, parse_indexed_key, parse_part_key,
+        BodyFormData, RecipeFormData, StructureFormData, indexed_row, invalid, parse_part_key,
         parse_recipe_form,
     },
 };
@@ -49,64 +49,18 @@ fn image_upload_target<'a>(
     form: &'a mut RecipeFormData,
     upload_field: &str,
 ) -> Result<&'a mut Vec<RecipeImageId>> {
-    let step_images =
-        |wire_field: &str| (wire_field == StepField::Images.wire_name()).then_some(());
-
-    if let Some((part_index, rest)) = parse_part_key(upload_field)? {
-        let parts = match &mut form.structure {
-            StructureFormData::Multipart(parts) => parts,
-            StructureFormData::Simple(_) => {
-                return Err(invalid(format!(
-                    "image upload `{upload_field}` targets a part on a simple recipe"
-                )));
-            }
-        };
-        let part = parts
-            .iter_mut()
-            .find(|part| part.row == part_index)
-            .ok_or_else(|| {
-                invalid(format!(
-                    "image upload `{upload_field}` targets an unknown part row"
-                ))
-            })?;
-
-        if rest == IMAGES_FIELD {
-            return Ok(&mut part.body.images);
-        }
-
-        if let Some((row, ())) = parse_indexed_key(&rest, "steps", step_images)? {
-            return part
-                .body
-                .steps
-                .iter_mut()
-                .find(|step| step.row == row)
-                .map(|step| &mut step.images)
-                .ok_or_else(|| {
-                    invalid(format!(
-                        "image upload `{upload_field}` targets an unknown step row"
-                    ))
-                });
-        }
-
-        return Err(invalid(format!(
-            "unknown image upload field `{upload_field}`"
-        )));
-    }
-
-    let body = match &mut form.structure {
-        StructureFormData::Simple(body) => body,
-        StructureFormData::Multipart(_) => {
-            return Err(invalid(format!(
-                "image upload `{upload_field}` targets the recipe body of a multipart recipe"
-            )));
-        }
+    let (part_index, field) = match parse_part_key(upload_field)? {
+        Some((part_index, rest)) => (Some(part_index), rest),
+        None => (None, upload_field.to_string()),
     };
 
-    if upload_field == IMAGES_FIELD {
+    let body = upload_body(form, part_index, upload_field)?;
+
+    if field == IMAGES_FIELD {
         return Ok(&mut body.images);
     }
 
-    if let Some((row, ())) = parse_indexed_key(upload_field, "steps", step_images)? {
+    if let Some(row) = indexed_row(&field, "steps", StepField::Images.wire_name())? {
         return body
             .steps
             .iter_mut()
@@ -122,6 +76,31 @@ fn image_upload_target<'a>(
     Err(invalid(format!(
         "unknown image upload field `{upload_field}`"
     )))
+}
+
+fn upload_body<'a>(
+    form: &'a mut RecipeFormData,
+    part_index: Option<usize>,
+    upload_field: &str,
+) -> Result<&'a mut BodyFormData> {
+    match (part_index, &mut form.structure) {
+        (None, StructureFormData::Simple(body)) => Ok(body),
+        (None, StructureFormData::Multipart(_)) => Err(invalid(format!(
+            "image upload `{upload_field}` targets the recipe body of a multipart recipe"
+        ))),
+        (Some(_), StructureFormData::Simple(_)) => Err(invalid(format!(
+            "image upload `{upload_field}` targets a part on a simple recipe"
+        ))),
+        (Some(part_index), StructureFormData::Multipart(parts)) => parts
+            .iter_mut()
+            .find(|part| part.row == part_index)
+            .map(|part| &mut part.body)
+            .ok_or_else(|| {
+                invalid(format!(
+                    "image upload `{upload_field}` targets an unknown part row"
+                ))
+            }),
+    }
 }
 
 pub(crate) struct RecipeFormSubmission {

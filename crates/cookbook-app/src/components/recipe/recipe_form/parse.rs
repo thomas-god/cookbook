@@ -157,13 +157,75 @@ pub(super) struct StepFormData {
     pub(super) images: Vec<RecipeImageId>,
 }
 
+/// The body-level fields shared by simple recipes and multipart recipe parts.
 #[derive(Default)]
-struct RawPart {
-    fields: HashMap<PartField, String>,
+struct RawBody {
+    preparation: Option<String>,
+    rest: Option<String>,
+    cooking: Option<String>,
     images: Vec<String>,
     ingredients: BTreeMap<usize, HashMap<IngredientField, String>>,
     steps: BTreeMap<usize, HashMap<StepField, String>>,
     step_images: BTreeMap<usize, Vec<String>>,
+}
+
+impl RawBody {
+    /// Collects one body field. Returns `false` when the key is not a body field.
+    fn insert(&mut self, key: &str, value: &str) -> Result<bool> {
+        match key {
+            PREPARATION_FIELD => set_once(&mut self.preparation, value, key)?,
+            REST_FIELD => set_once(&mut self.rest, value, key)?,
+            COOKING_FIELD => set_once(&mut self.cooking, value, key)?,
+            IMAGE_IDS_FIELD => self.images.push(value.to_string()),
+            _ => {
+                if let Some(row) = indexed_row(key, "steps", IMAGE_IDS_FIELD)? {
+                    self.step_images
+                        .entry(row)
+                        .or_default()
+                        .push(value.to_string());
+                } else if let Some((row, wire_field)) =
+                    parse_indexed_key(key, "ingredients", IngredientField::parse)?
+                {
+                    insert_row_value(&mut self.ingredients, row, wire_field, value, key)?;
+                } else if let Some((row, wire_field)) =
+                    parse_indexed_key(key, "steps", StepField::parse)?
+                {
+                    insert_row_value(&mut self.steps, row, wire_field, value, key)?;
+                } else {
+                    return Ok(false);
+                }
+            }
+        }
+
+        Ok(true)
+    }
+
+    fn is_empty(&self) -> bool {
+        self.preparation.is_none()
+            && self.rest.is_none()
+            && self.cooking.is_none()
+            && self.images.is_empty()
+            && self.ingredients.is_empty()
+            && self.steps.is_empty()
+            && self.step_images.is_empty()
+    }
+
+    fn into_form_data(self, seen_step_ids: &mut HashSet<RecipeStepId>) -> Result<BodyFormData> {
+        Ok(BodyFormData {
+            preparation: parse_optional_minutes(self.preparation.as_deref(), PREPARATION_FIELD)?,
+            rest: parse_optional_minutes(self.rest.as_deref(), REST_FIELD)?,
+            cooking: parse_optional_minutes(self.cooking.as_deref(), COOKING_FIELD)?,
+            ingredients: parse_ingredient_rows(self.ingredients)?,
+            images: parse_image_ids(self.images)?,
+            steps: parse_step_rows(self.steps, self.step_images, seen_step_ids)?,
+        })
+    }
+}
+
+#[derive(Default)]
+struct RawPart {
+    fields: HashMap<PartField, String>,
+    body: RawBody,
 }
 
 /// Parses and validates the URL-encoded form into its wire DTO.
@@ -175,20 +237,13 @@ pub(super) fn parse_recipe_form(pairs: &[(String, String)]) -> Result<RecipeForm
     let mut servings_count = None;
     let mut servings_label = None;
     let mut recipe_type = None;
-    let mut preparation = None;
-    let mut rest = None;
-    let mut cooking = None;
     let mut message = None;
     let mut latest_revision = None;
-    let mut images = Vec::new();
-    let mut step_images: BTreeMap<usize, Vec<String>> = BTreeMap::new();
-    let mut ingredients: BTreeMap<usize, HashMap<IngredientField, String>> = BTreeMap::new();
-    let mut steps: BTreeMap<usize, HashMap<StepField, String>> = BTreeMap::new();
+    let mut body = RawBody::default();
     let mut parts: BTreeMap<usize, RawPart> = BTreeMap::new();
 
     for (key, value) in pairs {
         match key.as_str() {
-            IMAGE_IDS_FIELD => images.push(value.clone()),
             TITLE_FIELD => set_once(&mut title, value, key)?,
             DESCRIPTION_FIELD => set_once(&mut description, value, key)?,
             CATEGORY_FIELD => set_once(&mut category, value, key)?,
@@ -196,31 +251,13 @@ pub(super) fn parse_recipe_form(pairs: &[(String, String)]) -> Result<RecipeForm
             SERVINGS_TYPE_FIELD => set_once(&mut servings_type, value, key)?,
             SERVINGS_COUNT_FIELD => set_once(&mut servings_count, value, key)?,
             SERVINGS_LABEL_FIELD => set_once(&mut servings_label, value, key)?,
-            PREPARATION_FIELD => set_once(&mut preparation, value, key)?,
-            REST_FIELD => set_once(&mut rest, value, key)?,
-            COOKING_FIELD => set_once(&mut cooking, value, key)?,
             MESSAGE_FIELD => set_once(&mut message, value, key)?,
             LATEST_REVISION_FIELD => set_once(&mut latest_revision, value, key)?,
             _ => {
                 if let Some((part_index, rest)) = parse_part_key(key)? {
                     parse_part_field(parts.entry(part_index).or_default(), &rest, value, key)?;
-                } else {
-                    let step_image_ids_suffix = format!("[{IMAGE_IDS_FIELD}]");
-                    if key.starts_with("steps[") && key.ends_with(&step_image_ids_suffix) {
-                        if let Some((row, ())) = parse_indexed_key(key, "steps", |_| Some(()))? {
-                            step_images.entry(row).or_default().push(value.clone());
-                        }
-                    } else if let Some((row, wire_field)) =
-                        parse_indexed_key(key, "ingredients", IngredientField::parse)?
-                    {
-                        insert_row_value(&mut ingredients, row, wire_field, value, key)?;
-                    } else if let Some((row, wire_field)) =
-                        parse_indexed_key(key, "steps", StepField::parse)?
-                    {
-                        insert_row_value(&mut steps, row, wire_field, value, key)?;
-                    } else {
-                        return Err(invalid(format!("unknown form field `{key}`")));
-                    }
+                } else if !body.insert(key, value)? {
+                    return Err(invalid(format!("unknown form field `{key}`")));
                 }
             }
         }
@@ -252,25 +289,10 @@ pub(super) fn parse_recipe_form(pairs: &[(String, String)]) -> Result<RecipeForm
             }
 
             let mut seen_step_ids = HashSet::new();
-            StructureFormData::Simple(parse_body_form_data(
-                preparation,
-                rest,
-                cooking,
-                ingredients,
-                images,
-                steps,
-                step_images,
-                &mut seen_step_ids,
-            )?)
+            StructureFormData::Simple(body.into_form_data(&mut seen_step_ids)?)
         }
         RecipeFormType::Multipart => {
-            if preparation.is_some()
-                || rest.is_some()
-                || cooking.is_some()
-                || !ingredients.is_empty()
-                || !steps.is_empty()
-                || !images.is_empty()
-            {
+            if !body.is_empty() {
                 return Err(invalid(
                     "a multipart recipe cannot contain top-level body fields",
                 ));
@@ -296,57 +318,22 @@ pub(super) fn parse_recipe_form(pairs: &[(String, String)]) -> Result<RecipeForm
     })
 }
 
-#[allow(clippy::too_many_arguments)]
-fn parse_body_form_data(
-    preparation: Option<String>,
-    rest: Option<String>,
-    cooking: Option<String>,
-    ingredients: BTreeMap<usize, HashMap<IngredientField, String>>,
-    images: Vec<String>,
-    steps: BTreeMap<usize, HashMap<StepField, String>>,
-    step_images: BTreeMap<usize, Vec<String>>,
-    seen_step_ids: &mut HashSet<RecipeStepId>,
-) -> Result<BodyFormData> {
-    Ok(BodyFormData {
-        preparation: parse_optional_minutes(preparation.as_deref(), PREPARATION_FIELD)?,
-        rest: parse_optional_minutes(rest.as_deref(), REST_FIELD)?,
-        cooking: parse_optional_minutes(cooking.as_deref(), COOKING_FIELD)?,
-        ingredients: parse_ingredient_rows(ingredients)?,
-        images: parse_image_ids(images)?,
-        steps: parse_step_rows(steps, step_images, seen_step_ids)?,
-    })
-}
-
 fn parse_part_rows(rows: BTreeMap<usize, RawPart>) -> Result<Vec<PartFormData>> {
     let mut parts = Vec::new();
     let mut seen_part_ids = HashSet::new();
     let mut seen_step_ids = HashSet::new();
 
-    for (row, mut raw) in rows {
-        let id = raw.fields.remove(&PartField::Id).unwrap_or_default();
-        let title = raw.fields.remove(&PartField::Title).unwrap_or_default();
-        let description = raw
-            .fields
-            .remove(&PartField::Description)
-            .unwrap_or_default();
-        let preparation = raw.fields.remove(&PartField::Preparation);
-        let rest = raw.fields.remove(&PartField::Rest);
-        let cooking = raw.fields.remove(&PartField::Cooking);
+    for (row, raw) in rows {
+        let RawPart { mut fields, body } = raw;
+        let id = fields.remove(&PartField::Id).unwrap_or_default();
+        let title = fields.remove(&PartField::Title).unwrap_or_default();
+        let description = fields.remove(&PartField::Description).unwrap_or_default();
 
         let title = title.trim().to_string();
         let description = description.trim().to_string();
         let id = id.trim().to_string();
 
-        let is_empty = title.is_empty()
-            && description.is_empty()
-            && preparation.is_none()
-            && rest.is_none()
-            && cooking.is_none()
-            && raw.ingredients.is_empty()
-            && raw.steps.is_empty()
-            && raw.images.is_empty();
-
-        if is_empty {
+        if title.is_empty() && description.is_empty() && body.is_empty() {
             continue;
         }
 
@@ -372,16 +359,7 @@ fn parse_part_rows(rows: BTreeMap<usize, RawPart>) -> Result<Vec<PartFormData>> 
             id,
             title,
             description: (!description.is_empty()).then_some(description),
-            body: parse_body_form_data(
-                preparation,
-                rest,
-                cooking,
-                raw.ingredients,
-                raw.images,
-                raw.steps,
-                raw.step_images,
-                &mut seen_step_ids,
-            )?,
+            body: body.into_form_data(&mut seen_step_ids)?,
         });
     }
 
@@ -423,31 +401,8 @@ pub(super) fn parse_part_key(key: &str) -> Result<Option<(usize, String)>> {
 }
 
 fn parse_part_field(part: &mut RawPart, part_field: &str, value: &str, key: &str) -> Result<()> {
-    if part_field == IMAGE_IDS_FIELD {
-        part.images.push(value.to_string());
+    if part.body.insert(part_field, value)? {
         return Ok(());
-    }
-
-    let step_image_ids_suffix = format!("[{IMAGE_IDS_FIELD}]");
-    if part_field.starts_with("steps[")
-        && part_field.ends_with(&step_image_ids_suffix)
-        && let Some((row, ())) = parse_indexed_key(part_field, "steps", |_| Some(()))?
-    {
-        part.step_images
-            .entry(row)
-            .or_default()
-            .push(value.to_string());
-        return Ok(());
-    }
-
-    if let Some((row, wire_field)) =
-        parse_indexed_key(part_field, "ingredients", IngredientField::parse)?
-    {
-        return insert_row_value(&mut part.ingredients, row, wire_field, value, key);
-    }
-
-    if let Some((row, wire_field)) = parse_indexed_key(part_field, "steps", StepField::parse)? {
-        return insert_row_value(&mut part.steps, row, wire_field, value, key);
     }
 
     if let Some(wire_field) = PartField::parse(part_field) {
@@ -469,11 +424,26 @@ fn set_once(target: &mut Option<String>, value: &str, key: &str) -> Result<()> {
     Ok(())
 }
 
+/// Parses `collection[<row>][wire_field]` into its row, when the key names that field.
+pub(super) fn indexed_row(key: &str, collection: &str, wire_field: &str) -> Result<Option<usize>> {
+    let prefix = format!("{collection}[");
+    let suffix = format!("[{wire_field}]");
+
+    if !key.starts_with(&prefix) || !key.ends_with(&suffix) {
+        return Ok(None);
+    }
+
+    Ok(
+        parse_indexed_key(key, collection, |field| (field == wire_field).then_some(()))?
+            .map(|(row, ())| row),
+    )
+}
+
 /// Parses `collection[row][field]` form keys.
 pub(super) fn parse_indexed_key<T>(
     key: &str,
     collection: &str,
-    parse_field: fn(&str) -> Option<T>,
+    parse_field: impl Fn(&str) -> Option<T>,
 ) -> Result<Option<(usize, T)>> {
     let Some(rest) = key
         .strip_prefix(collection)

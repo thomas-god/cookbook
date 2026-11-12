@@ -106,9 +106,6 @@ pub(super) enum PartField {
     Id,
     Title,
     Description,
-    Preparation,
-    Rest,
-    Cooking,
 }
 
 impl PartField {
@@ -117,9 +114,6 @@ impl PartField {
             Self::Id => "id",
             Self::Title => "title",
             Self::Description => "description",
-            Self::Preparation => "preparation",
-            Self::Rest => "rest",
-            Self::Cooking => "cooking",
         }
     }
 
@@ -132,11 +126,6 @@ impl PartField {
             "id" => Some(Self::Id),
             "title" => Some(Self::Title),
             "description" => Some(Self::Description),
-            "preparation" => Some(Self::Preparation),
-            "rest" => Some(Self::Rest),
-            "cooking" => Some(Self::Cooking),
-            // Repeated image id fields are collected separately.
-            "images" | "image_ids" => None,
             _ => None,
         }
     }
