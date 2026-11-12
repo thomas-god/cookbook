@@ -18,7 +18,10 @@ use crate::{
             image_upload::image_upload,
             input::input,
         },
-        recipe::category::category_label,
+        recipe::{
+            category::category_label,
+            image_thumbnail::{IMAGE_GRID_CLASS, image_thumbnail},
+        },
     },
     t,
 };
@@ -502,7 +505,7 @@ async fn body_images(
                     (t!(form_recipe_images_empty))
                 </p>
             } else {
-                <ul class="grid grid-cols-2 gap-3 sm:grid-cols-3">
+                <ul class=(IMAGE_GRID_CLASS)>
                     for image in &initials {
                         form_image_row(
                             image: image.clone(),
@@ -1064,14 +1067,7 @@ async fn form_image_row(
 
     Ok(view! {
         <li class="flex flex-col gap-2" :hidden=$(removed.get())>
-            <a href=(image.url.clone()) target="_blank" rel="noreferrer">
-                <img
-                    src=(image.url.clone())
-                    alt=(image.alt.clone())
-                    loading="lazy"
-                    class="aspect-square w-full rounded-lg border border-border object-cover"
-                >
-            </a>
+            image_thumbnail(url: image.url, alt: image.alt)
             <input
                 type="hidden"
                 name=(image_ids_field)
@@ -1270,7 +1266,7 @@ async fn step_images_field(
                 (t!(form_step_images))
             )
             if !image_ids.get().is_empty() {
-                <ul class="mb-2 grid grid-cols-2 gap-3 sm:grid-cols-3">
+                <ul class=(format!("mb-2 {IMAGE_GRID_CLASS}"))>
                     #[key(image_id.clone())]
                     for image_id in image_ids.get() {
                         if let Some(image) = image_lookup.get(&image_id) {
@@ -1304,14 +1300,7 @@ async fn step_image_row(
 
     Ok(view! {
         <li class="flex flex-col gap-2">
-            <a href=(image.url.clone()) target="_blank" rel="noreferrer">
-                <img
-                    src=(image.url.clone())
-                    alt=(image.alt.clone())
-                    loading="lazy"
-                    class="aspect-square w-full rounded-lg border border-border object-cover"
-                >
-            </a>
+            image_thumbnail(url: image.url, alt: image.alt)
             <input type="hidden" name=(image_ids_field) value=(image.id)>
             <div class="flex justify-end">
                 button(

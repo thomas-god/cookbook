@@ -10,10 +10,13 @@ use crate::{
     app::recipes::{
         RecipeId, SourceImageId, delete_source_image, source_image, upload_source_images,
     },
-    components::base::{
-        button::{ButtonSize, ButtonVariant, button},
-        field::{field, field_description, field_label},
-        image_upload::image_upload,
+    components::{
+        base::{
+            button::{ButtonSize, ButtonVariant, button},
+            field::{field, field_description, field_label},
+            image_upload::image_upload,
+        },
+        recipe::image_thumbnail::{IMAGE_GRID_CLASS, image_thumbnail},
     },
     t,
 };
@@ -63,21 +66,10 @@ pub async fn source_image_gallery(
             if images.is_empty() {
                 <p class="text-sm text-muted-foreground">(t!(source_images_empty))</p>
             } else {
-                <ul class="grid grid-cols-2 gap-3 sm:grid-cols-3">
+                <ul class=(IMAGE_GRID_CLASS)>
                     for image in images {
                         <li>
-                            <a
-                                href=(image.url.clone())
-                                target="_blank"
-                                rel="noreferrer"
-                            >
-                                <img
-                                    src=(image.url)
-                                    alt=(image.alt)
-                                    loading="lazy"
-                                    class="aspect-square w-full rounded-lg border border-border object-cover"
-                                >
-                            </a>
+                            image_thumbnail(url: image.url, alt: image.alt)
                         </li>
                     }
                 </ul>
@@ -127,21 +119,10 @@ pub async fn source_image_editor(
             if images.is_empty() {
                 <p class="text-sm text-muted-foreground">(t!(source_images_empty))</p>
             } else {
-                <ul class="grid grid-cols-2 gap-3 sm:grid-cols-3">
+                <ul class=(IMAGE_GRID_CLASS)>
                     for image in images {
                         <li class="flex flex-col gap-2">
-                            <a
-                                href=(image.url.clone())
-                                target="_blank"
-                                rel="noreferrer"
-                            >
-                                <img
-                                    src=(image.url)
-                                    alt=(image.alt)
-                                    loading="lazy"
-                                    class="aspect-square w-full rounded-lg border border-border object-cover"
-                                >
-                            </a>
+                            image_thumbnail(url: image.url, alt: image.alt)
                             <form method="post" action=(image.delete_url)>
                                 button(
                                     variant: ButtonVariant::Ghost,

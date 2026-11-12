@@ -12,7 +12,7 @@ use topcoat::{
 
 use crate::{
     app::recipes::{ImageId, RecipeId, recipe_image},
-    components::recipe::recipe_images::recipe_image_gallery,
+    components::recipe::{image_thumbnail::image_thumbnail, recipe_images::recipe_image_gallery},
     t,
 };
 
@@ -199,18 +199,10 @@ async fn recipe_body_view(
                             <ul class="mt-3 grid grid-cols-2 gap-3">
                                 for image in images {
                                     <li>
-                                        <a
-                                            href=(image.url.clone())
-                                            target="_blank"
-                                            rel="noreferrer"
-                                        >
-                                            <img
-                                                src=(image.url.clone())
-                                                alt=(image.alt.clone())
-                                                loading="lazy"
-                                                class="aspect-square w-full rounded-lg border border-border object-cover"
-                                            >
-                                        </a>
+                                        image_thumbnail(
+                                            url: image.url.clone(),
+                                            alt: image.alt.clone()
+                                        )
                                     </li>
                                 }
                             </ul>
