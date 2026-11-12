@@ -15,8 +15,9 @@ use crate::recipe::ports::{
     DeleteRecipeSourceImageError, DeleteSourceImageError, GetRecipeError, GetRecipeHistoryError,
     GetRecipeImageError, GetRecipeImagesError, GetRecipeSourceImageError,
     GetRecipeSourceImagesError, GetRecipesError, GetSourceImageError, ListRecipeImagesError,
-    ListSourceImagesError, RecipeRepository, RecipeService, SaveRecipeError, UpdateRecipeError,
-    UpdateRecipeRequest, UpdateRecipeScopeError, UpdateRecipeScopeRequest,
+    ListSourceImagesError, RecipeRepository, RecipeService, RestoreRecipeRevisionError,
+    RestoreRecipeRevisionRequest, SaveRecipeError, UpdateRecipeError, UpdateRecipeRequest,
+    UpdateRecipeScopeError, UpdateRecipeScopeRequest,
 };
 use crate::user::models::UserId;
 
@@ -251,6 +252,68 @@ where
                 SaveRecipeError::RecipeNotFound => UpdateRecipeError::NotFound,
                 SaveRecipeError::InvalidImageReference => UpdateRecipeError::InvalidImageReference,
                 SaveRecipeError::Storage(reason) => UpdateRecipeError::Storage(reason),
+            })?;
+
+        Ok(updated)
+    }
+
+    async fn restore_recipe_revision(
+        &self,
+        request: RestoreRecipeRevisionRequest,
+    ) -> Result<RecipeWithContent, RestoreRecipeRevisionError> {
+        let current = self
+            .repository
+            .get_recipe(request.id.clone())
+            .await
+            .map_err(|error| RestoreRecipeRevisionError::Storage(error.into()))?
+            .filter(|recipe| recipe.can_view(&request.editor))
+            .ok_or(RestoreRecipeRevisionError::NotFound)?;
+
+        if !current.can_edit(&request.editor) {
+            return Err(RestoreRecipeRevisionError::Forbidden);
+        }
+
+        if current.revision().id() != &request.latest_revision {
+            return Err(RestoreRecipeRevisionError::Conflict);
+        }
+
+        let source = self
+            .repository
+            .get_recipe_revisions(current.id().clone())
+            .await
+            .map_err(|error| RestoreRecipeRevisionError::Storage(error.into()))?
+            .into_iter()
+            .find(|revision| revision.id() == &request.revision_id)
+            .ok_or(RestoreRecipeRevisionError::NotFound)?;
+
+        let recipe = current.recipe().clone();
+        let revision = RecipeRevision::new(
+            RecipeRevisionId::new(Uuid::now_v7().to_string()),
+            recipe.id().clone(),
+            source.content().clone(),
+            request.editor,
+            self.clock.now(),
+            RevisionOrigin::Restored {
+                revision_id: source.id().clone(),
+            },
+            source.verification(),
+        );
+
+        let updated = RecipeWithContent::new(recipe.clone(), revision.clone())
+            .map_err(|error| RestoreRecipeRevisionError::Storage(error.into()))?;
+
+        self.repository
+            .save_recipe_with_revision(recipe, revision, Vec::new())
+            .await
+            .map_err(|error| match error {
+                SaveRecipeError::RecipeIdMismatch | SaveRecipeError::RecipeAuthorMismatch => {
+                    RestoreRecipeRevisionError::Conflict
+                }
+                SaveRecipeError::RecipeNotFound => RestoreRecipeRevisionError::NotFound,
+                error @ SaveRecipeError::InvalidImageReference => {
+                    RestoreRecipeRevisionError::Storage(error.into())
+                }
+                SaveRecipeError::Storage(reason) => RestoreRecipeRevisionError::Storage(reason),
             })?;
 
         Ok(updated)
@@ -1123,6 +1186,178 @@ mod tests {
             .unwrap();
 
         assert!(converted.content().is_multipart());
+    }
+
+    #[tokio::test]
+    async fn restore_recipe_revision_appends_the_source_content() {
+        let current = current_recipe("soup", "Current Soup");
+        let source = RecipeRevision::new(
+            RecipeRevisionId::new("revision-0".to_string()),
+            current.id().clone(),
+            content("Old Soup"),
+            UserId::new("author-1".to_string()),
+            FixedClock::new().0,
+            RevisionOrigin::Created,
+            RevisionVerification::NeedsReview,
+        );
+        let latest_revision = current.revision().id().clone();
+        let expected_id = current.id().clone();
+        let expected_source_id = source.id().clone();
+        let revisions = vec![source.clone(), current.revision().clone()];
+
+        let mut repository = MockRecipeRepository::new();
+        repository.expect_get_recipe().times(1).returning({
+            let current = current.clone();
+            move |_| Ok(Some(current.clone()))
+        });
+        repository
+            .expect_get_recipe_revisions()
+            .times(1)
+            .returning(move |_| Ok(revisions.clone()));
+        repository
+            .expect_save_recipe_with_revision()
+            .times(1)
+            .withf(
+                move |recipe: &Recipe, revision: &RecipeRevision, images: &Vec<RecipeImage>| {
+                    recipe.id() == &expected_id
+                        && revision.content().title().as_str() == "Old Soup"
+                        && revision.origin()
+                            == &RevisionOrigin::Restored {
+                                revision_id: expected_source_id.clone(),
+                            }
+                        && revision.verification() == RevisionVerification::NeedsReview
+                        && images.is_empty()
+                },
+            )
+            .returning(|_, _, _| Ok(()));
+
+        let service = RecipeServiceImpl::new(repository, FixedClock::new());
+
+        let restored = service
+            .restore_recipe_revision(RestoreRecipeRevisionRequest {
+                id: current.id().clone(),
+                revision_id: source.id().clone(),
+                editor: user_id(),
+                latest_revision,
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(restored.title().as_str(), "Old Soup");
+        assert!(restored.needs_review());
+    }
+
+    #[tokio::test]
+    async fn restore_recipe_revision_rejects_a_stale_revision() {
+        let current = current_recipe("soup", "Soup");
+
+        let mut repository = MockRecipeRepository::new();
+        repository.expect_get_recipe().times(1).returning({
+            let current = current.clone();
+            move |_| Ok(Some(current.clone()))
+        });
+
+        let service = RecipeServiceImpl::new(repository, FixedClock::new());
+
+        let result = service
+            .restore_recipe_revision(RestoreRecipeRevisionRequest {
+                id: current.id().clone(),
+                revision_id: current.revision().id().clone(),
+                editor: user_id(),
+                latest_revision: RecipeRevisionId::new("stale-revision".to_string()),
+            })
+            .await;
+
+        assert!(matches!(result, Err(RestoreRecipeRevisionError::Conflict)));
+    }
+
+    #[tokio::test]
+    async fn restore_recipe_revision_forbids_a_viewer_without_edit_access() {
+        let current = current_recipe_with_scope("soup", "Soup", "author-1", RecipeScope::Viewable);
+
+        let mut repository = MockRecipeRepository::new();
+        repository.expect_get_recipe().times(1).returning({
+            let current = current.clone();
+            move |_| Ok(Some(current.clone()))
+        });
+
+        let service = RecipeServiceImpl::new(repository, FixedClock::new());
+
+        let result = service
+            .restore_recipe_revision(RestoreRecipeRevisionRequest {
+                id: current.id().clone(),
+                revision_id: current.revision().id().clone(),
+                editor: user_id(),
+                latest_revision: current.revision().id().clone(),
+            })
+            .await;
+
+        assert!(matches!(result, Err(RestoreRecipeRevisionError::Forbidden)));
+    }
+
+    #[tokio::test]
+    async fn restore_recipe_revision_rejects_an_unknown_source_revision() {
+        let current = current_recipe("soup", "Soup");
+        let revisions = vec![current.revision().clone()];
+
+        let mut repository = MockRecipeRepository::new();
+        repository.expect_get_recipe().times(1).returning({
+            let current = current.clone();
+            move |_| Ok(Some(current.clone()))
+        });
+        repository
+            .expect_get_recipe_revisions()
+            .times(1)
+            .returning(move |_| Ok(revisions.clone()));
+
+        let service = RecipeServiceImpl::new(repository, FixedClock::new());
+
+        let result = service
+            .restore_recipe_revision(RestoreRecipeRevisionRequest {
+                id: current.id().clone(),
+                revision_id: RecipeRevisionId::new("missing-revision".to_string()),
+                editor: user_id(),
+                latest_revision: current.revision().id().clone(),
+            })
+            .await;
+
+        assert!(matches!(result, Err(RestoreRecipeRevisionError::NotFound)));
+    }
+
+    #[tokio::test]
+    async fn restore_recipe_revision_maps_save_failures_to_storage_errors() {
+        let current = current_recipe("soup", "Soup");
+        let revisions = vec![current.revision().clone()];
+
+        let mut repository = MockRecipeRepository::new();
+        repository.expect_get_recipe().times(1).returning({
+            let current = current.clone();
+            move |_| Ok(Some(current.clone()))
+        });
+        repository
+            .expect_get_recipe_revisions()
+            .times(1)
+            .returning(move |_| Ok(revisions.clone()));
+        repository
+            .expect_save_recipe_with_revision()
+            .times(1)
+            .returning(|_, _, _| Err(SaveRecipeError::Storage(anyhow!("write failed"))));
+
+        let service = RecipeServiceImpl::new(repository, FixedClock::new());
+
+        let result = service
+            .restore_recipe_revision(RestoreRecipeRevisionRequest {
+                id: current.id().clone(),
+                revision_id: current.revision().id().clone(),
+                editor: user_id(),
+                latest_revision: current.revision().id().clone(),
+            })
+            .await;
+
+        assert!(matches!(
+            result,
+            Err(RestoreRecipeRevisionError::Storage(_))
+        ));
     }
 
     #[tokio::test]

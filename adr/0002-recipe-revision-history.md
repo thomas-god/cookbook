@@ -53,9 +53,18 @@ callers never read content from a separate mutable field that could drift from s
 
 `RevisionOrigin` distinguishes a manual creation (`Created`), a photo import (`Imported`), a user
 edit with an optional `RevisionMessage` (`UserEdit`), a simple/multipart structure conversion
-(`StructureConverted`), and a future restore from older history (`Restored`). Creation records the
-first revision using the origin matching its entrypoint and no user note. Revisions are returned
-oldest first.
+(`StructureConverted`), and a restore from older history (`Restored`). Creation records the first
+revision using the origin matching its entrypoint and no user note. Revisions are returned oldest
+first.
+
+### Restoring a revision
+
+Any user who can edit the recipe can restore an older revision. Restoring appends a new revision
+whose content is the selected snapshot; it does not truncate or rewrite existing history. The new
+revision records `Restored { revision_id }` pointing at the source, the restoring user as editor,
+and the current time. The source revision's verification state is preserved, so restoring an
+unreviewed import does not silently mark it verified. The form carries the latest revision id, and a
+stale restore is rejected with a conflict.
 
 ### Atomic persistence
 
@@ -108,5 +117,5 @@ Step splitting can copy image ids to the new step without duplicating or updatin
 - Add no-op edit detection.
 - Add display-time diffs or richer revision navigation.
 - Introduce persistent storage with `recipes(id, author)` and
-  `recipe_revisions(recipe_id, editor, edited_at, message, content)` tables.
+  `recipe_revisions(recipe_id, editor, edited_at, origin, content)` tables.
 - Add batch user lookup if history pages become large.

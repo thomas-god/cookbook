@@ -7,7 +7,8 @@ use cookbook_domain::recipe::models::{
 };
 use cookbook_domain::recipe::ports::{
     AddRecipeSourceImagesError, AddRecipeSourceImagesRequest, ConvertRecipeStructureRequest,
-    DeleteRecipeSourceImageError, RecipeService, UpdateRecipeError, UpdateRecipeScopeError,
+    DeleteRecipeSourceImageError, RecipeService, RestoreRecipeRevisionError,
+    RestoreRecipeRevisionRequest, UpdateRecipeError, UpdateRecipeScopeError,
     UpdateRecipeScopeRequest,
 };
 use cookbook_domain::user::models::UserId;
@@ -460,6 +461,38 @@ fn parse_latest_revision_form(pairs: Vec<(String, String)>) -> Result<RecipeRevi
     Ok(RecipeRevisionId::new(latest_revision))
 }
 
+#[route(POST "./{recipe_id}/history/{revision_id}/restore")]
+pub async fn restore_recipe_revision(
+    cx: &Cx,
+    Form(form): Form<Vec<(String, String)>>,
+) -> Result<SeeOther> {
+    let user = auth::require_user(cx)?;
+    let recipe_id = path_param::<RecipeId>(cx).to_string();
+    let revision_id = path_param::<RevisionId>(cx).to_string();
+    let latest_revision = parse_latest_revision_form(form)?;
+    let recipe_service: &AppRecipeService = app_context(cx);
+
+    match recipe_service
+        .restore_recipe_revision(RestoreRecipeRevisionRequest {
+            id: RecipeIdValue::new(recipe_id.clone()),
+            revision_id: RecipeRevisionId::new(revision_id),
+            editor: user.id().clone(),
+            latest_revision,
+        })
+        .await
+    {
+        Ok(_) => Ok(see_other(
+            href!(recipe_detail, RecipeId(recipe_id.as_str())).resolve(cx),
+        )),
+        Err(RestoreRecipeRevisionError::Conflict) => {
+            Err(bad_request(t!(recipe_conflict).resolve(cx)).into())
+        }
+        Err(RestoreRecipeRevisionError::NotFound) => Err(not_found().into()),
+        Err(RestoreRecipeRevisionError::Forbidden) => Err(forbidden().into()),
+        Err(error) => Err(error.into()),
+    }
+}
+
 #[route(POST "./{recipe_id}/scope")]
 pub async fn update_recipe_scope(
     cx: &Cx,
@@ -611,7 +644,7 @@ struct HistoryEntry {
     editor: String,
 }
 
-fn revision_origin_label(cx: &Cx, origin: &RevisionOrigin) -> String {
+fn revision_origin_label(cx: &Cx, origin: &RevisionOrigin, revisions: &[RecipeRevision]) -> String {
     match origin {
         RevisionOrigin::Created => t!(recipe_history_created).resolve(cx).into_owned(),
         RevisionOrigin::Imported => t!(recipe_history_imported).resolve(cx).into_owned(),
@@ -629,7 +662,22 @@ fn revision_origin_label(cx: &Cx, origin: &RevisionOrigin) -> String {
                 .resolve(cx)
                 .into_owned(),
         },
-        RevisionOrigin::Restored { .. } => t!(recipe_history_restored).resolve(cx).into_owned(),
+        RevisionOrigin::Restored { revision_id } => revisions
+            .iter()
+            .find(|revision| revision.id() == revision_id)
+            .map(|source| {
+                t!(
+                    recipe_history_restored,
+                    timestamp = format_timestamp(source.edited_at())
+                )
+                .resolve(cx)
+                .into_owned()
+            })
+            .unwrap_or_else(|| {
+                t!(recipe_history_restored_fallback)
+                    .resolve(cx)
+                    .into_owned()
+            }),
     }
 }
 
@@ -681,7 +729,7 @@ pub async fn recipe_history(cx: &Cx) -> Result<impl View> {
                             <div class="flex items-start justify-between gap-4">
                                 <div>
                                     <p class="font-medium">
-                                        (revision_origin_label(cx, entry.revision.origin()))
+                                        (revision_origin_label(cx, entry.revision.origin(), &revisions))
                                     </p>
                                     <p class="mt-1">
                                         if entry.revision.verification()
@@ -737,11 +785,13 @@ pub async fn recipe_revision(cx: &Cx) -> Result<impl View> {
         .get_recipe(RecipeIdValue::new(recipe_id.clone()), user.id().clone())
         .await?
         .ok_or_not_found()?;
-    let revision = recipe_service
+    let revisions = recipe_service
         .get_recipe_history(RecipeIdValue::new(recipe_id.clone()), user.id().clone())
-        .await?
-        .into_iter()
+        .await?;
+    let revision = revisions
+        .iter()
         .find(|revision| revision.id().as_str() == revision_id.as_str())
+        .cloned()
         .ok_or_not_found()?;
     let images = recipe_service
         .get_recipe_images(recipe.id().clone(), user.id().clone())
@@ -750,6 +800,15 @@ pub async fn recipe_revision(cx: &Cx) -> Result<impl View> {
     let editor = display_name(cx, revision.editor()).await?;
     let author_name = display_name(cx, recipe.author()).await?;
     let total_minutes = revision.content().durations().total_duration().as_minutes();
+    let can_edit = recipe.can_edit(user.id());
+    let is_current = revision.id() == recipe.revision().id();
+    let latest_revision = recipe.revision().id().as_str().to_string();
+    let restore_action = href!(
+        restore_recipe_revision,
+        RecipeId(recipe_id.as_str()),
+        RevisionId(revision.id().as_str()),
+    )
+    .resolve(cx);
 
     Ok(view! {
         <div class="flex flex-col gap-8">
@@ -798,7 +857,7 @@ pub async fn recipe_revision(cx: &Cx) -> Result<impl View> {
                     (format_timestamp(revision.edited_at()))
                 </p>
                 <p class="mt-2 text-sm">
-                    (revision_origin_label(cx, revision.origin()))
+                    (revision_origin_label(cx, revision.origin(), &revisions))
                 </p>
                 if total_minutes > 0 {
                     <p class="mt-2 text-sm text-muted-foreground">
@@ -822,6 +881,22 @@ pub async fn recipe_revision(cx: &Cx) -> Result<impl View> {
                         (t!(recipe_view_current))
                     </a>
                 </p>
+                if can_edit && !is_current {
+                    <form method="post" action=(restore_action) class="mt-4 flex flex-col gap-2">
+                        <input
+                            type="hidden"
+                            name=(LATEST_REVISION_FIELD)
+                            value=(latest_revision)
+                        >
+                        <p class="text-sm text-muted-foreground">
+                            (t!(recipe_restore_revision_hint))
+                        </p>
+                        button(
+                            attrs: attributes! { type="submit" },
+                            (t!(recipe_restore_revision))
+                        )
+                    </form>
+                }
             </div>
 
             if let Some(body) = revision.content().simple_body() {
@@ -933,6 +1008,59 @@ mod tests {
                 "expected an error for {entries:?}"
             );
         }
+    }
+
+    #[test]
+    fn labels_a_restored_revision_with_its_source_timestamp() {
+        use cookbook_domain::recipe::models::{
+            Recipe, RecipeBody, RecipeContent, RecipeDurations, RecipeTitle,
+        };
+
+        let cx = Cx::default().with(topcoat::l10n::locale!("en"));
+        let recipe = Recipe::new(
+            RecipeIdValue::new("soup".to_string()),
+            UserId::new("user-1".to_string()),
+        );
+        let content = |title: &str| {
+            RecipeContent::new_simple(
+                RecipeTitle::new(title.to_string()),
+                None,
+                None,
+                None,
+                RecipeBody::new(
+                    RecipeDurations::new(None, None, None),
+                    Vec::new(),
+                    Vec::new(),
+                    Vec::new(),
+                ),
+            )
+            .unwrap()
+        };
+        let source = RecipeRevision::new(
+            RecipeRevisionId::new("revision-1".to_string()),
+            recipe.id().clone(),
+            content("Old Soup"),
+            UserId::new("user-1".to_string()),
+            SystemTime::UNIX_EPOCH,
+            RevisionOrigin::Created,
+            RevisionVerification::Verified,
+        );
+        let restored = RecipeRevision::new(
+            RecipeRevisionId::new("revision-2".to_string()),
+            recipe.id().clone(),
+            content("Current Soup"),
+            UserId::new("user-1".to_string()),
+            SystemTime::UNIX_EPOCH,
+            RevisionOrigin::Restored {
+                revision_id: source.id().clone(),
+            },
+            RevisionVerification::Verified,
+        );
+
+        let label = revision_origin_label(&cx, restored.origin(), &[source, restored.clone()]);
+
+        assert!(label.contains("Restored"));
+        assert!(label.contains(&format_timestamp(SystemTime::UNIX_EPOCH)));
     }
 
     #[test]

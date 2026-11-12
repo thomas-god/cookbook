@@ -50,6 +50,14 @@ pub struct ConvertRecipeStructureRequest {
     pub latest_revision: RecipeRevisionId,
 }
 
+#[derive(Debug, Clone)]
+pub struct RestoreRecipeRevisionRequest {
+    pub id: RecipeId,
+    pub revision_id: RecipeRevisionId,
+    pub editor: UserId,
+    pub latest_revision: RecipeRevisionId,
+}
+
 /// Inbound (driving) port for the recipe domain service.
 pub trait RecipeService: Clone + Send + Sync + 'static {
     fn create_verified_recipe(
@@ -71,6 +79,11 @@ pub trait RecipeService: Clone + Send + Sync + 'static {
         &self,
         request: ConvertRecipeStructureRequest,
     ) -> impl Future<Output = Result<RecipeWithContent, UpdateRecipeError>> + Send;
+
+    fn restore_recipe_revision(
+        &self,
+        request: RestoreRecipeRevisionRequest,
+    ) -> impl Future<Output = Result<RecipeWithContent, RestoreRecipeRevisionError>> + Send;
 
     fn update_recipe_scope(
         &self,
@@ -257,6 +270,27 @@ impl fmt::Display for UpdateRecipeError {
 }
 
 impl std::error::Error for UpdateRecipeError {}
+
+#[derive(Debug)]
+pub enum RestoreRecipeRevisionError {
+    NotFound,
+    Forbidden,
+    Conflict,
+    Storage(anyhow::Error),
+}
+
+impl fmt::Display for RestoreRecipeRevisionError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NotFound => f.write_str("recipe or revision not found"),
+            Self::Forbidden => f.write_str("the recipe cannot be edited by this user"),
+            Self::Conflict => f.write_str("the recipe was changed since it was loaded"),
+            Self::Storage(reason) => write!(f, "failed to restore recipe revision: {reason}"),
+        }
+    }
+}
+
+impl std::error::Error for RestoreRecipeRevisionError {}
 
 #[derive(Debug)]
 pub enum UpdateRecipeScopeError {
@@ -588,6 +622,11 @@ mockall::mock! {
             &self,
             request: ConvertRecipeStructureRequest,
         ) -> Result<RecipeWithContent, UpdateRecipeError>;
+
+        async fn restore_recipe_revision(
+            &self,
+            request: RestoreRecipeRevisionRequest,
+        ) -> Result<RecipeWithContent, RestoreRecipeRevisionError>;
 
         async fn update_recipe_scope(
             &self,
