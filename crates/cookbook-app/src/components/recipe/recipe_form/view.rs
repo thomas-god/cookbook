@@ -119,51 +119,60 @@ struct PartListState {
 
 #[component]
 pub(super) async fn body_fields(
-    cx: &Cx,
     prefix: String,
     initial: BodyInitial,
     image_lookup: HashMap<String, FormImageInitial>,
 ) -> Result<impl View> {
-    let initial_ingredient_count = initial.ingredients.len().max(1);
-    let initial_step_count = initial.steps.len().max(1);
-    let initial_step_order: Vec<usize> = (0..initial_step_count).collect();
+    let BodyInitial {
+        preparation,
+        rest,
+        cooking,
+        ingredients,
+        images,
+        steps,
+    } = initial;
 
+    Ok(view! {
+        body_durations(
+            prefix: prefix.clone(),
+            preparation: preparation,
+            rest: rest,
+            cooking: cooking
+        )
+        body_images(prefix: prefix.clone(), initials: images)
+        body_ingredients(
+            list_id: "ingredients".to_string(),
+            prefix: prefix.clone(),
+            initials: ingredients
+        )
+        body_steps(
+            list_id: "steps".to_string(),
+            prefix: prefix,
+            initials: steps,
+            image_lookup: image_lookup
+        )
+    })
+}
+
+#[component]
+async fn body_durations(
+    cx: &Cx,
+    prefix: String,
+    preparation: String,
+    rest: String,
+    cooking: String,
+) -> Result<impl View> {
     let preparation_field = body_field(&prefix, PREPARATION_FIELD);
     let rest_field = body_field(&prefix, REST_FIELD);
     let cooking_field = body_field(&prefix, COOKING_FIELD);
-    let image_ids_field = body_field(&prefix, IMAGE_IDS_FIELD);
-    let images_field = body_field(&prefix, IMAGES_FIELD);
 
-    let preparation_value = initial.preparation.clone();
-    let preparation = signal(cx, move || preparation_value.clone());
-    let rest_value = initial.rest.clone();
-    let rest = signal(cx, move || rest_value.clone());
-    let cooking_value = initial.cooking.clone();
-    let cooking = signal(cx, move || cooking_value.clone());
-    let ingredient_count = signal(cx, move || initial_ingredient_count);
-    let step_order = signal(cx, move || initial_step_order.clone());
-    let next_step_key = signal(cx, move || initial_step_count);
-    let inserted_slot = signal(cx, || None::<usize>);
-    let insert_title = signal(cx, String::new);
-    let insert_instruction = signal(cx, String::new);
-    let insert_images = signal(cx, Vec::<String>::new);
-    let step_list = StepListState {
-        order: step_order.clone(),
-        next_key: next_step_key.clone(),
-        inserted_slot: inserted_slot.clone(),
-        insert_title: insert_title.clone(),
-        insert_instruction: insert_instruction.clone(),
-        insert_images: insert_images.clone(),
-    };
-
-    let ingredient_initials = initial.ingredients;
-    let step_initials = initial.steps;
-    let recipe_image_initials = initial.images;
+    let preparation = signal(cx, move || preparation.clone());
+    let rest = signal(cx, move || rest.clone());
+    let cooking = signal(cx, move || cooking.clone());
 
     let preparation_id = element_id(cx);
     let rest_id = element_id(cx);
     let cooking_id = element_id(cx);
-    let recipe_images_id = element_id(cx);
 
     Ok(view! {
         <div class="grid gap-4 sm:grid-cols-3">
@@ -222,16 +231,29 @@ pub(super) async fn body_fields(
                 )
             )
         </div>
+    })
+}
 
+#[component]
+async fn body_images(
+    cx: &Cx,
+    prefix: String,
+    initials: Vec<FormImageInitial>,
+) -> Result<impl View> {
+    let image_ids_field = body_field(&prefix, IMAGE_IDS_FIELD);
+    let images_field = body_field(&prefix, IMAGES_FIELD);
+    let recipe_images_id = element_id(cx);
+
+    Ok(view! {
         field_set(
             field_legend((t!(form_recipe_images)))
-            if recipe_image_initials.is_empty() {
+            if initials.is_empty() {
                 <p class="text-sm text-muted-foreground">
                     (t!(form_recipe_images_empty))
                 </p>
             } else {
                 <ul class="grid grid-cols-2 gap-3 sm:grid-cols-3">
-                    for image in &recipe_image_initials {
+                    for image in &initials {
                         form_image_row(
                             image: image.clone(),
                             image_ids_field: image_ids_field.clone()
@@ -251,16 +273,29 @@ pub(super) async fn body_fields(
                 field_description((t!(form_recipe_images_upload_hint)))
             )
         )
+    })
+}
 
+#[component]
+async fn body_ingredients(
+    cx: &Cx,
+    list_id: String,
+    prefix: String,
+    initials: Vec<IngredientInitial>,
+) -> Result<impl View> {
+    let initial_count = initials.len().max(1);
+    let count = signal(cx, move || initial_count);
+
+    Ok(view! {
         field_set(
             field_legend((t!(form_ingredients)))
-            <div id="ingredients" class="flex flex-col gap-3">
+            <div id=(list_id) class="flex flex-col gap-3">
                 #[key(index)]
-                for index in 0..ingredient_count.get() {
+                for index in 0..count.get() {
                     ingredient_row(
                         row: index,
                         prefix: prefix.clone(),
-                        initial: ingredient_initials.get(index).cloned()
+                        initial: initials.get(index).cloned()
                     )
                 }
             </div>
@@ -270,23 +305,51 @@ pub(super) async fn body_fields(
                     size: ButtonSize::Sm,
                     attrs: attributes! {
                         type="button"
-                        @click=$(|_e: Event| ingredient_count.increment())
+                        @click=$(|_e: Event| count.increment())
                     },
                     (t!(form_add_ingredient))
                 )
             </div>
         )
+    })
+}
 
+#[component]
+async fn body_steps(
+    cx: &Cx,
+    list_id: String,
+    prefix: String,
+    initials: Vec<StepInitial>,
+    image_lookup: HashMap<String, FormImageInitial>,
+) -> Result<impl View> {
+    let initial_step_count = initials.len().max(1);
+    let initial_step_order: Vec<usize> = (0..initial_step_count).collect();
+    let step_order = signal(cx, move || initial_step_order.clone());
+    let next_step_key = signal(cx, move || initial_step_count);
+    let inserted_slot = signal(cx, || None::<usize>);
+    let insert_title = signal(cx, String::new);
+    let insert_instruction = signal(cx, String::new);
+    let insert_images = signal(cx, Vec::<String>::new);
+    let list = StepListState {
+        order: step_order.clone(),
+        next_key: next_step_key.clone(),
+        inserted_slot: inserted_slot.clone(),
+        insert_title: insert_title.clone(),
+        insert_instruction: insert_instruction.clone(),
+        insert_images: insert_images.clone(),
+    };
+
+    Ok(view! {
         field_set(
             field_legend((t!(form_steps)))
-            <div id="steps" class="flex flex-col gap-4">
-                #[key(key)]
-                for (position, key) in step_order.get().into_iter().enumerate() {
+            <div id=(list_id) class="flex flex-col gap-4">
+                #[key(step_key)]
+                for (position, step_key) in step_order.get().into_iter().enumerate() {
                     step_row(
                         row: position,
-                        key: key,
+                        key: step_key,
                         prefix: prefix.clone(),
-                        initial: if inserted_slot.get() == Some(key) {
+                        initial: if inserted_slot.get() == Some(step_key) {
                             Some(
                                 StepInitial {
                                     id: String::new(),
@@ -296,9 +359,9 @@ pub(super) async fn body_fields(
                                 },
                             )
                         } else {
-                            step_initials.get(key).cloned()
+                            initials.get(step_key).cloned()
                         },
-                        list: step_list.clone(),
+                        list: list.clone(),
                         image_lookup: image_lookup.clone()
                     )
                 }
@@ -392,53 +455,20 @@ async fn part_row(
     let id_value = initial.id;
     let title_value = initial.title;
     let description_value = initial.description;
-    let body = initial.body;
+    let BodyInitial {
+        preparation,
+        rest,
+        cooking,
+        ingredients,
+        images,
+        steps,
+    } = initial.body;
     let title = signal(cx, move || title_value.clone());
     let description = signal(cx, move || description_value.clone());
     let prefix = format!("parts[{row}]");
 
-    let initial_ingredient_count = body.ingredients.len().max(1);
-    let initial_step_count = body.steps.len().max(1);
-    let initial_step_order: Vec<usize> = (0..initial_step_count).collect();
-
-    let preparation_field = body_field(&prefix, PREPARATION_FIELD);
-    let rest_field = body_field(&prefix, REST_FIELD);
-    let cooking_field = body_field(&prefix, COOKING_FIELD);
-    let image_ids_field = body_field(&prefix, IMAGE_IDS_FIELD);
-    let images_field = body_field(&prefix, IMAGES_FIELD);
-
-    let preparation_value = body.preparation.clone();
-    let preparation = signal(cx, move || preparation_value.clone());
-    let rest_value = body.rest.clone();
-    let rest = signal(cx, move || rest_value.clone());
-    let cooking_value = body.cooking.clone();
-    let cooking = signal(cx, move || cooking_value.clone());
-    let ingredient_count = signal(cx, move || initial_ingredient_count);
-    let step_order = signal(cx, move || initial_step_order.clone());
-    let next_step_key = signal(cx, move || initial_step_count);
-    let inserted_slot = signal(cx, || None::<usize>);
-    let insert_title = signal(cx, String::new);
-    let insert_instruction = signal(cx, String::new);
-    let insert_images = signal(cx, Vec::<String>::new);
-    let step_list = StepListState {
-        order: step_order.clone(),
-        next_key: next_step_key.clone(),
-        inserted_slot: inserted_slot.clone(),
-        insert_title: insert_title.clone(),
-        insert_instruction: insert_instruction.clone(),
-        insert_images: insert_images.clone(),
-    };
-
-    let ingredient_initials = body.ingredients;
-    let step_initials = body.steps;
-    let recipe_image_initials = body.images;
-
     let title_id = element_id(cx);
     let description_id = element_id(cx);
-    let preparation_id = element_id(cx);
-    let rest_id = element_id(cx);
-    let cooking_id = element_id(cx);
-    let recipe_images_id = element_id(cx);
     let id_field = PartField::Id.key(row);
     let title_field = PartField::Title.key(row);
     let description_field = PartField::Description.key(row);
@@ -477,169 +507,24 @@ async fn part_row(
                 ></textarea>
             )
 
-            <div class="grid gap-4 sm:grid-cols-3">
-                field(
-                    field_label(
-                        attrs: attributes! { for=(&preparation_id) },
-                        (t!(form_preparation))
-                    )
-                    input(
-                        attrs: attributes! {
-                            id=(&preparation_id)
-                            name=(preparation_field)
-                            type="number"
-                            min="0"
-                            step="1"
-                            placeholder="15"
-                            :value=$(preparation.get())
-                            @input=$(|e: Event| preparation.set(e.target.value))
-                        }
-                    )
-                )
-                field(
-                    field_label(
-                        attrs: attributes! { for=(&rest_id) },
-                        (t!(form_rest))
-                    )
-                    input(
-                        attrs: attributes! {
-                            id=(&rest_id)
-                            name=(rest_field)
-                            type="number"
-                            min="0"
-                            step="1"
-                            placeholder="30"
-                            :value=$(rest.get())
-                            @input=$(|e: Event| rest.set(e.target.value))
-                        }
-                    )
-                )
-                field(
-                    field_label(
-                        attrs: attributes! { for=(&cooking_id) },
-                        (t!(form_cooking))
-                    )
-                    input(
-                        attrs: attributes! {
-                            id=(&cooking_id)
-                            name=(cooking_field)
-                            type="number"
-                            min="0"
-                            step="1"
-                            placeholder="45"
-                            :value=$(cooking.get())
-                            @input=$(|e: Event| cooking.set(e.target.value))
-                        }
-                    )
-                )
-            </div>
-
-            <fieldset class="flex min-w-0 flex-col gap-5">
-                <legend class="mb-3 text-base font-semibold">(t!(form_recipe_images))</legend>
-                if recipe_image_initials.is_empty() {
-                    <p class="text-sm text-muted-foreground">
-                        (t!(form_recipe_images_empty))
-                    </p>
-                } else {
-                    <ul class="grid grid-cols-2 gap-3 sm:grid-cols-3">
-                        for image in &recipe_image_initials {
-                            form_image_row(
-                                image: image.clone(),
-                                image_ids_field: image_ids_field.clone()
-                            )
-                        }
-                    </ul>
-                }
-                field(
-                    field_label(
-                        attrs: attributes! { for=(&recipe_images_id) },
-                        (t!(form_recipe_images_upload))
-                    )
-                    image_upload(
-                        multiple: true,
-                        attrs: attributes! { id=(&recipe_images_id) name=(images_field) }
-                    )
-                    field_description((t!(form_recipe_images_upload_hint)))
-                )
-            </fieldset>
-
-            <fieldset class="flex min-w-0 flex-col gap-5">
-                <legend class="mb-3 text-base font-semibold">(t!(form_ingredients))</legend>
-                <div
-                    id=(format!("part-{key}-ingredients"))
-                    class="flex flex-col gap-3"
-                >
-                    #[key((key, index))]
-                    for index in 0..ingredient_count.get() {
-                        ingredient_row(
-                            row: index,
-                            prefix: prefix.clone(),
-                            initial: ingredient_initials.get(index).cloned()
-                        )
-                    }
-                </div>
-                <div class="flex flex-wrap gap-2">
-                    button(
-                        variant: ButtonVariant::Outline,
-                        size: ButtonSize::Sm,
-                        attrs: attributes! {
-                            type="button"
-                            @click=$(|_e: Event| ingredient_count.increment())
-                        },
-                        (t!(form_add_ingredient))
-                    )
-                </div>
-            </fieldset>
-
-            <fieldset class="flex min-w-0 flex-col gap-5">
-                <legend class="mb-3 text-base font-semibold">(t!(form_steps))</legend>
-                <div
-                    id=(format!("part-{key}-steps"))
-                    class="flex flex-col gap-4"
-                >
-                    #[key((key, step_key))]
-                    for (position, step_key) in step_order.get().into_iter().enumerate() {
-                        step_row(
-                            row: position,
-                            key: step_key,
-                            prefix: prefix.clone(),
-                            initial: if inserted_slot.get() == Some(step_key) {
-                                Some(
-                                    StepInitial {
-                                        id: String::new(),
-                                        title: insert_title.get(),
-                                        instruction: insert_instruction.get(),
-                                        images: insert_images.get(),
-                                    },
-                                )
-                            } else {
-                                step_initials.get(step_key).cloned()
-                            },
-                            list: step_list.clone(),
-                            image_lookup: image_lookup.clone()
-                        )
-                    }
-                </div>
-                <div class="flex flex-wrap gap-2">
-                    button(
-                        variant: ButtonVariant::Outline,
-                        size: ButtonSize::Sm,
-                        attrs: attributes! {
-                            type="button"
-                            @click=$(async |_e: Event| {
-                                let new_key = next_step_key.get();
-                                next_step_key.increment();
-                                let order = step_order.get();
-                                let index = order.len();
-                                let next = form_insert_step(order, index, new_key).await;
-                                inserted_slot.set(None);
-                                step_order.set(next);
-                            })
-                        },
-                        (t!(form_add_step))
-                    )
-                </div>
-            </fieldset>
+            body_durations(
+                prefix: prefix.clone(),
+                preparation: preparation,
+                rest: rest,
+                cooking: cooking
+            )
+            body_images(prefix: prefix.clone(), initials: images)
+            body_ingredients(
+                list_id: format!("part-{key}-ingredients"),
+                prefix: prefix.clone(),
+                initials: ingredients
+            )
+            body_steps(
+                list_id: format!("part-{key}-steps"),
+                prefix: prefix,
+                initials: steps,
+                image_lookup: image_lookup
+            )
 
             <div class="flex flex-wrap items-center justify-end gap-2">
                 button(
