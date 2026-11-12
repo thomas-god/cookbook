@@ -28,7 +28,6 @@ use topcoat::{
 };
 
 pub(crate) mod auth;
-mod dev;
 mod locale;
 pub(crate) mod recipe;
 pub(crate) mod recipes;
@@ -86,7 +85,6 @@ pub async fn router() -> topcoat::router::Router {
         .app_context(vision_config.settings())
         .app_context(vision_config.client())
         .discover()
-        .layer(BodyLimit::max(dev::heic::MAX_UPLOAD_BYTES).at("/dev/heic"))
         .layer(BodyLimit::max(recipe::import::MAX_UPLOAD_BYTES).at("/recipe/import"))
         .layer(BodyLimit::max(recipes::MAX_UPLOAD_BYTES).at("/recipe/new"))
         .layer(BodyLimit::max(recipes::MAX_UPLOAD_BYTES).at("/recipe/new/multipart"))
