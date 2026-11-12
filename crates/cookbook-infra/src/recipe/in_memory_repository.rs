@@ -1,3 +1,4 @@
+use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use std::time::SystemTime;
@@ -15,7 +16,8 @@ use cookbook_domain::recipe::models::{
 use cookbook_domain::recipe::ports::{
     AddSourceDocumentsError, DeleteSourceDocumentError, GetRecipeError, GetRecipeImageError,
     GetSourceDocumentError, ListRecipeImagesError, ListRecipeRevisionsError, ListRecipesError,
-    ListSourceDocumentsError, RecipeRepository, SaveRecipeError,
+    ListSourceDocumentsError, RecipeRepository, RecipeSearchCriteria, RecipeSort, SaveRecipeError,
+    SearchRecipesError, SortDirection,
 };
 use cookbook_domain::user::models::UserId;
 
@@ -395,6 +397,64 @@ impl RecipeRepository for InMemoryRecipeRepository {
             .map_err(ListRecipesError::Storage)
     }
 
+    async fn search_recipes(
+        &self,
+        criteria: RecipeSearchCriteria,
+    ) -> Result<Vec<RecipeWithContent>, SearchRecipesError> {
+        let store = self
+            .store
+            .read()
+            .map_err(|_| SearchRecipesError::Storage(anyhow!("recipe store lock poisoned")))?;
+
+        let mut recipes = store
+            .recipes
+            .values()
+            .map(RecipeRecord::current)
+            .collect::<anyhow::Result<Vec<_>>>()
+            .map_err(SearchRecipesError::Storage)?;
+
+        let pattern = criteria
+            .pattern
+            .as_deref()
+            .map(str::trim)
+            .filter(|pattern| !pattern.is_empty())
+            .map(str::to_lowercase);
+
+        recipes.retain(|recipe| {
+            if let Some(pattern) = &pattern
+                && !recipe_matches_pattern(recipe, pattern)
+            {
+                return false;
+            }
+
+            if !criteria.categories.is_empty()
+                && !recipe
+                    .category()
+                    .is_some_and(|category| criteria.categories.contains(&category))
+            {
+                return false;
+            }
+
+            !(criteria.exclude_needs_review && recipe.needs_review())
+        });
+
+        match criteria.sort {
+            RecipeSort::LastEdited(direction) => recipes.sort_by(|a, b| {
+                let ordering = a.revision().edited_at().cmp(&b.revision().edited_at());
+
+                directed(ordering, direction)
+                    .then_with(|| title_ordering(a, b))
+                    .then_with(|| a.id().as_str().cmp(b.id().as_str()))
+            }),
+            RecipeSort::Title(direction) => recipes.sort_by(|a, b| {
+                directed(title_ordering(a, b), direction)
+                    .then_with(|| a.id().as_str().cmp(b.id().as_str()))
+            }),
+        }
+
+        Ok(recipes)
+    }
+
     async fn get_recipe_revisions(
         &self,
         id: RecipeId,
@@ -548,6 +608,44 @@ impl RecipeRepository for InMemoryRecipeRepository {
     }
 }
 
+fn directed(ordering: Ordering, direction: SortDirection) -> Ordering {
+    match direction {
+        SortDirection::Ascending => ordering,
+        SortDirection::Descending => ordering.reverse(),
+    }
+}
+
+fn title_ordering(a: &RecipeWithContent, b: &RecipeWithContent) -> Ordering {
+    a.title()
+        .as_str()
+        .to_lowercase()
+        .cmp(&b.title().as_str().to_lowercase())
+}
+
+fn recipe_matches_pattern(recipe: &RecipeWithContent, pattern: &str) -> bool {
+    let matches = |value: &str| value.to_lowercase().contains(pattern);
+
+    matches(recipe.title().as_str())
+        || recipe
+            .description()
+            .is_some_and(|description| matches(description.as_str()))
+        || recipe.bodies().any(|body| {
+            body.ingredients()
+                .iter()
+                .any(|ingredient| matches(ingredient.name().as_str()))
+                || body
+                    .steps()
+                    .iter()
+                    .any(|step| step.title().is_some_and(matches) || matches(step.instruction()))
+        })
+        || recipe.parts().iter().any(|part| {
+            matches(part.title().as_str())
+                || part
+                    .description()
+                    .is_some_and(|description| matches(description.as_str()))
+        })
+}
+
 fn validate_images(recipe_id: &RecipeId, images: &[RecipeImage]) -> Result<(), SaveRecipeError> {
     let mut ids = std::collections::HashSet::with_capacity(images.len());
 
@@ -573,7 +671,7 @@ fn validate_images(recipe_id: &RecipeId, images: &[RecipeImage]) -> Result<(), S
 
 #[cfg(test)]
 mod tests {
-    use std::time::SystemTime;
+    use std::time::{Duration, SystemTime};
 
     use super::*;
     use cookbook_domain::recipe::models::{RecipeDurations, RecipeId, RecipeScope, RecipeTitle};
@@ -634,6 +732,50 @@ mod tests {
         );
 
         RecipeWithContent::new(recipe, revision).unwrap()
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn searchable_recipe(
+        id: &str,
+        title: &str,
+        category: Option<RecipeCategory>,
+        verification: RevisionVerification,
+        edited_at: SystemTime,
+        ingredients: Vec<Ingredient>,
+        steps: Vec<RecipeStep>,
+    ) -> RecipeWithContent {
+        let recipe = recipe(id);
+        let content = RecipeContent::new_simple(
+            RecipeTitle::new(title.to_string()),
+            None,
+            None,
+            category,
+            RecipeBody::new(
+                RecipeDurations::new(None, None, None),
+                ingredients,
+                Vec::new(),
+                steps,
+            ),
+        )
+        .unwrap();
+        let revision = RecipeRevision::new(
+            RecipeRevisionId::new(format!("{id}-revision")),
+            recipe.id().clone(),
+            content,
+            recipe.author().clone(),
+            edited_at,
+            RevisionOrigin::Created,
+            verification,
+        );
+
+        RecipeWithContent::new(recipe, revision).unwrap()
+    }
+
+    fn titles(recipes: &[RecipeWithContent]) -> Vec<&str> {
+        recipes
+            .iter()
+            .map(|recipe| recipe.title().as_str())
+            .collect()
     }
 
     async fn save(repository: &InMemoryRecipeRepository, current: RecipeWithContent) {
@@ -725,6 +867,262 @@ mod tests {
         let stored = repository.get_recipes().await.unwrap();
 
         assert_eq!(stored.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn search_returns_every_recipe_by_default() {
+        let repository = InMemoryRecipeRepository::new();
+
+        save(&repository, current_recipe("soup", "Tomato Soup")).await;
+        save(&repository, current_recipe("stew", "Beef Stew")).await;
+
+        let results = repository
+            .search_recipes(RecipeSearchCriteria::default())
+            .await
+            .unwrap();
+
+        assert_eq!(titles(&results), ["Beef Stew", "Tomato Soup"]);
+    }
+
+    #[tokio::test]
+    async fn search_matches_title_ingredients_and_steps() {
+        let repository = InMemoryRecipeRepository::new();
+        save(
+            &repository,
+            searchable_recipe(
+                "soup",
+                "Tomato Soup",
+                None,
+                RevisionVerification::Verified,
+                SystemTime::UNIX_EPOCH,
+                vec![Ingredient::new(
+                    IngredientName::new("basil".to_string()),
+                    Quantity::from_text("a handful"),
+                )],
+                vec![RecipeStep::new(
+                    RecipeStepId::generate(),
+                    None,
+                    "Simmer gently.".to_string(),
+                    Vec::new(),
+                )],
+            ),
+        )
+        .await;
+
+        for pattern in ["tomato", "BASIL", "simmer"] {
+            let results = repository
+                .search_recipes(RecipeSearchCriteria {
+                    pattern: Some(pattern.to_string()),
+                    ..Default::default()
+                })
+                .await
+                .unwrap();
+
+            assert_eq!(titles(&results), ["Tomato Soup"], "pattern `{pattern}`");
+        }
+
+        let results = repository
+            .search_recipes(RecipeSearchCriteria {
+                pattern: Some("missing".to_string()),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+
+        assert!(results.is_empty());
+    }
+
+    #[tokio::test]
+    async fn search_treats_a_blank_pattern_as_no_filter() {
+        let repository = InMemoryRecipeRepository::new();
+        save(&repository, current_recipe("soup", "Soup")).await;
+
+        let results = repository
+            .search_recipes(RecipeSearchCriteria {
+                pattern: Some("   ".to_string()),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(results.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn search_filters_by_category_and_excludes_uncategorized_recipes() {
+        let repository = InMemoryRecipeRepository::new();
+        let verified = RevisionVerification::Verified;
+        save(
+            &repository,
+            searchable_recipe(
+                "soup",
+                "Soup",
+                Some(RecipeCategory::Main),
+                verified,
+                SystemTime::UNIX_EPOCH,
+                Vec::new(),
+                Vec::new(),
+            ),
+        )
+        .await;
+        save(
+            &repository,
+            searchable_recipe(
+                "cake",
+                "Cake",
+                Some(RecipeCategory::Dessert),
+                verified,
+                SystemTime::UNIX_EPOCH,
+                Vec::new(),
+                Vec::new(),
+            ),
+        )
+        .await;
+        save(
+            &repository,
+            searchable_recipe(
+                "mystery",
+                "Mystery",
+                None,
+                verified,
+                SystemTime::UNIX_EPOCH,
+                Vec::new(),
+                Vec::new(),
+            ),
+        )
+        .await;
+
+        let results = repository
+            .search_recipes(RecipeSearchCriteria {
+                categories: vec![RecipeCategory::Main],
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(titles(&results), ["Soup"]);
+    }
+
+    #[tokio::test]
+    async fn search_can_exclude_recipes_that_need_review() {
+        let repository = InMemoryRecipeRepository::new();
+        save(
+            &repository,
+            searchable_recipe(
+                "verified",
+                "Verified",
+                None,
+                RevisionVerification::Verified,
+                SystemTime::UNIX_EPOCH,
+                Vec::new(),
+                Vec::new(),
+            ),
+        )
+        .await;
+        save(
+            &repository,
+            searchable_recipe(
+                "review",
+                "Needs Review",
+                None,
+                RevisionVerification::NeedsReview,
+                SystemTime::UNIX_EPOCH,
+                Vec::new(),
+                Vec::new(),
+            ),
+        )
+        .await;
+
+        let all = repository
+            .search_recipes(RecipeSearchCriteria::default())
+            .await
+            .unwrap();
+        let verified = repository
+            .search_recipes(RecipeSearchCriteria {
+                exclude_needs_review: true,
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(all.len(), 2);
+        assert_eq!(titles(&verified), ["Verified"]);
+    }
+
+    #[tokio::test]
+    async fn search_sorts_by_latest_revision_date_in_both_directions() {
+        let repository = InMemoryRecipeRepository::new();
+        let older = SystemTime::UNIX_EPOCH;
+        let newer = SystemTime::UNIX_EPOCH + Duration::from_secs(60);
+        save(
+            &repository,
+            searchable_recipe(
+                "old",
+                "Older",
+                None,
+                RevisionVerification::Verified,
+                older,
+                Vec::new(),
+                Vec::new(),
+            ),
+        )
+        .await;
+        save(
+            &repository,
+            searchable_recipe(
+                "new",
+                "Newer",
+                None,
+                RevisionVerification::Verified,
+                newer,
+                Vec::new(),
+                Vec::new(),
+            ),
+        )
+        .await;
+
+        let newest_first = repository
+            .search_recipes(RecipeSearchCriteria {
+                sort: RecipeSort::LastEdited(SortDirection::Descending),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        let oldest_first = repository
+            .search_recipes(RecipeSearchCriteria {
+                sort: RecipeSort::LastEdited(SortDirection::Ascending),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(titles(&newest_first), ["Newer", "Older"]);
+        assert_eq!(titles(&oldest_first), ["Older", "Newer"]);
+    }
+
+    #[tokio::test]
+    async fn search_sorts_titles_case_insensitively_in_both_directions() {
+        let repository = InMemoryRecipeRepository::new();
+        save(&repository, current_recipe("pie", "apple pie")).await;
+        save(&repository, current_recipe("bread", "Banana Bread")).await;
+
+        let ascending = repository
+            .search_recipes(RecipeSearchCriteria {
+                sort: RecipeSort::Title(SortDirection::Ascending),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        let descending = repository
+            .search_recipes(RecipeSearchCriteria {
+                sort: RecipeSort::Title(SortDirection::Descending),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(titles(&ascending), ["apple pie", "Banana Bread"]);
+        assert_eq!(titles(&descending), ["Banana Bread", "apple pie"]);
     }
 
     #[tokio::test]

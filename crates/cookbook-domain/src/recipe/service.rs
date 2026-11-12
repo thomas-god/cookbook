@@ -16,8 +16,9 @@ use crate::recipe::ports::{
     GetRecipeHistoryError, GetRecipeImageError, GetRecipeImagesError, GetRecipeSourceDocumentError,
     GetRecipeSourceDocumentsError, GetRecipesError, GetSourceDocumentError, ListRecipeImagesError,
     ListSourceDocumentsError, RecipeRepository, RecipeService, RestoreRecipeRevisionError,
-    RestoreRecipeRevisionRequest, SaveRecipeError, UpdateRecipeError, UpdateRecipeRequest,
-    UpdateRecipeScopeError, UpdateRecipeScopeRequest,
+    RestoreRecipeRevisionRequest, SaveRecipeError, SearchRecipesError, SearchRecipesQuery,
+    SearchRecipesResult, UpdateRecipeError, UpdateRecipeRequest, UpdateRecipeScopeError,
+    UpdateRecipeScopeRequest,
 };
 use crate::user::models::UserId;
 
@@ -365,6 +366,33 @@ where
             .collect())
     }
 
+    async fn search_recipes(
+        &self,
+        query: SearchRecipesQuery,
+        viewer: UserId,
+    ) -> Result<SearchRecipesResult, SearchRecipesError> {
+        let SearchRecipesQuery {
+            criteria,
+            offset,
+            limit,
+        } = query;
+
+        let recipes = self.repository.search_recipes(criteria).await?;
+
+        let visible: Vec<_> = recipes
+            .into_iter()
+            .filter(|recipe| recipe.can_view(&viewer))
+            .collect();
+        let total = visible.len();
+        let recipes = visible
+            .into_iter()
+            .skip(offset)
+            .take(limit.unwrap_or(usize::MAX))
+            .collect();
+
+        Ok(SearchRecipesResult { recipes, total })
+    }
+
     async fn get_recipe(
         &self,
         id: RecipeId,
@@ -634,11 +662,14 @@ mod tests {
 
     use super::*;
     use crate::recipe::models::{
-        RecipeBody, RecipeContent, RecipeDurations, RecipeImageId, RecipeImageMetadata, RecipePart,
-        RecipePartId, RecipePartTitle, RecipeRevision, RecipeScope, RecipeStep, RecipeStepId,
-        RecipeTitle, RevisionMessage,
+        RecipeBody, RecipeCategory, RecipeContent, RecipeDurations, RecipeImageId,
+        RecipeImageMetadata, RecipePart, RecipePartId, RecipePartTitle, RecipeRevision,
+        RecipeScope, RecipeStep, RecipeStepId, RecipeTitle, RevisionMessage,
     };
-    use crate::recipe::ports::{MockRecipeRepository, SaveRecipeError, UpdateRecipeRequest};
+    use crate::recipe::ports::{
+        MockRecipeRepository, RecipeSearchCriteria, SaveRecipeError, SearchRecipesQuery,
+        UpdateRecipeRequest,
+    };
     use crate::user::models::UserId;
 
     const EDIT_TIME_SECS: u64 = 1_700_000_000;
@@ -1697,6 +1728,70 @@ mod tests {
         let ids: Vec<_> = recipes.iter().map(|recipe| recipe.id().as_str()).collect();
 
         assert_eq!(ids, ["viewable", "editable", "mine"]);
+    }
+
+    #[tokio::test]
+    async fn search_recipes_filters_visibility_and_paginates() {
+        let mut repository = MockRecipeRepository::new();
+        repository.expect_search_recipes().times(1).returning(|_| {
+            Ok(vec![
+                current_recipe_with_scope("private", "Private", "author-1", RecipeScope::Private),
+                current_recipe_with_scope(
+                    "viewable",
+                    "Viewable",
+                    "author-1",
+                    RecipeScope::Viewable,
+                ),
+                current_recipe_with_scope(
+                    "editable",
+                    "Editable",
+                    "author-1",
+                    RecipeScope::Editable,
+                ),
+            ])
+        });
+
+        let service = RecipeServiceImpl::new(repository, FixedClock::new());
+        let result = service
+            .search_recipes(
+                SearchRecipesQuery {
+                    criteria: RecipeSearchCriteria::default(),
+                    offset: 1,
+                    limit: Some(1),
+                },
+                UserId::new("viewer".to_string()),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(result.total, 2);
+        let ids: Vec<_> = result
+            .recipes
+            .iter()
+            .map(|recipe| recipe.id().as_str())
+            .collect();
+        assert_eq!(ids, ["editable"]);
+    }
+
+    #[tokio::test]
+    async fn search_recipes_forwards_criteria_and_maps_failures() {
+        let mut repository = MockRecipeRepository::new();
+        repository
+            .expect_search_recipes()
+            .times(1)
+            .withf(|criteria: &RecipeSearchCriteria| {
+                criteria.categories == vec![RecipeCategory::Main] && criteria.exclude_needs_review
+            })
+            .returning(|_| Err(SearchRecipesError::Storage(anyhow!("boom"))));
+
+        let service = RecipeServiceImpl::new(repository, FixedClock::new());
+        let mut query = SearchRecipesQuery::default();
+        query.criteria.categories = vec![RecipeCategory::Main];
+        query.criteria.exclude_needs_review = true;
+
+        let result = service.search_recipes(query, user_id()).await;
+
+        assert!(matches!(result, Err(SearchRecipesError::Storage(_))));
     }
 
     #[tokio::test]

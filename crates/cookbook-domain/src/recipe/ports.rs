@@ -2,8 +2,8 @@ use std::fmt;
 use std::future::Future;
 
 use crate::recipe::models::{
-    NewRecipeImage, NewRecipeSourceDocument, Recipe, RecipeContent, RecipeId, RecipeImage,
-    RecipeImageId, RecipeImageMetadata, RecipeRevision, RecipeRevisionId, RecipeScope,
+    NewRecipeImage, NewRecipeSourceDocument, Recipe, RecipeCategory, RecipeContent, RecipeId,
+    RecipeImage, RecipeImageId, RecipeImageMetadata, RecipeRevision, RecipeRevisionId, RecipeScope,
     RecipeSourceDocument, RecipeSourceDocumentId, RecipeSourceDocumentSummary, RecipeStructureKind,
     RecipeWithContent, RevisionMessage, RevisionVerification,
 };
@@ -58,6 +58,67 @@ pub struct RestoreRecipeRevisionRequest {
     pub latest_revision: RecipeRevisionId,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecipeSearchCriteria {
+    pub pattern: Option<String>,
+    /// An empty list means no category filter.
+    pub categories: Vec<RecipeCategory>,
+    pub exclude_needs_review: bool,
+    pub sort: RecipeSort,
+}
+
+impl Default for RecipeSearchCriteria {
+    fn default() -> Self {
+        Self {
+            pattern: None,
+            categories: Vec::new(),
+            exclude_needs_review: false,
+            sort: RecipeSort::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SearchRecipesQuery {
+    pub criteria: RecipeSearchCriteria,
+    pub offset: usize,
+    pub limit: Option<usize>,
+}
+
+impl Default for SearchRecipesQuery {
+    fn default() -> Self {
+        Self {
+            criteria: RecipeSearchCriteria::default(),
+            offset: 0,
+            limit: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct SearchRecipesResult {
+    pub recipes: Vec<RecipeWithContent>,
+    pub total: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SortDirection {
+    Ascending,
+    Descending,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RecipeSort {
+    LastEdited(SortDirection),
+    Title(SortDirection),
+}
+
+impl Default for RecipeSort {
+    fn default() -> Self {
+        Self::LastEdited(SortDirection::Descending)
+    }
+}
+
 /// Inbound (driving) port for the recipe domain service.
 pub trait RecipeService: Clone + Send + Sync + 'static {
     fn create_verified_recipe(
@@ -94,6 +155,12 @@ pub trait RecipeService: Clone + Send + Sync + 'static {
         &self,
         viewer: UserId,
     ) -> impl Future<Output = Result<Vec<RecipeWithContent>, GetRecipesError>> + Send;
+
+    fn search_recipes(
+        &self,
+        query: SearchRecipesQuery,
+        viewer: UserId,
+    ) -> impl Future<Output = Result<SearchRecipesResult, SearchRecipesError>> + Send;
 
     fn get_recipe(
         &self,
@@ -184,6 +251,11 @@ pub trait RecipeRepository: Clone + Send + Sync + 'static {
     fn get_recipes(
         &self,
     ) -> impl Future<Output = Result<Vec<RecipeWithContent>, ListRecipesError>> + Send;
+
+    fn search_recipes(
+        &self,
+        criteria: RecipeSearchCriteria,
+    ) -> impl Future<Output = Result<Vec<RecipeWithContent>, SearchRecipesError>> + Send;
 
     fn get_recipe_revisions(
         &self,
@@ -329,6 +401,21 @@ impl fmt::Display for GetRecipesError {
 }
 
 impl std::error::Error for GetRecipesError {}
+
+#[derive(Debug)]
+pub enum SearchRecipesError {
+    Storage(anyhow::Error),
+}
+
+impl fmt::Display for SearchRecipesError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Storage(reason) => write!(f, "failed to search recipes: {reason}"),
+        }
+    }
+}
+
+impl std::error::Error for SearchRecipesError {}
 
 #[derive(Debug)]
 pub enum GetRecipeHistoryError {
@@ -642,6 +729,12 @@ mockall::mock! {
             viewer: UserId,
         ) -> Result<Vec<RecipeWithContent>, GetRecipesError>;
 
+        async fn search_recipes(
+            &self,
+            query: SearchRecipesQuery,
+            viewer: UserId,
+        ) -> Result<SearchRecipesResult, SearchRecipesError>;
+
         async fn get_recipe(
             &self,
             id: RecipeId,
@@ -726,6 +819,11 @@ mockall::mock! {
         ) -> Result<Option<RecipeWithContent>, GetRecipeError>;
 
         async fn get_recipes(&self) -> Result<Vec<RecipeWithContent>, ListRecipesError>;
+
+        async fn search_recipes(
+            &self,
+            criteria: RecipeSearchCriteria,
+        ) -> Result<Vec<RecipeWithContent>, SearchRecipesError>;
 
         async fn get_recipe_revisions(
             &self,
