@@ -170,3 +170,22 @@ form_step_title = Step title (optional)
     .placeholder = Make the dough
 form_instruction = Instruction
     .placeholder = Mix the flour and butter until crumbly.
+
+form_parts = Parts
+form_add_part = Add part
+form_part_title = Part title
+    .placeholder = Pastry cream
+form_part_description = Part description (optional)
+form_insert_part_below = Add part below
+form_move_part_up = Move part up
+form_move_part_down = Move part down
+
+recipe_ingredient_conflicts_notice = This recipe has ingredients with conflicting quantities. Review the duplicated ingredient and adjust them when editing.
+
+form_convert_to_multipart = Convert to a multipart recipe
+form_convert_to_simple = Merge parts into a simple recipe
+form_recipe_type = Recipe type
+form_recipe_type_simple = Simple recipe
+form_recipe_type_multipart = Multipart recipe
+form_new_multipart_recipe = New multipart recipe
+form_new_simple_recipe = New simple recipe

@@ -170,3 +170,22 @@ form_step_title = Titre de l'étape (facultatif)
     .placeholder = Préparer la pâte
 form_instruction = Instruction
     .placeholder = Mélangez la farine et le beurre jusqu'à obtenir une texture sableuse.
+
+form_parts = Parties
+form_add_part = Ajouter une partie
+form_part_title = Titre de la partie
+    .placeholder = Crème pâtissière
+form_part_description = Description de la partie (facultative)
+form_insert_part_below = Ajouter une partie en dessous
+form_move_part_up = Déplacer la partie vers le haut
+form_move_part_down = Déplacer la partie vers le bas
+
+recipe_ingredient_conflicts_notice = Cette recette contient des ingrédients en double. Vérifiez les ingrédients en double et ajustez les quantités.
+
+form_convert_to_multipart = Convertir en recette à plusieurs parties
+form_convert_to_simple = Fusionner les parties en une seule recette
+form_recipe_type = Type de recette
+form_recipe_type_simple = Recette simple
+form_recipe_type_multipart = Recette en plusieurs parties
+form_new_multipart_recipe = Nouvelle recette en plusieurs parties
+form_new_simple_recipe = Nouvelle recette simple

@@ -7,7 +7,8 @@ use cookbook_domain::recipe::models::{
 };
 use cookbook_domain::recipe::ports::{
     AddRecipeSourceImagesError, AddRecipeSourceImagesRequest, DeleteRecipeSourceImageError,
-    RecipeService, UpdateRecipeError, UpdateRecipeScopeError, UpdateRecipeScopeRequest,
+    RecipeService, UpdateRecipeError, UpdateRecipeRequest, UpdateRecipeScopeError,
+    UpdateRecipeScopeRequest,
 };
 use cookbook_domain::user::models::UserId;
 use cookbook_infra::auth::ports::UserRepository;
@@ -23,16 +24,19 @@ use topcoat::{
         response::Response,
         route,
     },
-    view::{View, view},
+    view::{View, attributes, view},
 };
 
 use crate::{
     app::{AppRecipeService, AppUserRepository, auth},
     components::{
-        base::card::{card, card_content, card_header, card_title},
+        base::{
+            button::button,
+            card::{card, card_content, card_header, card_title},
+        },
         recipe::{
             category::category_label,
-            recipe_form::{RecipeFormMode, read_recipe_form, recipe_form},
+            recipe_form::{LATEST_REVISION_FIELD, RecipeFormMode, read_recipe_form, recipe_form},
             recipe_images::recipe_image_gallery,
             recipe_scope_form::recipe_scope_form,
             recipe_view::recipe_view,
@@ -209,11 +213,13 @@ pub async fn recipe_detail(cx: &Cx) -> Result<impl View> {
                 }
             </div>
 
-            recipe_image_gallery(
-                recipe_id: recipe.id().as_str(),
-                image_ids: recipe.content().images(),
-                images: &images
-            )
+            if let Some(body) = recipe.content().simple_body() {
+                recipe_image_gallery(
+                    recipe_id: recipe.id().as_str(),
+                    image_ids: body.images(),
+                    images: &images
+                )
+            }
             recipe_view(
                 recipe_id: recipe.id().as_str(),
                 content: recipe.content(),
@@ -281,12 +287,52 @@ pub async fn edit_recipe(cx: &Cx) -> Result<impl View> {
     } else {
         t!(form_edit_recipe).resolve(cx).into_owned()
     };
+    let latest_revision = recipe.revision().id().as_str().to_string();
+    let (conversion_action, conversion_label, recipe_type_label) =
+        if recipe.content().is_multipart() {
+            (
+                href!(convert_recipe_to_simple, RecipeId(recipe_id.as_str())).resolve(cx),
+                t!(form_convert_to_simple).resolve(cx).into_owned(),
+                t!(form_recipe_type_multipart).resolve(cx).into_owned(),
+            )
+        } else {
+            (
+                href!(convert_recipe_to_multipart, RecipeId(recipe_id.as_str())).resolve(cx),
+                t!(form_convert_to_multipart).resolve(cx).into_owned(),
+                t!(form_recipe_type_simple).resolve(cx).into_owned(),
+            )
+        };
+    // TODO: update this warning live as ingredient rows change. It currently
+    // reflects the loaded recipe and only clears after the edited recipe is saved.
+    let has_ingredient_conflicts = recipe.bodies().any(|body| body.has_ingredient_conflicts());
 
     Ok(view! {
         <div class="flex flex-col gap-6">
+            if has_ingredient_conflicts {
+                <p
+                    role="status"
+                    class="rounded-lg border border-warning/40 bg-warning/10 px-4 py-3 text-sm text-warning-foreground"
+                >
+                    (t!(recipe_ingredient_conflicts_notice))
+                </p>
+            }
             card(
                 card_header(card_title((form_title)))
                 card_content(recipe_form(mode: mode))
+            )
+            card(
+                card_header(card_title((t!(form_recipe_type))))
+                card_content(
+                    <form method="post" action=(conversion_action) class="flex flex-col gap-3">
+                        <input
+                            type="hidden"
+                            name=(LATEST_REVISION_FIELD)
+                            value=(latest_revision)
+                        >
+                        <p class="text-sm text-muted-foreground">(recipe_type_label)</p>
+                        button(attrs: attributes! { type="submit" }, (conversion_label))
+                    </form>
+                )
             )
             card(
                 card_header(card_title((t!(source_images_heading))))
@@ -327,6 +373,93 @@ pub async fn update_recipe(cx: &Cx, mut multipart: Multipart) -> Result<SeeOther
         }
         Err(error) => Err(error.into()),
     }
+}
+
+#[route(POST "./{recipe_id}/convert-to-multipart")]
+pub async fn convert_recipe_to_multipart(
+    cx: &Cx,
+    Form(form): Form<Vec<(String, String)>>,
+) -> Result<SeeOther> {
+    convert_recipe_type(cx, form, true).await
+}
+
+#[route(POST "./{recipe_id}/convert-to-simple")]
+pub async fn convert_recipe_to_simple(
+    cx: &Cx,
+    Form(form): Form<Vec<(String, String)>>,
+) -> Result<SeeOther> {
+    convert_recipe_type(cx, form, false).await
+}
+
+async fn convert_recipe_type(
+    cx: &Cx,
+    form: Vec<(String, String)>,
+    multipart: bool,
+) -> Result<SeeOther> {
+    let user = auth::require_user(cx)?;
+    let recipe_id = path_param::<RecipeId>(cx).to_string();
+    let latest_revision = parse_latest_revision_form(form)?;
+    let recipe_service: &AppRecipeService = app_context(cx);
+    let recipe = recipe_service
+        .get_recipe(RecipeIdValue::new(recipe_id.clone()), user.id().clone())
+        .await?
+        .ok_or_not_found()?;
+
+    if !recipe.can_edit(user.id()) {
+        return Err(forbidden().into());
+    }
+
+    let content = if multipart {
+        recipe.content().clone().into_multipart()
+    } else {
+        recipe.content().clone().into_simple()
+    };
+
+    match recipe_service
+        .update_recipe(UpdateRecipeRequest {
+            id: RecipeIdValue::new(recipe_id.clone()),
+            content,
+            editor: user.id().clone(),
+            latest_revision,
+            message: None,
+            new_images: Vec::new(),
+        })
+        .await
+    {
+        Ok(_) => Ok(see_other(
+            href!(edit_recipe, RecipeId(recipe_id.as_str())).resolve(cx),
+        )),
+        Err(UpdateRecipeError::Conflict) => {
+            Err(bad_request(t!(recipe_conflict).resolve(cx)).into())
+        }
+        Err(UpdateRecipeError::NotFound) => Err(not_found().into()),
+        Err(UpdateRecipeError::Forbidden) => Err(forbidden().into()),
+        Err(UpdateRecipeError::InvalidImageReference) => {
+            Err(bad_request(t!(recipe_image_invalid_target).resolve(cx)).into())
+        }
+        Err(error) => Err(error.into()),
+    }
+}
+
+fn parse_latest_revision_form(pairs: Vec<(String, String)>) -> Result<RecipeRevisionId> {
+    let mut latest_revision = None;
+
+    for (key, value) in pairs {
+        if key != LATEST_REVISION_FIELD {
+            return Err(bad_request(format!("unknown form field `{key}`")).into());
+        }
+
+        if latest_revision.replace(value).is_some() {
+            return Err(bad_request("duplicate latest revision").into());
+        }
+    }
+
+    let latest_revision = latest_revision
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| -> topcoat::Error { bad_request("latest revision is required").into() })?;
+
+    Ok(RecipeRevisionId::new(latest_revision))
 }
 
 #[route(POST "./{recipe_id}/scope")]
@@ -683,11 +816,13 @@ pub async fn recipe_revision(cx: &Cx) -> Result<impl View> {
                 </p>
             </div>
 
-            recipe_image_gallery(
-                recipe_id: recipe.id().as_str(),
-                image_ids: revision.content().images(),
-                images: &images
-            )
+            if let Some(body) = revision.content().simple_body() {
+                recipe_image_gallery(
+                    recipe_id: recipe.id().as_str(),
+                    image_ids: body.images(),
+                    images: &images
+                )
+            }
             recipe_view(
                 recipe_id: recipe.id().as_str(),
                 content: revision.content(),

@@ -1,6 +1,8 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
-use cookbook_domain::recipe::models::{Quantity, RecipeContent, RecipeImageMetadata, Unit};
+use cookbook_domain::recipe::models::{
+    Quantity, RecipeBody, RecipeContent, RecipeImageMetadata, Unit,
+};
 use topcoat::{
     Result,
     context::Cx,
@@ -10,6 +12,7 @@ use topcoat::{
 
 use crate::{
     app::recipes::{ImageId, RecipeId, recipe_image},
+    components::recipe::recipe_images::recipe_image_gallery,
     t,
 };
 
@@ -45,7 +48,7 @@ fn unit_takes_optional_plural(unit: &Unit) -> bool {
     )
 }
 
-fn quantity_label(cx: &Cx, quantity: &Quantity) -> String {
+pub(crate) fn quantity_label(cx: &Cx, quantity: &Quantity) -> String {
     match quantity {
         Quantity::Measured { value, unit } => {
             let suffix = if *value != 1.0 && unit_takes_optional_plural(unit) {
@@ -68,12 +71,62 @@ pub async fn recipe_view(
     content: &RecipeContent,
     images: &[RecipeImageMetadata],
 ) -> Result<impl View> {
-    let mut ingredients: Vec<_> = content
+    Ok(view! {
+        cx =>
+        if let Some(body) = content.simple_body() {
+            recipe_body_view(recipe_id: recipe_id, body: body, images: images)
+        } else {
+            for part in content.parts() {
+                <section class="flex flex-col gap-4">
+                    <div>
+                        <h3 class="text-xl font-semibold">(part.title().as_str())</h3>
+                        if let Some(description) = part.description() {
+                            <p class="mt-2 whitespace-pre-line text-sm text-muted-foreground">
+                                (description.as_str())
+                            </p>
+                        }
+                    </div>
+                    recipe_image_gallery(
+                        recipe_id: recipe_id,
+                        image_ids: part.body().images(),
+                        images: images
+                    )
+                    recipe_body_view(
+                        recipe_id: recipe_id,
+                        body: part.body(),
+                        images: images
+                    )
+                </section>
+            }
+        }
+    })
+}
+
+/// Read-only rendering of one recipe body's ingredients and steps.
+#[component]
+async fn recipe_body_view(
+    cx: &Cx,
+    recipe_id: &str,
+    body: &RecipeBody,
+    images: &[RecipeImageMetadata],
+) -> Result<impl View> {
+    let mut ingredients: Vec<_> = body
         .ingredients()
         .iter()
-        .map(|(name, quantity)| (name.as_str().to_string(), quantity_label(cx, quantity)))
+        .map(|ingredient| {
+            (
+                ingredient.name().as_str().to_string(),
+                quantity_label(cx, ingredient.quantity()),
+            )
+        })
         .collect();
     ingredients.sort_by(|left, right| left.0.cmp(&right.0));
+
+    let conflicts: HashSet<&str> = body
+        .ingredient_conflicts()
+        .into_iter()
+        .map(|name| name.as_str())
+        .collect();
 
     let fallback_alt = t!(recipe_image_alt).resolve(cx).into_owned();
     let images_by_id: HashMap<&str, &RecipeImageMetadata> = images
@@ -82,7 +135,7 @@ pub async fn recipe_view(
         .collect();
     let mut step_images: HashMap<String, Vec<StepImageView>> = HashMap::new();
 
-    for step in content.steps() {
+    for step in body.steps() {
         let images = step
             .images()
             .iter()
@@ -104,6 +157,15 @@ pub async fn recipe_view(
     }
 
     Ok(view! {
+        if !conflicts.is_empty() {
+            <p
+                role="status"
+                class="rounded-lg border border-warning/40 bg-warning/10 px-4 py-3 text-sm text-warning-foreground"
+            >
+                (t!(recipe_ingredient_conflicts_notice))
+            </p>
+        }
+
         <section>
             <h3 class="mb-3 text-lg font-semibold">(t!(recipe_ingredients))</h3>
             <ul class="flex flex-col gap-2">
@@ -121,7 +183,7 @@ pub async fn recipe_view(
         <section>
             <h3 class="mb-3 text-lg font-semibold">(t!(recipe_steps))</h3>
             <ol class="flex flex-col gap-4">
-                for (index, step) in content.steps().iter().enumerate() {
+                for (index, step) in body.steps().iter().enumerate() {
                     <li class="rounded-lg border border-border bg-card p-4 text-sm">
                         <h4 class="font-semibold">
                             if let Some(title) = step.title() {

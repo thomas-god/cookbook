@@ -2,9 +2,10 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 
 use cookbook_domain::recipe::{
     models::{
-        DurationMinutes, IngredientName, NewRecipeImage, Quantity, RecipeCategory, RecipeContent,
-        RecipeDescription, RecipeDurations, RecipeId as RecipeIdValue, RecipeImageId,
-        RecipeImageMetadata, RecipeRevisionId, RecipeStep, RecipeStepId, RecipeTitle,
+        DurationMinutes, Ingredient, IngredientName, NewRecipeImage, Quantity, RecipeBody,
+        RecipeCategory, RecipeContent, RecipeDescription, RecipeDurations,
+        RecipeId as RecipeIdValue, RecipeImageId, RecipeImageMetadata, RecipePart, RecipePartId,
+        RecipePartTitle, RecipeRevisionId, RecipeStep, RecipeStepId, RecipeTitle,
         RecipeWithContent, RevisionMessage, RevisionVerification, Servings, Unit,
     },
     ports::{CreateRecipeRequest, RecipeService, UpdateRecipeRequest},
@@ -47,6 +48,7 @@ const SELECT_CLASS: &str = "h-9 w-full rounded-lg border border-border bg-transp
 const TITLE_FIELD: &str = "title";
 const DESCRIPTION_FIELD: &str = "description";
 const CATEGORY_FIELD: &str = "category";
+const RECIPE_TYPE_FIELD: &str = "recipe_type";
 const PREPARATION_FIELD: &str = "preparation";
 const REST_FIELD: &str = "rest";
 const COOKING_FIELD: &str = "cooking";
@@ -54,7 +56,7 @@ const SERVINGS_TYPE_FIELD: &str = "servings_type";
 const SERVINGS_COUNT_FIELD: &str = "servings_count";
 const SERVINGS_LABEL_FIELD: &str = "servings_label";
 const MESSAGE_FIELD: &str = "message";
-const LATEST_REVISION_FIELD: &str = "latest_revision";
+pub(crate) const LATEST_REVISION_FIELD: &str = "latest_revision";
 const IMAGES_FIELD: &str = "images";
 const IMAGE_IDS_FIELD: &str = "image_ids";
 
@@ -116,6 +118,21 @@ async fn form_remove_step_image(ids: Vec<String>, id: String) -> Result<Vec<Stri
     Ok(remove_step_image_id(ids, &id))
 }
 
+#[procedure]
+async fn form_insert_part(order: Vec<usize>, index: usize, key: usize) -> Result<Vec<usize>> {
+    Ok(insert_step_key(order, index, key))
+}
+
+#[procedure]
+async fn form_remove_part(order: Vec<usize>, key: usize) -> Result<Vec<usize>> {
+    Ok(remove_step_key(order, key))
+}
+
+#[procedure]
+async fn form_move_part(order: Vec<usize>, key: usize, up: bool) -> Result<Vec<usize>> {
+    Ok(move_step_key(order, key, up))
+}
+
 /// The fields of one ingredient row on the wire.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 enum IngredientField {
@@ -139,8 +156,12 @@ impl IngredientField {
         }
     }
 
-    fn key(self, row: usize) -> String {
-        format!("ingredients[{row}][{}]", self.wire_name())
+    fn key(self, row: usize, prefix: &str) -> String {
+        if prefix.is_empty() {
+            format!("ingredients[{row}][{}]", self.wire_name())
+        } else {
+            format!("{prefix}[ingredients][{row}][{}]", self.wire_name())
+        }
     }
 
     fn parse(wire_field: &str) -> Option<Self> {
@@ -177,8 +198,12 @@ impl StepField {
         }
     }
 
-    fn key(self, row: usize) -> String {
-        format!("steps[{row}][{}]", self.wire_name())
+    fn key(self, row: usize, prefix: &str) -> String {
+        if prefix.is_empty() {
+            format!("steps[{row}][{}]", self.wire_name())
+        } else {
+            format!("{prefix}[steps][{row}][{}]", self.wire_name())
+        }
     }
 
     fn parse(wire_field: &str) -> Option<Self> {
@@ -193,29 +218,77 @@ impl StepField {
     }
 }
 
+/// The fields of one multipart recipe part on the wire.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum PartField {
+    Id,
+    Title,
+    Description,
+    Preparation,
+    Rest,
+    Cooking,
+}
+
+impl PartField {
+    const fn wire_name(self) -> &'static str {
+        match self {
+            Self::Id => "id",
+            Self::Title => "title",
+            Self::Description => "description",
+            Self::Preparation => "preparation",
+            Self::Rest => "rest",
+            Self::Cooking => "cooking",
+        }
+    }
+
+    fn key(self, row: usize) -> String {
+        format!("parts[{row}][{}]", self.wire_name())
+    }
+
+    fn parse(wire_field: &str) -> Option<Self> {
+        match wire_field {
+            "id" => Some(Self::Id),
+            "title" => Some(Self::Title),
+            "description" => Some(Self::Description),
+            "preparation" => Some(Self::Preparation),
+            "rest" => Some(Self::Rest),
+            "cooking" => Some(Self::Cooking),
+            // Repeated image id fields are collected separately.
+            "images" | "image_ids" => None,
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RecipeFormType {
+    Simple,
+    Multipart,
+}
+
+impl RecipeFormType {
+    fn parse(value: &str) -> Result<Self> {
+        match value.trim() {
+            "" | "simple" => Ok(Self::Simple),
+            "multipart" => Ok(Self::Multipart),
+            other => Err(invalid(format!("unknown recipe type `{other}`"))),
+        }
+    }
+}
+
 #[derive(Debug)]
-struct RecipeFormData {
-    title: String,
-    description: Option<String>,
-    servings: Option<Servings>,
-    category: Option<RecipeCategory>,
+struct BodyFormData {
     preparation: Option<usize>,
     rest: Option<usize>,
     cooking: Option<usize>,
     ingredients: Vec<IngredientFormData>,
     images: Vec<RecipeImageId>,
     steps: Vec<StepFormData>,
-    message: Option<String>,
-    latest_revision: Option<String>,
 }
 
-impl RecipeFormData {
-    fn into_content(self) -> RecipeContent {
-        RecipeContent::new(
-            RecipeTitle::new(self.title),
-            self.description.map(RecipeDescription::new),
-            self.servings,
-            self.category,
+impl BodyFormData {
+    fn into_body(self) -> RecipeBody {
+        RecipeBody::new(
             RecipeDurations::new(
                 self.preparation.map(DurationMinutes::new),
                 self.rest.map(DurationMinutes::new),
@@ -223,7 +296,9 @@ impl RecipeFormData {
             ),
             self.ingredients
                 .into_iter()
-                .map(|ingredient| (IngredientName::new(ingredient.name), ingredient.quantity))
+                .map(|ingredient| {
+                    Ingredient::new(IngredientName::new(ingredient.name), ingredient.quantity)
+                })
                 .collect(),
             self.images,
             self.steps
@@ -231,6 +306,85 @@ impl RecipeFormData {
                 .map(|step| RecipeStep::new(step.id, step.title, step.instruction, step.images))
                 .collect(),
         )
+    }
+}
+
+#[derive(Debug)]
+struct PartFormData {
+    row: usize,
+    id: RecipePartId,
+    title: String,
+    description: Option<String>,
+    body: BodyFormData,
+}
+
+#[derive(Debug)]
+enum StructureFormData {
+    Simple(BodyFormData),
+    Multipart(Vec<PartFormData>),
+}
+
+#[derive(Debug)]
+struct RecipeFormData {
+    recipe_type: RecipeFormType,
+    title: String,
+    description: Option<String>,
+    servings: Option<Servings>,
+    category: Option<RecipeCategory>,
+    structure: StructureFormData,
+    message: Option<String>,
+    latest_revision: Option<String>,
+}
+
+impl RecipeFormData {
+    #[cfg(test)]
+    fn simple_body(&self) -> &BodyFormData {
+        match &self.structure {
+            StructureFormData::Simple(body) => body,
+            StructureFormData::Multipart(_) => panic!("expected a simple recipe form"),
+        }
+    }
+
+    fn into_content(self) -> Result<RecipeContent> {
+        let description = self.description.map(RecipeDescription::new);
+        let type_matches = matches!(
+            (self.recipe_type, &self.structure),
+            (RecipeFormType::Simple, StructureFormData::Simple(_))
+                | (RecipeFormType::Multipart, StructureFormData::Multipart(_))
+        );
+
+        if !type_matches {
+            return Err(invalid("the recipe type does not match its contents"));
+        }
+
+        let content = match self.structure {
+            StructureFormData::Simple(body) => RecipeContent::new_simple(
+                RecipeTitle::new(self.title),
+                description,
+                self.servings,
+                self.category,
+                body.into_body(),
+            ),
+            StructureFormData::Multipart(parts) => RecipeContent::new_multipart(
+                RecipeTitle::new(self.title),
+                description,
+                self.servings,
+                self.category,
+                parts
+                    .into_iter()
+                    .map(|part| {
+                        RecipePart::new(
+                            part.id,
+                            RecipePartTitle::new(part.title),
+                            part.description.map(RecipeDescription::new),
+                            part.body.into_body(),
+                        )
+                    })
+                    .collect(),
+            ),
+        };
+
+        content.map_err(|error| invalid(error.to_string()))
     }
 }
 
@@ -285,6 +439,42 @@ struct StepListState {
     insert_images: Signal<Vec<String>>,
 }
 
+/// Signals shared by every part row in a multipart form.
+#[derive(Clone)]
+struct PartListState {
+    order: Signal<Vec<usize>>,
+    next_key: Signal<usize>,
+}
+
+#[derive(Clone, Default)]
+struct BodyInitial {
+    preparation: String,
+    rest: String,
+    cooking: String,
+    ingredients: Vec<IngredientInitial>,
+    steps: Vec<StepInitial>,
+    images: Vec<FormImageInitial>,
+}
+
+#[derive(Clone, Default)]
+struct PartInitial {
+    id: String,
+    title: String,
+    description: String,
+    body: BodyInitial,
+}
+
+enum StructureInitial {
+    Simple(BodyInitial),
+    Multipart(Vec<PartInitial>),
+}
+
+impl Default for StructureInitial {
+    fn default() -> Self {
+        Self::Simple(BodyInitial::default())
+    }
+}
+
 #[derive(Default)]
 struct FormInitial {
     title: String,
@@ -293,12 +483,7 @@ struct FormInitial {
     servings_type: String,
     servings_count: String,
     servings_label: String,
-    preparation: String,
-    rest: String,
-    cooking: String,
-    ingredients: Vec<IngredientInitial>,
-    steps: Vec<StepInitial>,
-    images: Vec<FormImageInitial>,
+    structure: StructureInitial,
 }
 
 fn form_image_initial(image: &RecipeImageMetadata, recipe_id: &str, cx: &Cx) -> FormImageInitial {
@@ -314,20 +499,95 @@ fn form_image_initial(image: &RecipeImageMetadata, recipe_id: &str, cx: &Cx) -> 
     }
 }
 
+fn body_field(prefix: &str, wire_field: &str) -> String {
+    if prefix.is_empty() {
+        wire_field.to_string()
+    } else {
+        format!("{prefix}[{wire_field}]")
+    }
+}
+
+impl BodyInitial {
+    fn from_body(
+        body: &RecipeBody,
+        image_by_id: &HashMap<&str, &RecipeImageMetadata>,
+        recipe_id: &str,
+        cx: &Cx,
+    ) -> Self {
+        let mut ingredients: Vec<_> = body
+            .ingredients()
+            .iter()
+            .map(|ingredient| ingredient_initial(ingredient.name().as_str(), ingredient.quantity()))
+            .collect();
+        ingredients.sort_by(|left, right| left.name.cmp(&right.name));
+
+        Self {
+            preparation: body
+                .durations()
+                .preparation()
+                .map(|duration| duration.as_minutes().to_string())
+                .unwrap_or_default(),
+            rest: body
+                .durations()
+                .rest()
+                .map(|duration| duration.as_minutes().to_string())
+                .unwrap_or_default(),
+            cooking: body
+                .durations()
+                .cooking()
+                .map(|duration| duration.as_minutes().to_string())
+                .unwrap_or_default(),
+            ingredients,
+            steps: body
+                .steps()
+                .iter()
+                .map(|step| StepInitial {
+                    id: step.id().as_str().to_string(),
+                    title: step.title().unwrap_or_default().to_string(),
+                    instruction: step.instruction().to_string(),
+                    images: step
+                        .images()
+                        .iter()
+                        .filter(|image_id| image_by_id.contains_key(image_id.as_str()))
+                        .map(|image_id| image_id.as_str().to_string())
+                        .collect(),
+                })
+                .collect(),
+            images: body
+                .images()
+                .iter()
+                .filter_map(|image_id| image_by_id.get(image_id.as_str()).copied())
+                .map(|image| form_image_initial(image, recipe_id, cx))
+                .collect(),
+        }
+    }
+}
+
 impl FormInitial {
+    #[cfg(test)]
+    fn simple_body(&self) -> &BodyInitial {
+        match &self.structure {
+            StructureInitial::Simple(body) => body,
+            StructureInitial::Multipart(_) => panic!("expected a simple recipe form"),
+        }
+    }
+
+    fn new(multipart: bool) -> Self {
+        let mut initial = Self::default();
+
+        if multipart {
+            initial.structure = StructureInitial::Multipart(vec![PartInitial::default()]);
+        }
+
+        initial
+    }
+
     fn from_recipe(
         recipe: &RecipeWithContent,
         images: &[RecipeImageMetadata],
         recipe_id: &str,
         cx: &Cx,
     ) -> Self {
-        let mut ingredients: Vec<_> = recipe
-            .ingredients()
-            .iter()
-            .map(|(name, quantity)| ingredient_initial(name.as_str(), quantity))
-            .collect();
-        ingredients.sort_by(|left, right| left.name.cmp(&right.name));
-
         let (servings_type, servings_count, servings_label) = match recipe.servings() {
             Some(Servings::People(count)) => {
                 ("people".to_string(), count.to_string(), String::new())
@@ -345,13 +605,26 @@ impl FormInitial {
             .map(|image| (image.id().as_str(), image))
             .collect();
 
-        let recipe_images = recipe
-            .content()
-            .images()
-            .iter()
-            .filter_map(|image_id| image_by_id.get(image_id.as_str()).copied())
-            .map(|image| form_image_initial(image, recipe_id, cx))
-            .collect();
+        let structure = if let Some(body) = recipe.content().simple_body() {
+            StructureInitial::Simple(BodyInitial::from_body(body, &image_by_id, recipe_id, cx))
+        } else {
+            StructureInitial::Multipart(
+                recipe
+                    .content()
+                    .parts()
+                    .iter()
+                    .map(|part| PartInitial {
+                        id: part.id().as_str().to_string(),
+                        title: part.title().as_str().to_string(),
+                        description: part
+                            .description()
+                            .map(|description| description.as_str().to_string())
+                            .unwrap_or_default(),
+                        body: BodyInitial::from_body(part.body(), &image_by_id, recipe_id, cx),
+                    })
+                    .collect(),
+            )
+        };
 
         Self {
             title: recipe.title().as_str().to_string(),
@@ -366,38 +639,7 @@ impl FormInitial {
             servings_type,
             servings_count,
             servings_label,
-            preparation: recipe
-                .durations()
-                .preparation()
-                .map(|duration| duration.as_minutes().to_string())
-                .unwrap_or_default(),
-            rest: recipe
-                .durations()
-                .rest()
-                .map(|duration| duration.as_minutes().to_string())
-                .unwrap_or_default(),
-            cooking: recipe
-                .durations()
-                .cooking()
-                .map(|duration| duration.as_minutes().to_string())
-                .unwrap_or_default(),
-            ingredients,
-            steps: recipe
-                .steps()
-                .iter()
-                .map(|step| StepInitial {
-                    id: step.id().as_str().to_string(),
-                    title: step.title().unwrap_or_default().to_string(),
-                    instruction: step.instruction().to_string(),
-                    images: step
-                        .images()
-                        .iter()
-                        .filter(|image_id| image_by_id.contains_key(image_id.as_str()))
-                        .map(|image_id| image_id.as_str().to_string())
-                        .collect(),
-                })
-                .collect(),
-            images: recipe_images,
+            structure,
         }
     }
 }
@@ -460,7 +702,9 @@ fn unit_wire(unit: &Unit) -> &'static str {
 
 #[derive(Clone)]
 pub enum RecipeFormMode {
-    New,
+    New {
+        multipart: bool,
+    },
     Edit {
         recipe_id: RecipeIdValue,
         latest_revision: RecipeRevisionId,
@@ -473,7 +717,8 @@ pub enum RecipeFormMode {
 impl RecipeFormMode {
     fn action(&self) -> String {
         match self {
-            Self::New => "/recipe/new".to_string(),
+            Self::New { multipart: false } => "/recipe/new".to_string(),
+            Self::New { multipart: true } => "/recipe/new/multipart".to_string(),
             Self::Edit { recipe_id, .. } => {
                 format!("/recipes/{}/edit", recipe_id.as_str())
             }
@@ -489,8 +734,8 @@ impl RecipeFormMode {
 #[component]
 pub async fn recipe_form(cx: &Cx, mode: RecipeFormMode) -> Result<impl View> {
     let action = mode.action();
-    let (recipe_id, latest_revision, needs_review) = match &mode {
-        RecipeFormMode::New => (String::new(), String::new(), false),
+    let (recipe_id, latest_revision, needs_review, multipart) = match &mode {
+        RecipeFormMode::New { multipart } => (String::new(), String::new(), false, *multipart),
         RecipeFormMode::Edit {
             recipe_id,
             latest_revision,
@@ -499,6 +744,7 @@ pub async fn recipe_form(cx: &Cx, mode: RecipeFormMode) -> Result<impl View> {
             recipe_id.as_str().to_string(),
             latest_revision.as_str().to_string(),
             *needs_review,
+            false,
         ),
     };
 
@@ -508,7 +754,8 @@ pub async fn recipe_form(cx: &Cx, mode: RecipeFormMode) -> Result<impl View> {
             action: action,
             recipe_id: recipe_id,
             latest_revision: latest_revision,
-            needs_review: needs_review
+            needs_review: needs_review,
+            multipart: multipart
         )
     })
 }
@@ -524,6 +771,7 @@ async fn recipe_form_fields(
     recipe_id: String,
     latest_revision: String,
     needs_review: bool,
+    multipart: bool,
 ) -> Result<impl View> {
     auth::require_user(cx)?;
 
@@ -540,11 +788,9 @@ async fn recipe_form_fields(
     let initial = current
         .as_ref()
         .map(|recipe| FormInitial::from_recipe(recipe, &images, &recipe_id, cx))
-        .unwrap_or_default();
+        .unwrap_or_else(|| FormInitial::new(multipart));
     let is_edit = !latest_revision.is_empty();
-    let initial_ingredient_count = initial.ingredients.len().max(1);
-    let initial_step_count = initial.steps.len().max(1);
-    let initial_step_order: Vec<usize> = (0..initial_step_count).collect();
+    let is_multipart = matches!(initial.structure, StructureInitial::Multipart(_));
     let image_lookup: HashMap<String, FormImageInitial> = images
         .iter()
         .map(|image| {
@@ -571,32 +817,13 @@ async fn recipe_form_fields(
     let servings_count = signal(cx, move || servings_count_value.clone());
     let servings_label_value = initial.servings_label.clone();
     let servings_label = signal(cx, move || servings_label_value.clone());
-    let preparation_value = initial.preparation.clone();
-    let preparation = signal(cx, move || preparation_value.clone());
-    let rest_value = initial.rest.clone();
-    let rest = signal(cx, move || rest_value.clone());
-    let cooking_value = initial.cooking.clone();
-    let cooking = signal(cx, move || cooking_value.clone());
     let message = signal(cx, String::new);
-    let ingredient_count = signal(cx, move || initial_ingredient_count);
-    let step_order = signal(cx, move || initial_step_order.clone());
-    let next_step_key = signal(cx, move || initial_step_count);
-    let inserted_slot = signal(cx, || None::<usize>);
-    let insert_title = signal(cx, String::new);
-    let insert_instruction = signal(cx, String::new);
-    let insert_images = signal(cx, Vec::<String>::new);
-    let step_list = StepListState {
-        order: step_order.clone(),
-        next_key: next_step_key.clone(),
-        inserted_slot: inserted_slot.clone(),
-        insert_title: insert_title.clone(),
-        insert_instruction: insert_instruction.clone(),
-        insert_images: insert_images.clone(),
+
+    let (simple_initial, part_initials) = match initial.structure {
+        StructureInitial::Simple(body) => (Some(body), Vec::new()),
+        StructureInitial::Multipart(parts) => (None, parts),
     };
 
-    let ingredient_initials = initial.ingredients;
-    let step_initials = initial.steps;
-    let recipe_image_initials = initial.images;
     let latest_revision = (!latest_revision.is_empty()).then_some(latest_revision);
 
     let title_id = element_id(cx);
@@ -605,10 +832,6 @@ async fn recipe_form_fields(
     let servings_type_id = element_id(cx);
     let servings_count_id = element_id(cx);
     let servings_label_id = element_id(cx);
-    let preparation_id = element_id(cx);
-    let rest_id = element_id(cx);
-    let cooking_id = element_id(cx);
-    let recipe_images_id = element_id(cx);
     let message_id = element_id(cx);
     let message_label = if needs_review {
         t!(form_verification_message).resolve(cx).into_owned()
@@ -635,6 +858,11 @@ async fn recipe_form_fields(
             enctype="multipart/form-data"
             class="flex flex-col gap-6"
         >
+            <input
+                type="hidden"
+                name=(RECIPE_TYPE_FIELD)
+                value=(if is_multipart { "multipart" } else { "simple" })
+            >
             if let Some(latest_revision) = &latest_revision {
                 <input
                     type="hidden"
@@ -761,162 +989,20 @@ async fn recipe_form_fields(
                         )
                     </div>
                 )
-                <div class="grid gap-4 sm:grid-cols-3">
-                    field(
-                        field_label(
-                            attrs: attributes! { for=(&preparation_id) },
-                            (t!(form_preparation))
-                        )
-                        input(
-                            attrs: attributes! {
-                                id=(&preparation_id)
-                                name=(PREPARATION_FIELD)
-                                type="number"
-                                min="0"
-                                step="1"
-                                placeholder="15"
-                                :value=$(preparation.get())
-                                @input=$(|e: Event| preparation.set(e.target.value))
-                            }
-                        )
-                    )
-                    field(
-                        field_label(
-                            attrs: attributes! { for=(&rest_id) },
-                            (t!(form_rest))
-                        )
-                        input(
-                            attrs: attributes! {
-                                id=(&rest_id)
-                                name=(REST_FIELD)
-                                type="number"
-                                min="0"
-                                step="1"
-                                placeholder="30"
-                                :value=$(rest.get())
-                                @input=$(|e: Event| rest.set(e.target.value))
-                            }
-                        )
-                    )
-                    field(
-                        field_label(
-                            attrs: attributes! { for=(&cooking_id) },
-                            (t!(form_cooking))
-                        )
-                        input(
-                            attrs: attributes! {
-                                id=(&cooking_id)
-                                name=(COOKING_FIELD)
-                                type="number"
-                                min="0"
-                                step="1"
-                                placeholder="45"
-                                :value=$(cooking.get())
-                                @input=$(|e: Event| cooking.set(e.target.value))
-                            }
-                        )
-                    )
-                </div>
             )
 
-            field_set(
-                field_legend((t!(form_recipe_images)))
-                if recipe_image_initials.is_empty() {
-                    <p class="text-sm text-muted-foreground">
-                        (t!(form_recipe_images_empty))
-                    </p>
-                } else {
-                    <ul class="grid grid-cols-2 gap-3 sm:grid-cols-3">
-                        for image in &recipe_image_initials {
-                            form_image_row(
-                                image: image.clone(),
-                                image_ids_field: IMAGE_IDS_FIELD.to_string()
-                            )
-                        }
-                    </ul>
-                }
-                field(
-                    field_label(
-                        attrs: attributes! { for=(&recipe_images_id) },
-                        (t!(form_recipe_images_upload))
-                    )
-                    image_upload(
-                        multiple: true,
-                        attrs: attributes! { id=(&recipe_images_id) name=(IMAGES_FIELD) }
-                    )
-                    field_description((t!(form_recipe_images_upload_hint)))
+            if let Some(body_initial) = simple_initial {
+                body_fields(
+                    prefix: String::new(),
+                    initial: body_initial,
+                    image_lookup: image_lookup.clone()
                 )
-            )
-
-            field_set(
-                field_legend((t!(form_ingredients)))
-                <div id="ingredients" class="flex flex-col gap-3">
-                    #[key(index)]
-                    for index in 0..ingredient_count.get() {
-                        ingredient_row(
-                            row: index,
-                            initial: ingredient_initials.get(index).cloned()
-                        )
-                    }
-                </div>
-                <div class="flex flex-wrap gap-2">
-                    button(
-                        variant: ButtonVariant::Outline,
-                        size: ButtonSize::Sm,
-                        attrs: attributes! {
-                            type="button"
-                            @click=$(|_e: Event| ingredient_count.increment())
-                        },
-                        (t!(form_add_ingredient))
-                    )
-                </div>
-            )
-
-            field_set(
-                field_legend((t!(form_steps)))
-                <div id="steps" class="flex flex-col gap-4">
-                    #[key(key)]
-                    for (position, key) in step_order.get().into_iter().enumerate() {
-                        step_row(
-                            row: position,
-                            key: key,
-                            initial: if inserted_slot.get() == Some(key) {
-                                Some(
-                                    StepInitial {
-                                        id: String::new(),
-                                        title: insert_title.get(),
-                                        instruction: insert_instruction.get(),
-                                        images: insert_images.get(),
-                                    },
-                                )
-                            } else {
-                                step_initials.get(key).cloned()
-                            },
-                            list: step_list.clone(),
-                            image_lookup: image_lookup.clone()
-                        )
-                    }
-                </div>
-                <div class="flex flex-wrap gap-2">
-                    button(
-                        variant: ButtonVariant::Outline,
-                        size: ButtonSize::Sm,
-                        attrs: attributes! {
-                            type="button"
-                            @click=$(async |_e: Event| {
-                                let new_key = next_step_key.get();
-                                next_step_key.increment();
-                                let order = step_order.get();
-                                let index = order.len();
-                                let next = form_insert_step(order, index, new_key).await;
-                                inserted_slot.set(None);
-                                step_order.set(next);
-                            })
-                        },
-                        (t!(form_add_step))
-                    )
-                </div>
-            )
+            } else {
+                parts_editor(
+                    initial: part_initials,
+                    image_lookup: image_lookup.clone()
+                )
+            }
 
             if is_edit {
                 field(
@@ -951,9 +1037,598 @@ async fn recipe_form_fields(
 }
 
 #[component]
+async fn body_fields(
+    cx: &Cx,
+    prefix: String,
+    initial: BodyInitial,
+    image_lookup: HashMap<String, FormImageInitial>,
+) -> Result<impl View> {
+    let initial_ingredient_count = initial.ingredients.len().max(1);
+    let initial_step_count = initial.steps.len().max(1);
+    let initial_step_order: Vec<usize> = (0..initial_step_count).collect();
+
+    let preparation_field = body_field(&prefix, PREPARATION_FIELD);
+    let rest_field = body_field(&prefix, REST_FIELD);
+    let cooking_field = body_field(&prefix, COOKING_FIELD);
+    let image_ids_field = body_field(&prefix, IMAGE_IDS_FIELD);
+    let images_field = body_field(&prefix, IMAGES_FIELD);
+
+    let preparation_value = initial.preparation.clone();
+    let preparation = signal(cx, move || preparation_value.clone());
+    let rest_value = initial.rest.clone();
+    let rest = signal(cx, move || rest_value.clone());
+    let cooking_value = initial.cooking.clone();
+    let cooking = signal(cx, move || cooking_value.clone());
+    let ingredient_count = signal(cx, move || initial_ingredient_count);
+    let step_order = signal(cx, move || initial_step_order.clone());
+    let next_step_key = signal(cx, move || initial_step_count);
+    let inserted_slot = signal(cx, || None::<usize>);
+    let insert_title = signal(cx, String::new);
+    let insert_instruction = signal(cx, String::new);
+    let insert_images = signal(cx, Vec::<String>::new);
+    let step_list = StepListState {
+        order: step_order.clone(),
+        next_key: next_step_key.clone(),
+        inserted_slot: inserted_slot.clone(),
+        insert_title: insert_title.clone(),
+        insert_instruction: insert_instruction.clone(),
+        insert_images: insert_images.clone(),
+    };
+
+    let ingredient_initials = initial.ingredients;
+    let step_initials = initial.steps;
+    let recipe_image_initials = initial.images;
+
+    let preparation_id = element_id(cx);
+    let rest_id = element_id(cx);
+    let cooking_id = element_id(cx);
+    let recipe_images_id = element_id(cx);
+
+    Ok(view! {
+        <div class="grid gap-4 sm:grid-cols-3">
+            field(
+                field_label(
+                    attrs: attributes! { for=(&preparation_id) },
+                    (t!(form_preparation))
+                )
+                input(
+                    attrs: attributes! {
+                        id=(&preparation_id)
+                        name=(preparation_field)
+                        type="number"
+                        min="0"
+                        step="1"
+                        placeholder="15"
+                        :value=$(preparation.get())
+                        @input=$(|e: Event| preparation.set(e.target.value))
+                    }
+                )
+            )
+            field(
+                field_label(
+                    attrs: attributes! { for=(&rest_id) },
+                    (t!(form_rest))
+                )
+                input(
+                    attrs: attributes! {
+                        id=(&rest_id)
+                        name=(rest_field)
+                        type="number"
+                        min="0"
+                        step="1"
+                        placeholder="30"
+                        :value=$(rest.get())
+                        @input=$(|e: Event| rest.set(e.target.value))
+                    }
+                )
+            )
+            field(
+                field_label(
+                    attrs: attributes! { for=(&cooking_id) },
+                    (t!(form_cooking))
+                )
+                input(
+                    attrs: attributes! {
+                        id=(&cooking_id)
+                        name=(cooking_field)
+                        type="number"
+                        min="0"
+                        step="1"
+                        placeholder="45"
+                        :value=$(cooking.get())
+                        @input=$(|e: Event| cooking.set(e.target.value))
+                    }
+                )
+            )
+        </div>
+
+        field_set(
+            field_legend((t!(form_recipe_images)))
+            if recipe_image_initials.is_empty() {
+                <p class="text-sm text-muted-foreground">
+                    (t!(form_recipe_images_empty))
+                </p>
+            } else {
+                <ul class="grid grid-cols-2 gap-3 sm:grid-cols-3">
+                    for image in &recipe_image_initials {
+                        form_image_row(
+                            image: image.clone(),
+                            image_ids_field: image_ids_field.clone()
+                        )
+                    }
+                </ul>
+            }
+            field(
+                field_label(
+                    attrs: attributes! { for=(&recipe_images_id) },
+                    (t!(form_recipe_images_upload))
+                )
+                image_upload(
+                    multiple: true,
+                    attrs: attributes! { id=(&recipe_images_id) name=(images_field) }
+                )
+                field_description((t!(form_recipe_images_upload_hint)))
+            )
+        )
+
+        field_set(
+            field_legend((t!(form_ingredients)))
+            <div id="ingredients" class="flex flex-col gap-3">
+                #[key(index)]
+                for index in 0..ingredient_count.get() {
+                    ingredient_row(
+                        row: index,
+                        prefix: prefix.clone(),
+                        initial: ingredient_initials.get(index).cloned()
+                    )
+                }
+            </div>
+            <div class="flex flex-wrap gap-2">
+                button(
+                    variant: ButtonVariant::Outline,
+                    size: ButtonSize::Sm,
+                    attrs: attributes! {
+                        type="button"
+                        @click=$(|_e: Event| ingredient_count.increment())
+                    },
+                    (t!(form_add_ingredient))
+                )
+            </div>
+        )
+
+        field_set(
+            field_legend((t!(form_steps)))
+            <div id="steps" class="flex flex-col gap-4">
+                #[key(key)]
+                for (position, key) in step_order.get().into_iter().enumerate() {
+                    step_row(
+                        row: position,
+                        key: key,
+                        prefix: prefix.clone(),
+                        initial: if inserted_slot.get() == Some(key) {
+                            Some(
+                                StepInitial {
+                                    id: String::new(),
+                                    title: insert_title.get(),
+                                    instruction: insert_instruction.get(),
+                                    images: insert_images.get(),
+                                },
+                            )
+                        } else {
+                            step_initials.get(key).cloned()
+                        },
+                        list: step_list.clone(),
+                        image_lookup: image_lookup.clone()
+                    )
+                }
+            </div>
+            <div class="flex flex-wrap gap-2">
+                button(
+                    variant: ButtonVariant::Outline,
+                    size: ButtonSize::Sm,
+                    attrs: attributes! {
+                        type="button"
+                        @click=$(async |_e: Event| {
+                            let new_key = next_step_key.get();
+                            next_step_key.increment();
+                            let order = step_order.get();
+                            let index = order.len();
+                            let next = form_insert_step(order, index, new_key).await;
+                            inserted_slot.set(None);
+                            step_order.set(next);
+                        })
+                    },
+                    (t!(form_add_step))
+                )
+            </div>
+        )
+    })
+}
+
+#[component]
+async fn parts_editor(
+    cx: &Cx,
+    initial: Vec<PartInitial>,
+    image_lookup: HashMap<String, FormImageInitial>,
+) -> Result<impl View> {
+    let initial_part_count = initial.len().max(1);
+    let initial_order: Vec<usize> = (0..initial_part_count).collect();
+    let order = signal(cx, move || initial_order.clone());
+    let next_key = signal(cx, move || initial_part_count);
+    let list = PartListState {
+        order: order.clone(),
+        next_key: next_key.clone(),
+    };
+
+    Ok(view! {
+        field_set(
+            field_legend((t!(form_parts)))
+            <div id="parts" class="flex flex-col gap-4">
+                #[key(format!("part-{key}"))]
+                for (position, key) in order.get().into_iter().enumerate() {
+                    part_row(
+                        row: position,
+                        key: key,
+                        initial: initial.get(key).cloned(),
+                        list: list.clone(),
+                        image_lookup: image_lookup.clone()
+                    )
+                }
+            </div>
+            <div class="flex flex-wrap gap-2">
+                button(
+                    variant: ButtonVariant::Outline,
+                    size: ButtonSize::Sm,
+                    attrs: attributes! {
+                        type="button"
+                        @click=$(async |_e: Event| {
+                            let new_key = next_key.get();
+                            next_key.increment();
+                            let current_order = order.get();
+                            let index = current_order.len();
+                            let next = form_insert_part(current_order, index, new_key).await;
+                            order.set(next);
+                        })
+                    },
+                    (t!(form_add_part))
+                )
+            </div>
+        )
+    })
+}
+
+#[component]
+async fn part_row(
+    cx: &Cx,
+    row: usize,
+    key: usize,
+    initial: Option<PartInitial>,
+    list: PartListState,
+    image_lookup: HashMap<String, FormImageInitial>,
+) -> Result<impl View> {
+    let PartListState { order, next_key } = list;
+    let initial = initial.unwrap_or_default();
+    let id_value = initial.id;
+    let title_value = initial.title;
+    let description_value = initial.description;
+    let body = initial.body;
+    let title = signal(cx, move || title_value.clone());
+    let description = signal(cx, move || description_value.clone());
+    let prefix = format!("parts[{row}]");
+
+    let initial_ingredient_count = body.ingredients.len().max(1);
+    let initial_step_count = body.steps.len().max(1);
+    let initial_step_order: Vec<usize> = (0..initial_step_count).collect();
+
+    let preparation_field = body_field(&prefix, PREPARATION_FIELD);
+    let rest_field = body_field(&prefix, REST_FIELD);
+    let cooking_field = body_field(&prefix, COOKING_FIELD);
+    let image_ids_field = body_field(&prefix, IMAGE_IDS_FIELD);
+    let images_field = body_field(&prefix, IMAGES_FIELD);
+
+    let preparation_value = body.preparation.clone();
+    let preparation = signal(cx, move || preparation_value.clone());
+    let rest_value = body.rest.clone();
+    let rest = signal(cx, move || rest_value.clone());
+    let cooking_value = body.cooking.clone();
+    let cooking = signal(cx, move || cooking_value.clone());
+    let ingredient_count = signal(cx, move || initial_ingredient_count);
+    let step_order = signal(cx, move || initial_step_order.clone());
+    let next_step_key = signal(cx, move || initial_step_count);
+    let inserted_slot = signal(cx, || None::<usize>);
+    let insert_title = signal(cx, String::new);
+    let insert_instruction = signal(cx, String::new);
+    let insert_images = signal(cx, Vec::<String>::new);
+    let step_list = StepListState {
+        order: step_order.clone(),
+        next_key: next_step_key.clone(),
+        inserted_slot: inserted_slot.clone(),
+        insert_title: insert_title.clone(),
+        insert_instruction: insert_instruction.clone(),
+        insert_images: insert_images.clone(),
+    };
+
+    let ingredient_initials = body.ingredients;
+    let step_initials = body.steps;
+    let recipe_image_initials = body.images;
+
+    let title_id = element_id(cx);
+    let description_id = element_id(cx);
+    let preparation_id = element_id(cx);
+    let rest_id = element_id(cx);
+    let cooking_id = element_id(cx);
+    let recipe_images_id = element_id(cx);
+    let id_field = PartField::Id.key(row);
+    let title_field = PartField::Title.key(row);
+    let description_field = PartField::Description.key(row);
+
+    Ok(view! {
+        <fieldset class="m-0 flex min-w-0 flex-col gap-4 rounded-lg border border-border p-4">
+            <input type="hidden" name=(id_field) value=(id_value)>
+            field(
+                field_label(
+                    attrs: attributes! { for=(&title_id) },
+                    (t!(form_part_title))
+                )
+                input(
+                    attrs: attributes! {
+                        id=(&title_id)
+                        name=(title_field)
+                        type="text"
+                        required=""
+                        :value=$(title.get())
+                        @input=$(|e: Event| title.set(e.target.value))
+                    }
+                )
+            )
+            field(
+                field_label(
+                    attrs: attributes! { for=(&description_id) },
+                    (t!(form_part_description))
+                )
+                <textarea
+                    id=(&description_id)
+                    name=(description_field)
+                    rows="2"
+                    class=(TEXTAREA_CLASS)
+                    :value=$(description.get())
+                    @input=$(|e: Event| description.set(e.target.value))
+                ></textarea>
+            )
+
+            <div class="grid gap-4 sm:grid-cols-3">
+                field(
+                    field_label(
+                        attrs: attributes! { for=(&preparation_id) },
+                        (t!(form_preparation))
+                    )
+                    input(
+                        attrs: attributes! {
+                            id=(&preparation_id)
+                            name=(preparation_field)
+                            type="number"
+                            min="0"
+                            step="1"
+                            placeholder="15"
+                            :value=$(preparation.get())
+                            @input=$(|e: Event| preparation.set(e.target.value))
+                        }
+                    )
+                )
+                field(
+                    field_label(
+                        attrs: attributes! { for=(&rest_id) },
+                        (t!(form_rest))
+                    )
+                    input(
+                        attrs: attributes! {
+                            id=(&rest_id)
+                            name=(rest_field)
+                            type="number"
+                            min="0"
+                            step="1"
+                            placeholder="30"
+                            :value=$(rest.get())
+                            @input=$(|e: Event| rest.set(e.target.value))
+                        }
+                    )
+                )
+                field(
+                    field_label(
+                        attrs: attributes! { for=(&cooking_id) },
+                        (t!(form_cooking))
+                    )
+                    input(
+                        attrs: attributes! {
+                            id=(&cooking_id)
+                            name=(cooking_field)
+                            type="number"
+                            min="0"
+                            step="1"
+                            placeholder="45"
+                            :value=$(cooking.get())
+                            @input=$(|e: Event| cooking.set(e.target.value))
+                        }
+                    )
+                )
+            </div>
+
+            <fieldset class="flex min-w-0 flex-col gap-5">
+                <legend class="mb-3 text-base font-semibold">(t!(form_recipe_images))</legend>
+                if recipe_image_initials.is_empty() {
+                    <p class="text-sm text-muted-foreground">
+                        (t!(form_recipe_images_empty))
+                    </p>
+                } else {
+                    <ul class="grid grid-cols-2 gap-3 sm:grid-cols-3">
+                        for image in &recipe_image_initials {
+                            form_image_row(
+                                image: image.clone(),
+                                image_ids_field: image_ids_field.clone()
+                            )
+                        }
+                    </ul>
+                }
+                field(
+                    field_label(
+                        attrs: attributes! { for=(&recipe_images_id) },
+                        (t!(form_recipe_images_upload))
+                    )
+                    image_upload(
+                        multiple: true,
+                        attrs: attributes! { id=(&recipe_images_id) name=(images_field) }
+                    )
+                    field_description((t!(form_recipe_images_upload_hint)))
+                )
+            </fieldset>
+
+            <fieldset class="flex min-w-0 flex-col gap-5">
+                <legend class="mb-3 text-base font-semibold">(t!(form_ingredients))</legend>
+                <div
+                    id=(format!("part-{key}-ingredients"))
+                    class="flex flex-col gap-3"
+                >
+                    #[key((key, index))]
+                    for index in 0..ingredient_count.get() {
+                        ingredient_row(
+                            row: index,
+                            prefix: prefix.clone(),
+                            initial: ingredient_initials.get(index).cloned()
+                        )
+                    }
+                </div>
+                <div class="flex flex-wrap gap-2">
+                    button(
+                        variant: ButtonVariant::Outline,
+                        size: ButtonSize::Sm,
+                        attrs: attributes! {
+                            type="button"
+                            @click=$(|_e: Event| ingredient_count.increment())
+                        },
+                        (t!(form_add_ingredient))
+                    )
+                </div>
+            </fieldset>
+
+            <fieldset class="flex min-w-0 flex-col gap-5">
+                <legend class="mb-3 text-base font-semibold">(t!(form_steps))</legend>
+                <div
+                    id=(format!("part-{key}-steps"))
+                    class="flex flex-col gap-4"
+                >
+                    #[key((key, step_key))]
+                    for (position, step_key) in step_order.get().into_iter().enumerate() {
+                        step_row(
+                            row: position,
+                            key: step_key,
+                            prefix: prefix.clone(),
+                            initial: if inserted_slot.get() == Some(step_key) {
+                                Some(
+                                    StepInitial {
+                                        id: String::new(),
+                                        title: insert_title.get(),
+                                        instruction: insert_instruction.get(),
+                                        images: insert_images.get(),
+                                    },
+                                )
+                            } else {
+                                step_initials.get(step_key).cloned()
+                            },
+                            list: step_list.clone(),
+                            image_lookup: image_lookup.clone()
+                        )
+                    }
+                </div>
+                <div class="flex flex-wrap gap-2">
+                    button(
+                        variant: ButtonVariant::Outline,
+                        size: ButtonSize::Sm,
+                        attrs: attributes! {
+                            type="button"
+                            @click=$(async |_e: Event| {
+                                let new_key = next_step_key.get();
+                                next_step_key.increment();
+                                let order = step_order.get();
+                                let index = order.len();
+                                let next = form_insert_step(order, index, new_key).await;
+                                inserted_slot.set(None);
+                                step_order.set(next);
+                            })
+                        },
+                        (t!(form_add_step))
+                    )
+                </div>
+            </fieldset>
+
+            <div class="flex flex-wrap items-center justify-end gap-2">
+                button(
+                    variant: ButtonVariant::Ghost,
+                    size: ButtonSize::Sm,
+                    attrs: attributes! {
+                        type="button"
+                        aria-label=(t!(form_insert_part_below))
+                        title=(t!(form_insert_part_below))
+                        @click=$(async |_e: Event| {
+                            let new_key = next_key.get();
+                            next_key.increment();
+                            let next = form_insert_part(order.get(), row + 1, new_key).await;
+                            order.set(next);
+                        })
+                    },
+                    ("+")
+                )
+                button(
+                    variant: ButtonVariant::Ghost,
+                    size: ButtonSize::Sm,
+                    attrs: attributes! {
+                        type="button"
+                        aria-label=(t!(form_move_part_up))
+                        title=(t!(form_move_part_up))
+                        :disabled=$(row == 0)
+                        @click=$(async |_e: Event| {
+                            let next = form_move_part(order.get(), key, true).await;
+                            order.set(next);
+                        })
+                    },
+                    ("↑")
+                )
+                button(
+                    variant: ButtonVariant::Ghost,
+                    size: ButtonSize::Sm,
+                    attrs: attributes! {
+                        type="button"
+                        aria-label=(t!(form_move_part_down))
+                        title=(t!(form_move_part_down))
+                        :disabled=$(row + 1 == order.get().len())
+                        @click=$(async |_e: Event| {
+                            let next = form_move_part(order.get(), key, false).await;
+                            order.set(next);
+                        })
+                    },
+                    ("↓")
+                )
+                button(
+                    variant: ButtonVariant::Ghost,
+                    size: ButtonSize::Sm,
+                    attrs: attributes! {
+                        type="button"
+                        @click=$(async |_e: Event| {
+                            let next = form_remove_part(order.get(), key).await;
+                            order.set(next);
+                        })
+                    },
+                    (t!(form_remove))
+                )
+            </div>
+        </fieldset>
+    })
+}
+
+#[component]
 async fn ingredient_row(
     cx: &Cx,
     row: usize,
+    prefix: String,
     initial: Option<IngredientInitial>,
 ) -> Result<impl View> {
     let initial = initial.unwrap_or_default();
@@ -986,12 +1661,12 @@ async fn ingredient_row(
     let unit_id = element_id(cx);
     let unit_other_id = element_id(cx);
 
-    let name_field = IngredientField::Name.key(row);
-    let amount_type_field = IngredientField::AmountType.key(row);
-    let quantity_field = IngredientField::Quantity.key(row);
-    let quantity_text_field = IngredientField::QuantityText.key(row);
-    let unit_field = IngredientField::Unit.key(row);
-    let unit_other_field = IngredientField::UnitOther.key(row);
+    let name_field = IngredientField::Name.key(row, &prefix);
+    let amount_type_field = IngredientField::AmountType.key(row, &prefix);
+    let quantity_field = IngredientField::Quantity.key(row, &prefix);
+    let quantity_text_field = IngredientField::QuantityText.key(row, &prefix);
+    let unit_field = IngredientField::Unit.key(row, &prefix);
+    let unit_other_field = IngredientField::UnitOther.key(row, &prefix);
 
     Ok(view! {
         <fieldset
@@ -1171,6 +1846,7 @@ async fn step_row(
     cx: &Cx,
     row: usize,
     key: usize,
+    prefix: String,
     initial: Option<StepInitial>,
     list: StepListState,
     image_lookup: HashMap<String, FormImageInitial>,
@@ -1196,11 +1872,11 @@ async fn step_row(
     let instruction_id = element_id(cx);
     let step_images_id = element_id(cx);
 
-    let id_field = StepField::Id.key(row);
-    let title_field = StepField::Title.key(row);
-    let instruction_field = StepField::Instruction.key(row);
-    let step_images_field = StepField::Images.key(row);
-    let image_ids_field = StepField::ImageIds.key(row);
+    let id_field = StepField::Id.key(row, &prefix);
+    let title_field = StepField::Title.key(row, &prefix);
+    let instruction_field = StepField::Instruction.key(row, &prefix);
+    let step_images_field = StepField::Images.key(row, &prefix);
+    let image_ids_field = StepField::ImageIds.key(row, &prefix);
 
     Ok(view! {
         <fieldset
@@ -1386,6 +2062,15 @@ async fn step_image_row(
     })
 }
 
+#[derive(Default)]
+struct RawPart {
+    fields: HashMap<PartField, String>,
+    images: Vec<String>,
+    ingredients: BTreeMap<usize, HashMap<IngredientField, String>>,
+    steps: BTreeMap<usize, HashMap<StepField, String>>,
+    step_images: BTreeMap<usize, Vec<String>>,
+}
+
 /// Parses and validates the URL-encoded form into its wire DTO.
 fn parse_recipe_form(pairs: &[(String, String)]) -> Result<RecipeFormData> {
     let mut title = None;
@@ -1394,6 +2079,7 @@ fn parse_recipe_form(pairs: &[(String, String)]) -> Result<RecipeFormData> {
     let mut servings_type = None;
     let mut servings_count = None;
     let mut servings_label = None;
+    let mut recipe_type = None;
     let mut preparation = None;
     let mut rest = None;
     let mut cooking = None;
@@ -1403,6 +2089,7 @@ fn parse_recipe_form(pairs: &[(String, String)]) -> Result<RecipeFormData> {
     let mut step_images: BTreeMap<usize, Vec<String>> = BTreeMap::new();
     let mut ingredients: BTreeMap<usize, HashMap<IngredientField, String>> = BTreeMap::new();
     let mut steps: BTreeMap<usize, HashMap<StepField, String>> = BTreeMap::new();
+    let mut parts: BTreeMap<usize, RawPart> = BTreeMap::new();
 
     for (key, value) in pairs {
         match key.as_str() {
@@ -1410,6 +2097,7 @@ fn parse_recipe_form(pairs: &[(String, String)]) -> Result<RecipeFormData> {
             TITLE_FIELD => set_once(&mut title, value, key)?,
             DESCRIPTION_FIELD => set_once(&mut description, value, key)?,
             CATEGORY_FIELD => set_once(&mut category, value, key)?,
+            RECIPE_TYPE_FIELD => set_once(&mut recipe_type, value, key)?,
             SERVINGS_TYPE_FIELD => set_once(&mut servings_type, value, key)?,
             SERVINGS_COUNT_FIELD => set_once(&mut servings_count, value, key)?,
             SERVINGS_LABEL_FIELD => set_once(&mut servings_label, value, key)?,
@@ -1419,21 +2107,25 @@ fn parse_recipe_form(pairs: &[(String, String)]) -> Result<RecipeFormData> {
             MESSAGE_FIELD => set_once(&mut message, value, key)?,
             LATEST_REVISION_FIELD => set_once(&mut latest_revision, value, key)?,
             _ => {
-                let step_image_ids_suffix = format!("[{IMAGE_IDS_FIELD}]");
-                if key.starts_with("steps[") && key.ends_with(&step_image_ids_suffix) {
-                    if let Some((row, ())) = parse_indexed_key(key, "steps", |_| Some(()))? {
-                        step_images.entry(row).or_default().push(value.clone());
-                    }
-                } else if let Some((row, wire_field)) =
-                    parse_indexed_key(key, "ingredients", IngredientField::parse)?
-                {
-                    insert_row_value(&mut ingredients, row, wire_field, value, key)?;
-                } else if let Some((row, wire_field)) =
-                    parse_indexed_key(key, "steps", StepField::parse)?
-                {
-                    insert_row_value(&mut steps, row, wire_field, value, key)?;
+                if let Some((part_index, rest)) = parse_part_key(key)? {
+                    parse_part_field(parts.entry(part_index).or_default(), &rest, value, key)?;
                 } else {
-                    return Err(invalid(format!("unknown form field `{key}`")));
+                    let step_image_ids_suffix = format!("[{IMAGE_IDS_FIELD}]");
+                    if key.starts_with("steps[") && key.ends_with(&step_image_ids_suffix) {
+                        if let Some((row, ())) = parse_indexed_key(key, "steps", |_| Some(()))? {
+                            step_images.entry(row).or_default().push(value.clone());
+                        }
+                    } else if let Some((row, wire_field)) =
+                        parse_indexed_key(key, "ingredients", IngredientField::parse)?
+                    {
+                        insert_row_value(&mut ingredients, row, wire_field, value, key)?;
+                    } else if let Some((row, wire_field)) =
+                        parse_indexed_key(key, "steps", StepField::parse)?
+                    {
+                        insert_row_value(&mut steps, row, wire_field, value, key)?;
+                    } else {
+                        return Err(invalid(format!("unknown form field `{key}`")));
+                    }
                 }
             }
         }
@@ -1456,8 +2148,45 @@ fn parse_recipe_form(pairs: &[(String, String)]) -> Result<RecipeFormData> {
                 .ok_or_else(|| invalid(format!("unknown recipe category `{category}`")))
         })
         .transpose()?;
+    let recipe_type = RecipeFormType::parse(recipe_type.as_deref().unwrap_or("simple"))?;
+
+    let structure = match recipe_type {
+        RecipeFormType::Simple => {
+            if !parts.is_empty() {
+                return Err(invalid("a simple recipe cannot contain parts"));
+            }
+
+            let mut seen_step_ids = HashSet::new();
+            StructureFormData::Simple(parse_body_form_data(
+                preparation,
+                rest,
+                cooking,
+                ingredients,
+                images,
+                steps,
+                step_images,
+                &mut seen_step_ids,
+            )?)
+        }
+        RecipeFormType::Multipart => {
+            if preparation.is_some()
+                || rest.is_some()
+                || cooking.is_some()
+                || !ingredients.is_empty()
+                || !steps.is_empty()
+                || !images.is_empty()
+            {
+                return Err(invalid(
+                    "a multipart recipe cannot contain top-level body fields",
+                ));
+            }
+
+            StructureFormData::Multipart(parse_part_rows(parts)?)
+        }
+    };
 
     Ok(RecipeFormData {
+        recipe_type,
         title,
         description,
         servings: parse_servings(
@@ -1466,15 +2195,280 @@ fn parse_recipe_form(pairs: &[(String, String)]) -> Result<RecipeFormData> {
             servings_label.as_deref(),
         )?,
         category,
+        structure,
+        message,
+        latest_revision,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn parse_body_form_data(
+    preparation: Option<String>,
+    rest: Option<String>,
+    cooking: Option<String>,
+    ingredients: BTreeMap<usize, HashMap<IngredientField, String>>,
+    images: Vec<String>,
+    steps: BTreeMap<usize, HashMap<StepField, String>>,
+    step_images: BTreeMap<usize, Vec<String>>,
+    seen_step_ids: &mut HashSet<RecipeStepId>,
+) -> Result<BodyFormData> {
+    Ok(BodyFormData {
         preparation: parse_optional_minutes(preparation.as_deref(), PREPARATION_FIELD)?,
         rest: parse_optional_minutes(rest.as_deref(), REST_FIELD)?,
         cooking: parse_optional_minutes(cooking.as_deref(), COOKING_FIELD)?,
         ingredients: parse_ingredient_rows(ingredients)?,
         images: parse_image_ids(images)?,
-        steps: parse_step_rows(steps, step_images)?,
-        message,
-        latest_revision,
+        steps: parse_step_rows(steps, step_images, seen_step_ids)?,
     })
+}
+
+fn parse_part_rows(rows: BTreeMap<usize, RawPart>) -> Result<Vec<PartFormData>> {
+    let mut parts = Vec::new();
+    let mut seen_part_ids = HashSet::new();
+    let mut seen_step_ids = HashSet::new();
+
+    for (row, mut raw) in rows {
+        let id = raw.fields.remove(&PartField::Id).unwrap_or_default();
+        let title = raw.fields.remove(&PartField::Title).unwrap_or_default();
+        let description = raw
+            .fields
+            .remove(&PartField::Description)
+            .unwrap_or_default();
+        let preparation = raw.fields.remove(&PartField::Preparation);
+        let rest = raw.fields.remove(&PartField::Rest);
+        let cooking = raw.fields.remove(&PartField::Cooking);
+
+        let title = title.trim().to_string();
+        let description = description.trim().to_string();
+        let id = id.trim().to_string();
+
+        let is_empty = title.is_empty()
+            && description.is_empty()
+            && preparation.is_none()
+            && rest.is_none()
+            && cooking.is_none()
+            && raw.ingredients.is_empty()
+            && raw.steps.is_empty()
+            && raw.images.is_empty();
+
+        if is_empty {
+            continue;
+        }
+
+        if title.is_empty() {
+            return Err(invalid(format!("part row {} needs a title", row + 1)));
+        }
+
+        let id = if id.is_empty() {
+            RecipePartId::generate()
+        } else {
+            RecipePartId::new(id)
+        };
+
+        if !seen_part_ids.insert(id.clone()) {
+            return Err(invalid(format!(
+                "part row {} reuses another part's identity",
+                row + 1
+            )));
+        }
+
+        parts.push(PartFormData {
+            row,
+            id,
+            title,
+            description: (!description.is_empty()).then_some(description),
+            body: parse_body_form_data(
+                preparation,
+                rest,
+                cooking,
+                raw.ingredients,
+                raw.images,
+                raw.steps,
+                raw.step_images,
+                &mut seen_step_ids,
+            )?,
+        });
+    }
+
+    if parts.is_empty() {
+        return Err(invalid("a multipart recipe needs at least one part"));
+    }
+
+    Ok(parts)
+}
+
+/// Parses `parts[<row>][...]` into a part row and the remaining nested key.
+///
+/// For example, `parts[0][ingredients][1][name]` becomes
+/// `(0, "ingredients[1][name]")`.
+fn parse_part_key(key: &str) -> Result<Option<(usize, String)>> {
+    let Some(rest) = key.strip_prefix("parts[") else {
+        return Ok(None);
+    };
+
+    let Some((row, rest)) = rest.split_once("][") else {
+        return Err(invalid(format!(
+            "malformed form field `{key}`; expected `parts[row][field]`"
+        )));
+    };
+
+    let row = row
+        .parse::<usize>()
+        .map_err(|_| invalid(format!("invalid row in form field `{key}`")))?;
+
+    let rest = if rest.contains("][") {
+        rest.replacen("][", "[", 1)
+    } else {
+        rest.strip_suffix(']')
+            .ok_or_else(|| invalid(format!("malformed form field `{key}`")))?
+            .to_string()
+    };
+
+    Ok(Some((row, rest)))
+}
+
+fn parse_part_field(part: &mut RawPart, part_field: &str, value: &str, key: &str) -> Result<()> {
+    if part_field == IMAGE_IDS_FIELD {
+        part.images.push(value.to_string());
+        return Ok(());
+    }
+
+    let step_image_ids_suffix = format!("[{IMAGE_IDS_FIELD}]");
+    if part_field.starts_with("steps[")
+        && part_field.ends_with(&step_image_ids_suffix)
+        && let Some((row, ())) = parse_indexed_key(part_field, "steps", |_| Some(()))?
+    {
+        part.step_images
+            .entry(row)
+            .or_default()
+            .push(value.to_string());
+        return Ok(());
+    }
+
+    if let Some((row, wire_field)) =
+        parse_indexed_key(part_field, "ingredients", IngredientField::parse)?
+    {
+        return insert_row_value(&mut part.ingredients, row, wire_field, value, key);
+    }
+
+    if let Some((row, wire_field)) = parse_indexed_key(part_field, "steps", StepField::parse)? {
+        return insert_row_value(&mut part.steps, row, wire_field, value, key);
+    }
+
+    if let Some(wire_field) = PartField::parse(part_field) {
+        if part.fields.insert(wire_field, value.to_string()).is_some() {
+            return Err(invalid(format!("duplicate form field `{key}`")));
+        }
+
+        return Ok(());
+    }
+
+    Err(invalid(format!("unknown form field `{key}`")))
+}
+
+fn parse_recipe_uploads(
+    form: &mut RecipeFormData,
+    uploads: Vec<RecipeFormUpload>,
+) -> Result<Vec<NewRecipeImage>> {
+    let mut images = Vec::with_capacity(uploads.len());
+
+    for upload in uploads {
+        let content_type = detect_image_content_type(&upload.bytes).ok_or_else(|| {
+            invalid(format!(
+                "image upload `{}` is not a supported JPEG or PNG image",
+                upload.field
+            ))
+        })?;
+        let id = RecipeImageId::generate();
+        image_upload_target(form, &upload.field)?.push(id.clone());
+
+        images.push(NewRecipeImage::new(
+            id,
+            content_type.to_string(),
+            upload.bytes,
+        ));
+    }
+
+    Ok(images)
+}
+
+fn image_upload_target<'a>(
+    form: &'a mut RecipeFormData,
+    upload_field: &str,
+) -> Result<&'a mut Vec<RecipeImageId>> {
+    let step_images =
+        |wire_field: &str| (wire_field == StepField::Images.wire_name()).then_some(());
+
+    if let Some((part_index, rest)) = parse_part_key(upload_field)? {
+        let parts = match &mut form.structure {
+            StructureFormData::Multipart(parts) => parts,
+            StructureFormData::Simple(_) => {
+                return Err(invalid(format!(
+                    "image upload `{upload_field}` targets a part on a simple recipe"
+                )));
+            }
+        };
+        let part = parts
+            .iter_mut()
+            .find(|part| part.row == part_index)
+            .ok_or_else(|| {
+                invalid(format!(
+                    "image upload `{upload_field}` targets an unknown part row"
+                ))
+            })?;
+
+        if rest == IMAGES_FIELD {
+            return Ok(&mut part.body.images);
+        }
+
+        if let Some((row, ())) = parse_indexed_key(&rest, "steps", step_images)? {
+            return part
+                .body
+                .steps
+                .iter_mut()
+                .find(|step| step.row == row)
+                .map(|step| &mut step.images)
+                .ok_or_else(|| {
+                    invalid(format!(
+                        "image upload `{upload_field}` targets an unknown step row"
+                    ))
+                });
+        }
+
+        return Err(invalid(format!(
+            "unknown image upload field `{upload_field}`"
+        )));
+    }
+
+    let body = match &mut form.structure {
+        StructureFormData::Simple(body) => body,
+        StructureFormData::Multipart(_) => {
+            return Err(invalid(format!(
+                "image upload `{upload_field}` targets the recipe body of a multipart recipe"
+            )));
+        }
+    };
+
+    if upload_field == IMAGES_FIELD {
+        return Ok(&mut body.images);
+    }
+
+    if let Some((row, ())) = parse_indexed_key(upload_field, "steps", step_images)? {
+        return body
+            .steps
+            .iter_mut()
+            .find(|step| step.row == row)
+            .map(|step| &mut step.images)
+            .ok_or_else(|| {
+                invalid(format!(
+                    "image upload `{upload_field}` targets an unknown step row"
+                ))
+            });
+    }
+
+    Err(invalid(format!(
+        "unknown image upload field `{upload_field}`"
+    )))
 }
 
 pub(crate) struct RecipeFormSubmission {
@@ -1525,7 +2519,7 @@ pub(crate) fn create_recipe_request(
     let images = parse_recipe_uploads(&mut form, submission.uploads)?;
 
     Ok(CreateRecipeRequest {
-        content: form.into_content(),
+        content: form.into_content()?,
         author,
         source_images: Vec::new(),
         images,
@@ -1558,61 +2552,12 @@ pub(crate) fn update_recipe_request(
 
     Ok(UpdateRecipeRequest {
         id,
-        content: form.into_content(),
+        content: form.into_content()?,
         editor,
         latest_revision: RecipeRevisionId::new(latest_revision),
         message,
         new_images: images,
     })
-}
-
-fn parse_recipe_uploads(
-    form: &mut RecipeFormData,
-    uploads: Vec<RecipeFormUpload>,
-) -> Result<Vec<NewRecipeImage>> {
-    let mut images = Vec::with_capacity(uploads.len());
-
-    for upload in uploads {
-        let image_ids = if upload.field == IMAGES_FIELD {
-            &mut form.images
-        } else if let Some((row, ())) = parse_indexed_key(&upload.field, "steps", |wire_field| {
-            (wire_field == StepField::Images.wire_name()).then_some(())
-        })? {
-            &mut form
-                .steps
-                .iter_mut()
-                .find(|step| step.row == row)
-                .ok_or_else(|| {
-                    invalid(format!(
-                        "image upload `{}` targets an unknown step row",
-                        upload.field
-                    ))
-                })?
-                .images
-        } else {
-            return Err(invalid(format!(
-                "unknown image upload field `{}`",
-                upload.field
-            )));
-        };
-
-        let content_type = detect_image_content_type(&upload.bytes).ok_or_else(|| {
-            invalid(format!(
-                "image upload `{}` is not a supported JPEG or PNG image",
-                upload.field
-            ))
-        })?;
-        let id = RecipeImageId::generate();
-        image_ids.push(id.clone());
-
-        images.push(NewRecipeImage::new(
-            id,
-            content_type.to_string(),
-            upload.bytes,
-        ));
-    }
-
-    Ok(images)
 }
 
 fn set_once(target: &mut Option<String>, value: &str, key: &str) -> Result<()> {
@@ -1891,8 +2836,8 @@ fn parse_image_ids(values: Vec<String>) -> Result<Vec<RecipeImageId>> {
 fn parse_step_rows(
     rows: BTreeMap<usize, HashMap<StepField, String>>,
     mut image_ids: BTreeMap<usize, Vec<String>>,
+    seen_ids: &mut HashSet<RecipeStepId>,
 ) -> Result<Vec<StepFormData>> {
-    let mut seen_ids = HashSet::new();
     let mut steps = Vec::new();
 
     for (row, mut fields) in rows {
@@ -2014,25 +2959,28 @@ mod tests {
 
         assert_eq!(form.title, "Soup");
         assert_eq!(form.description.as_deref(), Some("A warming soup."));
-        assert_eq!(form.preparation, Some(10));
-        assert_eq!(form.rest, Some(20));
-        assert_eq!(form.cooking, Some(30));
+        assert_eq!(form.simple_body().preparation, Some(10));
+        assert_eq!(form.simple_body().rest, Some(20));
+        assert_eq!(form.simple_body().cooking, Some(30));
         assert_eq!(form.message, None);
         assert_eq!(form.latest_revision, None);
-        assert_eq!(form.ingredients.len(), 2);
-        assert_eq!(form.ingredients[0].name, "Flour");
+        assert_eq!(form.simple_body().ingredients.len(), 2);
+        assert_eq!(form.simple_body().ingredients[0].name, "Flour");
         assert_eq!(
-            form.ingredients[0].quantity,
+            form.simple_body().ingredients[0].quantity,
             Quantity::from_measure(200.0, Unit::Gram)
         );
-        assert_eq!(form.ingredients[1].name, "Milk");
+        assert_eq!(form.simple_body().ingredients[1].name, "Milk");
         assert_eq!(
-            form.ingredients[1].quantity,
+            form.simple_body().ingredients[1].quantity,
             Quantity::from_measure(0.5, Unit::Litre)
         );
-        assert_eq!(form.steps.len(), 1);
-        assert_eq!(form.steps[0].title.as_deref(), Some("Mix"));
-        assert_eq!(form.steps[0].instruction, "Stir everything together.");
+        assert_eq!(form.simple_body().steps.len(), 1);
+        assert_eq!(form.simple_body().steps[0].title.as_deref(), Some("Mix"));
+        assert_eq!(
+            form.simple_body().steps[0].instruction,
+            "Stir everything together."
+        );
     }
 
     #[test]
@@ -2153,7 +3101,7 @@ mod tests {
             .unwrap();
 
             assert_eq!(
-                form.ingredients[0].quantity,
+                form.simple_body().ingredients[0].quantity,
                 Quantity::from_measure(2.0, expected),
                 "unit row {index}"
             );
@@ -2170,9 +3118,9 @@ mod tests {
         ]))
         .unwrap();
 
-        assert_eq!(form.ingredients[0].name, "Salt");
+        assert_eq!(form.simple_body().ingredients[0].name, "Salt");
         assert_eq!(
-            form.ingredients[0].quantity,
+            form.simple_body().ingredients[0].quantity,
             Quantity::from_text("to taste")
         );
     }
@@ -2190,7 +3138,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(
-            form.ingredients[0].quantity,
+            form.simple_body().ingredients[0].quantity,
             Quantity::from_measure(1.0, Unit::Other("sachet".to_string()))
         );
     }
@@ -2206,7 +3154,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(
-            form.ingredients[0].quantity,
+            form.simple_body().ingredients[0].quantity,
             Quantity::from_measure(200.0, Unit::Gram)
         );
     }
@@ -2254,12 +3202,12 @@ mod tests {
         ]))
         .unwrap();
 
-        assert_eq!(form.ingredients.len(), 2);
-        assert_eq!(form.ingredients[0].name, "Flour");
-        assert_eq!(form.ingredients[1].name, "Milk");
-        assert_eq!(form.steps.len(), 2);
-        assert_eq!(form.steps[0].instruction, "First step");
-        assert_eq!(form.steps[1].instruction, "Second step");
+        assert_eq!(form.simple_body().ingredients.len(), 2);
+        assert_eq!(form.simple_body().ingredients[0].name, "Flour");
+        assert_eq!(form.simple_body().ingredients[1].name, "Milk");
+        assert_eq!(form.simple_body().steps.len(), 2);
+        assert_eq!(form.simple_body().steps[0].instruction, "First step");
+        assert_eq!(form.simple_body().steps[1].instruction, "Second step");
     }
 
     #[test]
@@ -2273,15 +3221,19 @@ mod tests {
             IngredientField::UnitOther,
         ] {
             assert_eq!(
-                parse_indexed_key(&wire_field.key(7), "ingredients", IngredientField::parse,)
-                    .unwrap(),
+                parse_indexed_key(
+                    &wire_field.key(7, ""),
+                    "ingredients",
+                    IngredientField::parse,
+                )
+                .unwrap(),
                 Some((7, wire_field))
             );
         }
 
         for wire_field in [StepField::Title, StepField::Instruction] {
             assert_eq!(
-                parse_indexed_key(&wire_field.key(7), "steps", StepField::parse).unwrap(),
+                parse_indexed_key(&wire_field.key(7, ""), "steps", StepField::parse).unwrap(),
                 Some((7, wire_field))
             );
         }
@@ -2299,8 +3251,8 @@ mod tests {
         ]))
         .unwrap();
 
-        assert!(form.ingredients.is_empty());
-        assert!(form.steps.is_empty());
+        assert!(form.simple_body().ingredients.is_empty());
+        assert!(form.simple_body().steps.is_empty());
     }
 
     #[test]
@@ -2385,12 +3337,18 @@ mod tests {
         ]))
         .unwrap();
 
-        assert_eq!(form.images.len(), 2);
-        assert_eq!(form.images[0].as_str(), "image-1");
-        assert_eq!(form.images[1].as_str(), "image-2");
-        assert_eq!(form.steps[0].images.len(), 2);
-        assert_eq!(form.steps[0].images[0].as_str(), "step-image-1");
-        assert_eq!(form.steps[0].images[1].as_str(), "step-image-2");
+        assert_eq!(form.simple_body().images.len(), 2);
+        assert_eq!(form.simple_body().images[0].as_str(), "image-1");
+        assert_eq!(form.simple_body().images[1].as_str(), "image-2");
+        assert_eq!(form.simple_body().steps[0].images.len(), 2);
+        assert_eq!(
+            form.simple_body().steps[0].images[0].as_str(),
+            "step-image-1"
+        );
+        assert_eq!(
+            form.simple_body().steps[0].images[1].as_str(),
+            "step-image-2"
+        );
     }
 
     #[test]
@@ -2406,8 +3364,14 @@ mod tests {
         ]))
         .unwrap();
 
-        assert_eq!(form.steps[0].images[0].as_str(), "shared-image");
-        assert_eq!(form.steps[1].images[0].as_str(), "shared-image");
+        assert_eq!(
+            form.simple_body().steps[0].images[0].as_str(),
+            "shared-image"
+        );
+        assert_eq!(
+            form.simple_body().steps[1].images[0].as_str(),
+            "shared-image"
+        );
     }
 
     #[test]
@@ -2446,13 +3410,21 @@ mod tests {
             Some("A warming soup.")
         );
         assert_eq!(request.content.category(), Some(RecipeCategory::Main));
-        assert_eq!(request.content.ingredients().len(), 1);
-        assert_eq!(request.content.steps().len(), 1);
+        let body = request.content.simple_body().unwrap();
+        assert_eq!(body.ingredients().len(), 1);
+        assert_eq!(body.steps().len(), 1);
     }
 
     #[test]
     fn form_mode_derives_the_form_action() {
-        assert_eq!(RecipeFormMode::New.action(), "/recipe/new");
+        assert_eq!(
+            RecipeFormMode::New { multipart: false }.action(),
+            "/recipe/new"
+        );
+        assert_eq!(
+            RecipeFormMode::New { multipart: true }.action(),
+            "/recipe/new/multipart"
+        );
 
         let edit = RecipeFormMode::Edit {
             recipe_id: RecipeIdValue::new("soup".to_string()),
@@ -2469,42 +3441,45 @@ mod tests {
             RecipeIdValue::new("soup".to_string()),
             UserId::new("user-1".to_string()),
         );
-        let content = RecipeContent::new(
+        let content = RecipeContent::new_simple(
             RecipeTitle::new("Soup".to_string()),
             Some(RecipeDescription::new("A warming soup.".to_string())),
             Some(Servings::portions_with_label(12, "cookies")),
             Some(RecipeCategory::Main),
-            RecipeDurations::new(
-                Some(DurationMinutes::new(10)),
-                None,
-                Some(DurationMinutes::new(20)),
-            ),
-            HashMap::from([
-                (
-                    IngredientName::new("milk".to_string()),
-                    Quantity::from_measure(0.5, Unit::Litre),
+            RecipeBody::new(
+                RecipeDurations::new(
+                    Some(DurationMinutes::new(10)),
+                    None,
+                    Some(DurationMinutes::new(20)),
                 ),
-                (
-                    IngredientName::new("flour".to_string()),
-                    Quantity::from_measure(200.0, Unit::Gram),
-                ),
-                (
-                    IngredientName::new("salt".to_string()),
-                    Quantity::from_text("to taste"),
-                ),
-                (
-                    IngredientName::new("yeast".to_string()),
-                    Quantity::from_measure(1.0, Unit::Other("sachet".to_string())),
-                ),
-            ]),
-            Vec::new(),
-            vec![RecipeStep::new(
-                RecipeStepId::generate(),
-                Some("Mix".to_string()),
-                "Stir everything together.".to_string(),
+                vec![
+                    Ingredient::new(
+                        IngredientName::new("milk".to_string()),
+                        Quantity::from_measure(0.5, Unit::Litre),
+                    ),
+                    Ingredient::new(
+                        IngredientName::new("flour".to_string()),
+                        Quantity::from_measure(200.0, Unit::Gram),
+                    ),
+                    Ingredient::new(
+                        IngredientName::new("salt".to_string()),
+                        Quantity::from_text("to taste"),
+                    ),
+                    Ingredient::new(
+                        IngredientName::new("yeast".to_string()),
+                        Quantity::from_measure(1.0, Unit::Other("sachet".to_string())),
+                    ),
+                ],
                 Vec::new(),
-            )],
-        );
+                vec![RecipeStep::new(
+                    RecipeStepId::generate(),
+                    Some("Mix".to_string()),
+                    "Stir everything together.".to_string(),
+                    Vec::new(),
+                )],
+            ),
+        )
+        .unwrap();
         let revision = RecipeRevision::new(
             RecipeRevisionId::new("revision-1".to_string()),
             recipe.id().clone(),
@@ -2524,30 +3499,36 @@ mod tests {
         assert_eq!(initial.servings_type, "portions");
         assert_eq!(initial.servings_count, "12");
         assert_eq!(initial.servings_label, "cookies");
-        assert_eq!(initial.preparation, "10");
-        assert_eq!(initial.rest, "");
-        assert_eq!(initial.cooking, "20");
-        assert_eq!(initial.ingredients[0].name, "flour");
-        assert_eq!(initial.ingredients[0].amount_type, "measured");
-        assert_eq!(initial.ingredients[0].quantity, "200");
-        assert_eq!(initial.ingredients[0].quantity_text, "");
-        assert_eq!(initial.ingredients[0].unit, "gram");
-        assert_eq!(initial.ingredients[0].unit_other, "");
-        assert_eq!(initial.ingredients[1].name, "milk");
-        assert_eq!(initial.ingredients[1].amount_type, "measured");
-        assert_eq!(initial.ingredients[1].quantity, "0.5");
-        assert_eq!(initial.ingredients[1].unit, "litre");
-        assert_eq!(initial.ingredients[2].name, "salt");
-        assert_eq!(initial.ingredients[2].amount_type, "text");
-        assert_eq!(initial.ingredients[2].quantity, "");
-        assert_eq!(initial.ingredients[2].quantity_text, "to taste");
-        assert_eq!(initial.ingredients[3].name, "yeast");
-        assert_eq!(initial.ingredients[3].amount_type, "measured");
-        assert_eq!(initial.ingredients[3].quantity, "1");
-        assert_eq!(initial.ingredients[3].unit, "other");
-        assert_eq!(initial.ingredients[3].unit_other, "sachet");
-        assert_eq!(initial.steps[0].title, "Mix");
-        assert_eq!(initial.steps[0].instruction, "Stir everything together.");
+        assert_eq!(initial.simple_body().preparation, "10");
+        assert_eq!(initial.simple_body().rest, "");
+        assert_eq!(initial.simple_body().cooking, "20");
+        assert_eq!(initial.simple_body().ingredients[0].name, "flour");
+        assert_eq!(initial.simple_body().ingredients[0].amount_type, "measured");
+        assert_eq!(initial.simple_body().ingredients[0].quantity, "200");
+        assert_eq!(initial.simple_body().ingredients[0].quantity_text, "");
+        assert_eq!(initial.simple_body().ingredients[0].unit, "gram");
+        assert_eq!(initial.simple_body().ingredients[0].unit_other, "");
+        assert_eq!(initial.simple_body().ingredients[1].name, "milk");
+        assert_eq!(initial.simple_body().ingredients[1].amount_type, "measured");
+        assert_eq!(initial.simple_body().ingredients[1].quantity, "0.5");
+        assert_eq!(initial.simple_body().ingredients[1].unit, "litre");
+        assert_eq!(initial.simple_body().ingredients[2].name, "salt");
+        assert_eq!(initial.simple_body().ingredients[2].amount_type, "text");
+        assert_eq!(initial.simple_body().ingredients[2].quantity, "");
+        assert_eq!(
+            initial.simple_body().ingredients[2].quantity_text,
+            "to taste"
+        );
+        assert_eq!(initial.simple_body().ingredients[3].name, "yeast");
+        assert_eq!(initial.simple_body().ingredients[3].amount_type, "measured");
+        assert_eq!(initial.simple_body().ingredients[3].quantity, "1");
+        assert_eq!(initial.simple_body().ingredients[3].unit, "other");
+        assert_eq!(initial.simple_body().ingredients[3].unit_other, "sachet");
+        assert_eq!(initial.simple_body().steps[0].title, "Mix");
+        assert_eq!(
+            initial.simple_body().steps[0].instruction,
+            "Stir everything together."
+        );
     }
 
     #[test]
@@ -2624,9 +3605,12 @@ mod tests {
         ]))
         .unwrap();
 
-        assert_eq!(form.steps[0].id.as_str(), "step-existing");
-        assert_ne!(form.steps[1].id.as_str(), "");
-        assert_ne!(form.steps[0].id, form.steps[1].id);
+        assert_eq!(form.simple_body().steps[0].id.as_str(), "step-existing");
+        assert_ne!(form.simple_body().steps[1].id.as_str(), "");
+        assert_ne!(
+            form.simple_body().steps[0].id,
+            form.simple_body().steps[1].id
+        );
     }
 
     #[test]
@@ -2670,8 +3654,11 @@ mod tests {
 
         assert_eq!(images.len(), 2);
         assert_eq!(images[0].content_type(), "image/png");
-        assert_eq!(form.images, vec![images[0].id().clone()]);
-        assert_eq!(form.steps[0].images, vec![images[1].id().clone()]);
+        assert_eq!(form.simple_body().images, vec![images[0].id().clone()]);
+        assert_eq!(
+            form.simple_body().steps[0].images,
+            vec![images[1].id().clone()]
+        );
     }
 
     #[test]
@@ -2700,6 +3687,138 @@ mod tests {
                 bytes: b"not an image".to_vec(),
             }],
         );
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parses_multipart_recipe_parts() {
+        let form = parse_recipe_form(&pairs(&[
+            ("recipe_type", "multipart"),
+            ("title", "Cake"),
+            ("parts[0][title]", "Sponge"),
+            ("parts[0][description]", "Light and airy."),
+            ("parts[0][preparation]", "10"),
+            ("parts[0][ingredients][0][name]", "Flour"),
+            ("parts[0][ingredients][0][quantity]", "200"),
+            ("parts[0][ingredients][0][unit]", "gram"),
+            ("parts[0][steps][0][instruction]", "Mix."),
+            ("parts[0][steps][0][image_ids]", "step-image"),
+            ("parts[1][title]", "Filling"),
+            ("parts[1][cooking]", "5"),
+            ("parts[1][steps][0][instruction]", "Whip."),
+        ]))
+        .unwrap();
+
+        assert_eq!(form.recipe_type, RecipeFormType::Multipart);
+
+        let StructureFormData::Multipart(parts) = &form.structure else {
+            panic!("expected a multipart form");
+        };
+
+        assert_eq!(parts.len(), 2);
+        assert_eq!(parts[0].title, "Sponge");
+        assert_eq!(parts[0].description.as_deref(), Some("Light and airy."));
+        assert_eq!(parts[0].body.preparation, Some(10));
+        assert_eq!(parts[0].body.ingredients.len(), 1);
+        assert_eq!(parts[0].body.steps[0].instruction, "Mix.");
+        assert_eq!(parts[0].body.steps[0].images[0].as_str(), "step-image");
+        assert_eq!(parts[1].title, "Filling");
+        assert_eq!(parts[1].body.cooking, Some(5));
+        assert_ne!(parts[0].id, parts[1].id);
+    }
+
+    #[test]
+    fn multipart_parts_need_titles() {
+        let result = parse_recipe_form(&pairs(&[
+            ("recipe_type", "multipart"),
+            ("title", "Cake"),
+            ("parts[0][ingredients][0][name]", "Flour"),
+            ("parts[0][ingredients][0][quantity]", "200"),
+            ("parts[0][ingredients][0][unit]", "gram"),
+        ]));
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parses_multipart_image_uploads() {
+        let mut form = parse_recipe_form(&pairs(&[
+            ("recipe_type", "multipart"),
+            ("title", "Cake"),
+            ("parts[0][title]", "Sponge"),
+            ("parts[1][title]", "Filling"),
+            ("parts[1][steps][0][instruction]", "Whip."),
+        ]))
+        .unwrap();
+        let png = vec![0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A, 1, 2, 3];
+
+        let images = parse_recipe_uploads(
+            &mut form,
+            vec![
+                RecipeFormUpload {
+                    field: "parts[0][images]".to_string(),
+                    bytes: png.clone(),
+                },
+                RecipeFormUpload {
+                    field: "parts[1][steps][0][images]".to_string(),
+                    bytes: png,
+                },
+            ],
+        )
+        .unwrap();
+
+        let StructureFormData::Multipart(parts) = &form.structure else {
+            panic!("expected a multipart form");
+        };
+
+        assert_eq!(parts[0].body.images, vec![images[0].id().clone()]);
+        assert_eq!(parts[1].body.steps[0].images, vec![images[1].id().clone()]);
+    }
+
+    #[test]
+    fn multipart_form_builds_multipart_content() {
+        let form = parse_recipe_form(&pairs(&[
+            ("recipe_type", "multipart"),
+            ("title", "Cake"),
+            ("parts[0][id]", "part-1"),
+            ("parts[0][title]", "Sponge"),
+            ("parts[0][preparation]", "10"),
+            ("parts[1][id]", "part-2"),
+            ("parts[1][title]", "Filling"),
+            ("parts[1][cooking]", "5"),
+        ]))
+        .unwrap();
+
+        let content = form.into_content().unwrap();
+
+        assert!(content.is_multipart());
+        assert_eq!(content.parts().len(), 2);
+        assert_eq!(content.parts()[0].id().as_str(), "part-1");
+        assert_eq!(content.parts()[0].title().as_str(), "Sponge");
+        assert_eq!(
+            content
+                .durations()
+                .preparation()
+                .map(DurationMinutes::as_minutes),
+            Some(10)
+        );
+        assert_eq!(
+            content
+                .durations()
+                .cooking()
+                .map(DurationMinutes::as_minutes),
+            Some(5)
+        );
+    }
+
+    #[test]
+    fn rejects_parts_on_a_simple_recipe() {
+        let result = parse_recipe_form(&pairs(&[
+            ("recipe_type", "simple"),
+            ("title", "Soup"),
+            ("parts[0][title]", "Broth"),
+        ]));
 
         assert!(result.is_err());
     }
