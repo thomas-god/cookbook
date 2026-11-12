@@ -34,11 +34,12 @@ use crate::{
     app::{AppRecipeService, AppUserRepository, auth},
     components::{
         base::{
-            button::button,
+            button::{ButtonSize, ButtonVariant, button, button_variants},
             card::{card, card_content, card_header, card_title},
         },
         recipe::{
             category::category_label,
+            cook_view::cook_recipe_view,
             recipe_form::{LATEST_REVISION_FIELD, RecipeFormMode, read_recipe_form, recipe_form},
             recipe_images::recipe_image_gallery,
             recipe_scope_form::recipe_scope_form,
@@ -286,12 +287,16 @@ async fn recipe_search_results(
     Ok(view! {
         if result.total == 0 {
             if has_filters {
-                <p class="mt-8 text-sm text-muted-foreground">(t!(recipe_search_empty))</p>
+                <p class="mt-8 text-sm text-muted-foreground">
+                    (t!(recipe_search_empty))
+                </p>
             } else {
                 <p class="mt-8 text-sm text-muted-foreground">(t!(recipes_empty))</p>
             }
         } else {
-            <p class="mt-8 text-sm text-muted-foreground" role="status">(count_label)</p>
+            <p class="mt-8 text-sm text-muted-foreground" role="status">
+                (count_label)
+            </p>
             <ul class="mt-3 flex flex-col gap-2">
                 for recipe in &result.recipes {
                     <li
@@ -338,7 +343,7 @@ async fn recipe_search_results(
                     (t!(
                         recipe_search_page,
                         current = page_number.to_string(),
-                        total = total_pages.to_string()
+                        total = total_pages.to_string(),
                     ))
                 </span>
                 if let Some(next) = next_page {
@@ -416,7 +421,16 @@ pub async fn recipe_detail(cx: &Cx) -> Result<impl View> {
                             </span>
                         }
                     </div>
-                    <div class="flex flex-col items-end gap-1 text-sm">
+                    <div class="flex flex-col items-end gap-2 text-sm">
+                        <a
+                            class=(button_variants(
+                                ButtonVariant::Primary,
+                                ButtonSize::Sm,
+                            ))
+                            href=(href!(cook_recipe, RecipeId(recipe.id().as_str())))
+                        >
+                            (t!(recipe_cook))
+                        </a>
                         if can_edit {
                             <a
                                 class="underline underline-offset-4"
@@ -499,6 +513,28 @@ pub async fn recipe_detail(cx: &Cx) -> Result<impl View> {
                 </section>
             }
         </div>
+    })
+}
+
+#[page("./{recipe_id}/cook")]
+pub async fn cook_recipe(cx: &Cx) -> Result<impl View> {
+    let user = auth::require_user(cx)?;
+    let recipe_id = path_param::<RecipeId>(cx).to_string();
+    let recipe_service: &AppRecipeService = app_context(cx);
+    let recipe = recipe_service
+        .get_recipe(RecipeIdValue::new(recipe_id), user.id().clone())
+        .await?
+        .ok_or_not_found()?;
+    let images = recipe_service
+        .get_recipe_images(recipe.id().clone(), user.id().clone())
+        .await?;
+
+    Ok(view! {
+        cook_recipe_view(
+            recipe_id: recipe.id().as_str(),
+            content: recipe.content(),
+            images: &images
+        )
     })
 }
 

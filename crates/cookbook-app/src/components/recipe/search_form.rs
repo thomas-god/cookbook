@@ -103,27 +103,31 @@ pub async fn recipe_search_form(
             class="flex flex-col gap-5 rounded-lg border border-border bg-card p-4"
         >
             field(
-                field_label(attrs: attributes! { for="recipe-search-q" }, (t!(recipe_search)))
-                input(attrs: attributes! {
-                    id="recipe-search-q"
-                    name="q"
-                    type="search"
-                    :value=$(query.get())
-                    @input=$(|_e: Event| {
-                        raw!(
-                            "(clearTimeout(${_e}.target.__cookbookSearchDebounce), ${_e}.target.__cookbookSearchDebounce = setTimeout(() => ${query}.set(${_e}.target.value), 250))",
-                            ()
-                        )
-                    })
-                    placeholder=(t!(recipe_search_placeholder))
-                })
+                field_label(
+                    attrs: attributes! { for="recipe-search-q" },
+                    (t!(recipe_search))
+                )
+                input(
+                    attrs: attributes! {
+                        id="recipe-search-q"
+                        name="q"
+                        type="search"
+                        :value=$(query.get())
+                        @input=$(|_e: Event| {
+                            raw!(
+                                "(clearTimeout(${_e}.target.__cookbookSearchDebounce), ${_e}.target.__cookbookSearchDebounce = setTimeout(() => ${query}.set(${_e}.target.value), 250))",
+                                (),
+                            )
+                        })
+                        placeholder=(t!(recipe_search_placeholder))
+                    }
+                )
             )
 
-            <details
-                class="rounded-lg border border-border"
-                open=(options_active)
-            >
-                <summary class="cursor-pointer px-3 py-2 text-sm font-medium select-none">
+            <details class="rounded-lg border border-border" open=(options_active)>
+                <summary
+                    class="cursor-pointer px-3 py-2 text-sm font-medium select-none"
+                >
                     (t!(recipe_search_options))
                 </summary>
                 <div class="flex flex-col gap-5 border-t border-border p-3">
@@ -157,8 +161,15 @@ pub async fn recipe_search_form(
                     </label>
 
                     field(
-                        field_label(attrs: attributes! { for="recipe-search-sort" }, (t!(recipe_search_sort)))
-                        <select id="recipe-search-sort" name="sort" class=(SELECT_CLASS)>
+                        field_label(
+                            attrs: attributes! { for="recipe-search-sort" },
+                            (t!(recipe_search_sort))
+                        )
+                        <select
+                            id="recipe-search-sort"
+                            name="sort"
+                            class=(SELECT_CLASS)
+                        >
                             for (choice, label) in sort_options {
                                 <option value=(choice.as_str()) selected=(choice == sort)>
                                     (label)
@@ -176,10 +187,7 @@ pub async fn recipe_search_form(
                     attrs: attributes! { type="submit" },
                     (t!(recipe_search_submit))
                 )
-                <a
-                    class="text-sm underline underline-offset-4"
-                    href=(href!(page))
-                >
+                <a class="text-sm underline underline-offset-4" href=(href!(page))>
                     (t!(recipe_search_clear))
                 </a>
             </div>

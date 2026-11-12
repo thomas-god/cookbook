@@ -1,4 +1,5 @@
 pub mod category;
+pub mod cook_view;
 pub mod image_thumbnail;
 pub mod recipe_form;
 pub mod recipe_images;
