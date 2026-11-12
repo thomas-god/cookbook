@@ -1,16 +1,16 @@
 use std::time::SystemTime;
 
 use cookbook_domain::recipe::models::{
-    NewRecipeSourceDocument, RecipeId as RecipeIdValue, RecipeImageId as RecipeImageIdValue,
-    RecipeRevision, RecipeRevisionId, RecipeScope,
+    NewRecipeSourceDocument, RecipeCategory, RecipeId as RecipeIdValue,
+    RecipeImageId as RecipeImageIdValue, RecipeRevision, RecipeRevisionId, RecipeScope,
     RecipeSourceDocumentId as RecipeSourceDocumentIdValue, RecipeStructureKind, RevisionOrigin,
     RevisionVerification, Servings,
 };
 use cookbook_domain::recipe::ports::{
     AddRecipeSourceDocumentsError, AddRecipeSourceDocumentsRequest, ConvertRecipeStructureRequest,
-    DeleteRecipeSourceDocumentError, RecipeService, RestoreRecipeRevisionError,
-    RestoreRecipeRevisionRequest, UpdateRecipeError, UpdateRecipeScopeError,
-    UpdateRecipeScopeRequest,
+    DeleteRecipeSourceDocumentError, RecipeSearchCriteria, RecipeService,
+    RestoreRecipeRevisionError, RestoreRecipeRevisionRequest, SearchRecipesQuery,
+    UpdateRecipeError, UpdateRecipeScopeError, UpdateRecipeScopeRequest,
 };
 use cookbook_domain::user::models::UserId;
 use cookbook_infra::auth::ports::UserRepository;
@@ -22,10 +22,11 @@ use topcoat::{
         Body,
         content::{Form, multipart::Multipart},
         error::{RouterErrorExt, SeeOther, bad_request, forbidden, not_found, see_other},
-        href, page, path_param,
+        href, page, path_param, query_params,
         response::Response,
         route,
     },
+    runtime::{shard, signal},
     view::{View, attributes, view},
 };
 
@@ -42,6 +43,7 @@ use crate::{
             recipe_images::recipe_image_gallery,
             recipe_scope_form::recipe_scope_form,
             recipe_view::recipe_view,
+            search_form::{SortChoice, recipe_search_form},
             source_documents::{source_document_editor, source_document_gallery},
         },
     },
@@ -50,21 +52,248 @@ use crate::{
 
 pub(crate) const MAX_UPLOAD_BYTES: usize = 100 * 1024 * 1024;
 
+const RECIPE_PAGE_SIZE: usize = 20;
+
+/// Query parameters accepted by the recipe list page.
+#[query_params(error = bad_request)]
+struct RecipeListQuery {
+    q: Option<String>,
+    sort: Option<String>,
+    page: Option<usize>,
+    exclude_needs_review: Option<bool>,
+    category_aperitif: Option<bool>,
+    category_starter: Option<bool>,
+    category_main: Option<bool>,
+    category_side: Option<bool>,
+    category_dessert: Option<bool>,
+    category_breakfast: Option<bool>,
+    category_snack: Option<bool>,
+    category_drink: Option<bool>,
+    category_other: Option<bool>,
+}
+
+impl RecipeListQuery {
+    fn pattern(&self) -> Option<String> {
+        self.q
+            .as_deref()
+            .map(str::trim)
+            .filter(|pattern| !pattern.is_empty())
+            .map(str::to_string)
+    }
+
+    fn category_is_selected(&self, category: RecipeCategory) -> bool {
+        let selected = match category {
+            RecipeCategory::Aperitif => self.category_aperitif,
+            RecipeCategory::Starter => self.category_starter,
+            RecipeCategory::Main => self.category_main,
+            RecipeCategory::Side => self.category_side,
+            RecipeCategory::Dessert => self.category_dessert,
+            RecipeCategory::Breakfast => self.category_breakfast,
+            RecipeCategory::Snack => self.category_snack,
+            RecipeCategory::Drink => self.category_drink,
+            RecipeCategory::Other => self.category_other,
+        };
+
+        selected.unwrap_or(false)
+    }
+
+    fn categories(&self) -> Vec<RecipeCategory> {
+        RecipeCategory::ALL
+            .into_iter()
+            .filter(|category| self.category_is_selected(*category))
+            .collect()
+    }
+
+    fn exclude_needs_review(&self) -> bool {
+        self.exclude_needs_review.unwrap_or(false)
+    }
+
+    fn sort_choice(&self) -> Result<SortChoice> {
+        SortChoice::parse(self.sort.as_deref())
+            .ok_or_else(|| bad_request("unknown recipe sort").into())
+    }
+
+    fn page_number(&self) -> usize {
+        self.page.unwrap_or(1).max(1)
+    }
+
+    fn params(&self) -> Result<SearchParams> {
+        Ok(SearchParams {
+            pattern: self.pattern(),
+            categories: self.categories(),
+            exclude_needs_review: self.exclude_needs_review(),
+            sort: self.sort_choice()?,
+            page: self.page_number(),
+        })
+    }
+}
+
+/// A validated search state, shared by the page and the live-results shard.
+struct SearchParams {
+    pattern: Option<String>,
+    categories: Vec<RecipeCategory>,
+    exclude_needs_review: bool,
+    sort: SortChoice,
+    page: usize,
+}
+
+impl SearchParams {
+    fn has_filters(&self) -> bool {
+        self.pattern.is_some() || !self.categories.is_empty() || self.exclude_needs_review
+    }
+
+    fn search_query(&self, page_number: usize) -> SearchRecipesQuery {
+        SearchRecipesQuery {
+            criteria: RecipeSearchCriteria {
+                pattern: self.pattern.clone(),
+                categories: self.categories.clone(),
+                exclude_needs_review: self.exclude_needs_review,
+                sort: self.sort.to_domain(),
+            },
+            offset: (page_number - 1) * RECIPE_PAGE_SIZE,
+            limit: Some(RECIPE_PAGE_SIZE),
+        }
+    }
+
+    /// Builds a link to another page, preserving every active filter and sort.
+    fn page_href(&self, base: &str, target_page: usize) -> String {
+        let mut serializer = form_urlencoded::Serializer::new(String::new());
+
+        if let Some(pattern) = &self.pattern {
+            serializer.append_pair("q", pattern);
+        }
+
+        for category in &self.categories {
+            serializer.append_pair(&format!("category_{}", category.as_str()), "true");
+        }
+
+        if self.exclude_needs_review {
+            serializer.append_pair("exclude_needs_review", "true");
+        }
+
+        if self.sort != SortChoice::default() {
+            serializer.append_pair("sort", self.sort.as_str());
+        }
+
+        if target_page > 1 {
+            serializer.append_pair("page", &target_page.to_string());
+        }
+
+        let query = serializer.finish();
+
+        if query.is_empty() {
+            base.to_string()
+        } else {
+            format!("{base}?{query}")
+        }
+    }
+}
+
 #[page]
 pub async fn page(cx: &Cx) -> Result<impl View> {
-    let user = auth::require_user(cx)?;
+    auth::require_user(cx)?;
 
-    let recipe_service: &AppRecipeService = app_context(cx);
-    let recipes = recipe_service.get_recipes(user.id().clone()).await?;
+    let list_query = query_params::<RecipeListQuery>(cx)?;
+    let params = list_query.params()?;
+    let query = signal(cx, || params.pattern.clone().unwrap_or_default());
+    let category_names = params
+        .categories
+        .iter()
+        .map(|category| category.as_str().to_string())
+        .collect::<Vec<_>>();
+    let sort = params.sort.as_str().to_string();
+    let page_number = params.page;
 
     Ok(view! {
+        cx =>
         <h2 class="mb-6 text-2xl font-semibold">(t!(recipes_list_heading))</h2>
 
-        if recipes.is_empty() {
-            <p class="mt-8 text-sm text-muted-foreground">(t!(recipes_empty))</p>
+        recipe_search_form(
+            query: query.clone(),
+            categories: &params.categories,
+            exclude_needs_review: params.exclude_needs_review,
+            sort: params.sort
+        )
+
+        recipe_search_results(
+            query: $(query.get()),
+            categories: category_names,
+            exclude_needs_review: params.exclude_needs_review,
+            sort: sort,
+            page_number: page_number
+        )
+    })
+}
+
+#[shard]
+async fn recipe_search_results(
+    cx: &Cx,
+    query: String,
+    categories: Vec<String>,
+    exclude_needs_review: bool,
+    sort: String,
+    page_number: usize,
+) -> Result<impl View> {
+    let user = auth::require_user(cx)?;
+    let params = SearchParams {
+        pattern: Some(query.trim().to_string()).filter(|pattern| !pattern.is_empty()),
+        categories: categories
+            .iter()
+            .filter_map(|category| RecipeCategory::parse(category))
+            .collect(),
+        exclude_needs_review,
+        sort: SortChoice::parse(Some(&sort)).unwrap_or_default(),
+        page: page_number.max(1),
+    };
+    let has_filters = params.has_filters();
+
+    let recipe_service: &AppRecipeService = app_context(cx);
+    let mut result = recipe_service
+        .search_recipes(params.search_query(params.page), user.id().clone())
+        .await?;
+
+    // A bookmarked page may be past the end of the current results, for
+    // example after a recipe was deleted. Clamp it and fetch the last page.
+    let total_pages = result.total.div_ceil(RECIPE_PAGE_SIZE);
+    let page_number = if total_pages == 0 {
+        1
+    } else {
+        params.page.min(total_pages)
+    };
+    if page_number != params.page {
+        result = recipe_service
+            .search_recipes(params.search_query(page_number), user.id().clone())
+            .await?;
+    }
+
+    let total_pages = result.total.div_ceil(RECIPE_PAGE_SIZE);
+    let base = href!(page).resolve(cx);
+    let previous_page = (page_number > 1).then(|| params.page_href(&base, page_number - 1));
+    let next_page = (page_number < total_pages).then(|| params.page_href(&base, page_number + 1));
+    let count_label = if result.total == 1 {
+        t!(recipe_search_result_count, count = result.total.to_string())
+            .resolve(cx)
+            .into_owned()
+    } else {
+        t!(
+            recipe_search_result_count_plural,
+            count = result.total.to_string()
+        )
+        .resolve(cx)
+        .into_owned()
+    };
+
+    Ok(view! {
+        if result.total == 0 {
+            if has_filters {
+                <p class="mt-8 text-sm text-muted-foreground">(t!(recipe_search_empty))</p>
+            } else {
+                <p class="mt-8 text-sm text-muted-foreground">(t!(recipes_empty))</p>
+            }
         } else {
-            <ul class="mt-8 flex flex-col gap-2">
-                for recipe in &recipes {
+            <p class="mt-8 text-sm text-muted-foreground" role="status">(count_label)</p>
+            <ul class="mt-3 flex flex-col gap-2">
+                for recipe in &result.recipes {
                     <li
                         class="rounded-lg border border-border bg-card px-4 py-3 text-sm shadow-sm"
                     >
@@ -91,6 +320,35 @@ pub async fn page(cx: &Cx) -> Result<impl View> {
                     </li>
                 }
             </ul>
+        }
+
+        if total_pages > 1 {
+            <nav
+                class="mt-6 flex items-center justify-between text-sm"
+                aria-label=(t!(recipe_search_pagination))
+            >
+                if let Some(previous) = previous_page {
+                    <a class="underline underline-offset-4" href=(previous)>
+                        (t!(recipe_search_previous))
+                    </a>
+                } else {
+                    <span></span>
+                }
+                <span class="text-muted-foreground">
+                    (t!(
+                        recipe_search_page,
+                        current = page_number.to_string(),
+                        total = total_pages.to_string()
+                    ))
+                </span>
+                if let Some(next) = next_page {
+                    <a class="underline underline-offset-4" href=(next)>
+                        (t!(recipe_search_next))
+                    </a>
+                } else {
+                    <span></span>
+                }
+            </nav>
         }
     })
 }
@@ -1008,6 +1266,124 @@ mod tests {
             .iter()
             .map(|(key, value)| ((*key).to_string(), (*value).to_string()))
             .collect()
+    }
+
+    fn list_query() -> RecipeListQuery {
+        RecipeListQuery {
+            q: None,
+            sort: None,
+            page: None,
+            exclude_needs_review: None,
+            category_aperitif: None,
+            category_starter: None,
+            category_main: None,
+            category_side: None,
+            category_dessert: None,
+            category_breakfast: None,
+            category_snack: None,
+            category_drink: None,
+            category_other: None,
+        }
+    }
+
+    #[test]
+    fn list_query_collects_the_selected_categories() {
+        let mut query = list_query();
+        query.category_main = Some(true);
+        query.category_dessert = Some(true);
+        query.category_side = Some(false);
+
+        assert_eq!(
+            query.categories(),
+            vec![RecipeCategory::Main, RecipeCategory::Dessert]
+        );
+    }
+
+    #[test]
+    fn list_query_trims_the_pattern_and_ignores_blank_values() {
+        let mut query = list_query();
+        query.q = Some("  soup  ".to_string());
+        assert_eq!(query.pattern().as_deref(), Some("soup"));
+        assert!(query.params().unwrap().has_filters());
+
+        query.q = Some("   ".to_string());
+        assert_eq!(query.pattern(), None);
+        assert!(!query.params().unwrap().has_filters());
+    }
+
+    #[test]
+    fn list_query_parses_every_sort_and_rejects_unknown_values() {
+        for choice in SortChoice::ALL {
+            let mut query = list_query();
+            query.sort = Some(choice.as_str().to_string());
+
+            assert_eq!(query.sort_choice().unwrap(), choice);
+        }
+
+        let mut query = list_query();
+        query.sort = Some("random".to_string());
+
+        assert!(query.sort_choice().is_err());
+    }
+
+    #[test]
+    fn list_query_clamps_the_page_to_at_least_one() {
+        let mut query = list_query();
+
+        assert_eq!(query.page_number(), 1);
+
+        query.page = Some(0);
+        assert_eq!(query.page_number(), 1);
+
+        query.page = Some(3);
+        assert_eq!(query.page_number(), 3);
+    }
+
+    #[test]
+    fn search_query_maps_pagination_to_an_offset() {
+        let mut query = list_query();
+        query.page = Some(3);
+
+        let params = query.params().unwrap();
+        let search = params.search_query(params.page);
+
+        assert_eq!(search.offset, 2 * RECIPE_PAGE_SIZE);
+        assert_eq!(search.limit, Some(RECIPE_PAGE_SIZE));
+    }
+
+    #[test]
+    fn page_href_preserves_filters_sort_and_page() {
+        let mut query = list_query();
+        query.q = Some("soupe à l'oignon".to_string());
+        query.category_main = Some(true);
+        query.category_dessert = Some(true);
+        query.exclude_needs_review = Some(true);
+        query.sort = Some("title-asc".to_string());
+
+        let href = query.params().unwrap().page_href("/recipes", 2);
+
+        assert!(href.starts_with("/recipes?"));
+        assert!(href.contains("q=soupe+%C3%A0+l%27oignon"));
+        assert!(href.contains("category_main=true"));
+        assert!(href.contains("category_dessert=true"));
+        assert!(href.contains("exclude_needs_review=true"));
+        assert!(href.contains("sort=title-asc"));
+        assert!(href.contains("page=2"));
+    }
+
+    #[test]
+    fn page_href_omits_defaults_and_the_first_page() {
+        let query = list_query();
+
+        assert_eq!(query.params().unwrap().page_href("/recipes", 1), "/recipes");
+
+        let mut sorted = list_query();
+        sorted.sort = Some("updated-desc".to_string());
+
+        assert_eq!(
+            sorted.params().unwrap().page_href("/recipes", 1),
+            "/recipes"
+        );
     }
 
     #[test]

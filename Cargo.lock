@@ -375,6 +375,7 @@ dependencies = [
  "cookbook-domain",
  "cookbook-infra",
  "cookbook-vision",
+ "form_urlencoded",
  "serde",
  "tokio",
  "topcoat",
