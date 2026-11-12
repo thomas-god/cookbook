@@ -80,7 +80,6 @@ pub(super) enum StructureFormData {
 
 #[derive(Debug)]
 pub(super) struct RecipeFormData {
-    recipe_type: RecipeFormType,
     pub(super) title: String,
     pub(super) description: Option<String>,
     pub(super) servings: Option<Servings>,
@@ -101,15 +100,6 @@ impl RecipeFormData {
 
     pub(super) fn into_content(self) -> Result<RecipeContent> {
         let description = self.description.map(RecipeDescription::new);
-        let type_matches = matches!(
-            (self.recipe_type, &self.structure),
-            (RecipeFormType::Simple, StructureFormData::Simple(_))
-                | (RecipeFormType::Multipart, StructureFormData::Multipart(_))
-        );
-
-        if !type_matches {
-            return Err(invalid("the recipe type does not match its contents"));
-        }
 
         let content = match self.structure {
             StructureFormData::Simple(body) => RecipeContent::new_simple(
@@ -303,7 +293,6 @@ pub(super) fn parse_recipe_form(pairs: &[(String, String)]) -> Result<RecipeForm
     };
 
     Ok(RecipeFormData {
-        recipe_type,
         title,
         description,
         servings: parse_servings(
@@ -1279,7 +1268,7 @@ mod tests {
         ]))
         .unwrap();
 
-        assert_eq!(form.recipe_type, RecipeFormType::Multipart);
+        assert!(matches!(form.structure, StructureFormData::Multipart(_)));
 
         let StructureFormData::Multipart(parts) = &form.structure else {
             panic!("expected a multipart form");

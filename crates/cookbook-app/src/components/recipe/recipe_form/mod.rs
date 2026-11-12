@@ -108,9 +108,9 @@ async fn recipe_form_fields(
 ) -> Result<impl View> {
     auth::require_user(cx)?;
 
-    let current = load_current_recipe(cx, &recipe_id).await?;
-    let images = if current.is_some() && !recipe_id.is_empty() {
-        let user = auth::require_user(cx)?;
+    let user = auth::require_user(cx)?;
+    let current = load_current_recipe(cx, &recipe_id, user.id()).await?;
+    let images = if current.is_some() {
         let recipe_service: &AppRecipeService = app_context(cx);
         recipe_service
             .get_recipe_images(RecipeIdValue::new(recipe_id.clone()), user.id().clone())
@@ -118,12 +118,6 @@ async fn recipe_form_fields(
     } else {
         Vec::new()
     };
-    let initial = current
-        .as_ref()
-        .map(|recipe| FormInitial::from_recipe(recipe, &images, &recipe_id, cx))
-        .unwrap_or_else(|| FormInitial::new(multipart));
-    let is_edit = !latest_revision.is_empty();
-    let is_multipart = matches!(initial.structure, StructureInitial::Multipart(_));
     let image_lookup: HashMap<String, FormImageInitial> = images
         .iter()
         .map(|image| {
@@ -133,6 +127,12 @@ async fn recipe_form_fields(
             )
         })
         .collect();
+    let initial = current
+        .as_ref()
+        .map(|recipe| FormInitial::from_recipe(recipe, &image_lookup))
+        .unwrap_or_else(|| FormInitial::new(multipart));
+    let is_edit = !latest_revision.is_empty();
+    let is_multipart = matches!(initial.structure, StructureInitial::Multipart(_));
 
     let FormInitial {
         title,

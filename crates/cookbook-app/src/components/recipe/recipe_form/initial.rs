@@ -1,11 +1,14 @@
 use std::collections::HashMap;
 
-use cookbook_domain::recipe::{
-    models::{
-        Quantity, RecipeBody, RecipeId as RecipeIdValue, RecipeImageMetadata, RecipeWithContent,
-        Servings, Unit,
+use cookbook_domain::{
+    recipe::{
+        models::{
+            Quantity, RecipeBody, RecipeId as RecipeIdValue, RecipeImageMetadata,
+            RecipeWithContent, Servings, Unit,
+        },
+        ports::RecipeService,
     },
-    ports::RecipeService,
+    user::models::UserId,
 };
 use topcoat::{
     Result,
@@ -15,7 +18,7 @@ use topcoat::{
 
 use crate::{
     app::{
-        AppRecipeService, auth,
+        AppRecipeService,
         recipes::{ImageId, RecipeId, recipe_image},
     },
     t,
@@ -104,12 +107,7 @@ pub(super) fn form_image_initial(
 }
 
 impl BodyInitial {
-    fn from_body(
-        body: &RecipeBody,
-        image_by_id: &HashMap<&str, &RecipeImageMetadata>,
-        recipe_id: &str,
-        cx: &Cx,
-    ) -> Self {
+    fn from_body(body: &RecipeBody, image_lookup: &HashMap<String, FormImageInitial>) -> Self {
         let mut ingredients: Vec<_> = body
             .ingredients()
             .iter()
@@ -144,7 +142,7 @@ impl BodyInitial {
                     images: step
                         .images()
                         .iter()
-                        .filter(|image_id| image_by_id.contains_key(image_id.as_str()))
+                        .filter(|image_id| image_lookup.contains_key(image_id.as_str()))
                         .map(|image_id| image_id.as_str().to_string())
                         .collect(),
                 })
@@ -152,8 +150,7 @@ impl BodyInitial {
             images: body
                 .images()
                 .iter()
-                .filter_map(|image_id| image_by_id.get(image_id.as_str()).copied())
-                .map(|image| form_image_initial(image, recipe_id, cx))
+                .filter_map(|image_id| image_lookup.get(image_id.as_str()).cloned())
                 .collect(),
         }
     }
@@ -180,9 +177,7 @@ impl FormInitial {
 
     pub(super) fn from_recipe(
         recipe: &RecipeWithContent,
-        images: &[RecipeImageMetadata],
-        recipe_id: &str,
-        cx: &Cx,
+        image_lookup: &HashMap<String, FormImageInitial>,
     ) -> Self {
         let (servings_type, servings_count, servings_label) = match recipe.servings() {
             Some(Servings::People(count)) => {
@@ -196,13 +191,8 @@ impl FormInitial {
             None => ("none".to_string(), String::new(), String::new()),
         };
 
-        let image_by_id: HashMap<&str, &RecipeImageMetadata> = images
-            .iter()
-            .map(|image| (image.id().as_str(), image))
-            .collect();
-
         let structure = if let Some(body) = recipe.content().simple_body() {
-            StructureInitial::Simple(BodyInitial::from_body(body, &image_by_id, recipe_id, cx))
+            StructureInitial::Simple(BodyInitial::from_body(body, image_lookup))
         } else {
             StructureInitial::Multipart(
                 recipe
@@ -216,7 +206,7 @@ impl FormInitial {
                             .description()
                             .map(|description| description.as_str().to_string())
                             .unwrap_or_default(),
-                        body: BodyInitial::from_body(part.body(), &image_by_id, recipe_id, cx),
+                        body: BodyInitial::from_body(part.body(), image_lookup),
                     })
                     .collect(),
             )
@@ -243,15 +233,15 @@ impl FormInitial {
 pub(super) async fn load_current_recipe(
     cx: &Cx,
     recipe_id: &str,
+    user: &UserId,
 ) -> Result<Option<RecipeWithContent>> {
     if recipe_id.is_empty() {
         return Ok(None);
     }
 
-    let user = auth::require_user(cx)?;
     let recipe_service: &AppRecipeService = app_context(cx);
     let recipe = recipe_service
-        .get_recipe(RecipeIdValue::new(recipe_id.to_string()), user.id().clone())
+        .get_recipe(RecipeIdValue::new(recipe_id.to_string()), user.clone())
         .await?;
 
     Ok(Some(recipe.ok_or_not_found()?))
@@ -371,7 +361,7 @@ mod tests {
         );
         let current = RecipeWithContent::new(recipe, revision).unwrap();
 
-        let initial = FormInitial::from_recipe(&current, &[], "soup", &Cx::default());
+        let initial = FormInitial::from_recipe(&current, &HashMap::new());
 
         assert_eq!(initial.title, "Soup");
         assert_eq!(initial.description, "A warming soup.");
