@@ -1,5 +1,5 @@
 use cookbook_domain::recipe::ports::RecipeService;
-use cookbook_vision::{SourcePhoto, VisionClient, VisionError};
+use cookbook_vision::{SourceDocument, VisionClient, VisionError};
 use topcoat::{
     Result,
     context::{Cx, app_context},
@@ -22,7 +22,7 @@ use crate::{
         button::button,
         card::{card, card_content, card_header, card_title},
         field::{field, field_description, field_error, field_label},
-        image_upload::image_upload,
+        image_upload::document_upload,
     },
     t,
 };
@@ -34,6 +34,8 @@ pub const MAX_UPLOAD_BYTES: usize = 100 * 1024 * 1024;
 enum ImportError {
     Empty,
     Unsupported,
+    TooManyPages,
+    MixedDocuments,
     Failed,
     SaveFailed,
 }
@@ -51,22 +53,32 @@ pub async fn create(cx: &Cx, mut multipart: Multipart) -> Result<impl View> {
     let user = auth::require_user(cx)?;
     require_enabled(cx)?;
 
-    let photos = match read_photos(&mut multipart).await {
-        Ok(photos) => photos,
+    let documents = match read_documents(&mut multipart).await {
+        Ok(documents) => documents,
         Err(_) => return import_page(cx, Some(ImportError::Failed)),
     };
 
-    if photos.is_empty() {
+    if documents.is_empty() {
         return import_page(cx, Some(ImportError::Empty));
     }
 
     let client: &VisionClient = app_context(cx);
-    let vision_recipe = match client.parse_recipe(photos).await {
+    let vision_recipe = match client.parse_recipe(documents).await {
         Ok(recipe) => recipe,
-        Err(VisionError::UnsupportedImage { .. } | VisionError::ImageProcessing { .. }) => {
+        Err(
+            VisionError::UnsupportedDocument { .. }
+            | VisionError::DocumentProcessing { .. }
+            | VisionError::EncryptedPdf { .. },
+        ) => {
             return import_page(cx, Some(ImportError::Unsupported));
         }
-        Err(VisionError::NoImages | VisionError::EmptyImage { .. }) => {
+        Err(VisionError::TooManyPages { .. }) => {
+            return import_page(cx, Some(ImportError::TooManyPages));
+        }
+        Err(VisionError::MultiplePdfDocuments | VisionError::MixedDocumentTypes) => {
+            return import_page(cx, Some(ImportError::MixedDocuments));
+        }
+        Err(VisionError::NoDocuments | VisionError::EmptyDocument { .. }) => {
             return import_page(cx, Some(ImportError::Empty));
         }
         Err(_) => return import_page(cx, Some(ImportError::Failed)),
@@ -83,7 +95,7 @@ pub async fn create(cx: &Cx, mut multipart: Multipart) -> Result<impl View> {
 }
 
 fn import_page(cx: &Cx, error: Option<ImportError>) -> Result<impl View> {
-    let images_id = element_id(cx);
+    let documents_id = element_id(cx);
     let has_error = error.is_some();
 
     Ok(view! {
@@ -107,6 +119,12 @@ fn import_page(cx: &Cx, error: Option<ImportError>) -> Result<impl View> {
                             if matches!(error, Some(ImportError::Unsupported)) {
                                 field_error((t!(recipe_import_unsupported)))
                             }
+                            if matches!(error, Some(ImportError::TooManyPages)) {
+                                field_error((t!(recipe_import_too_many_pages)))
+                            }
+                            if matches!(error, Some(ImportError::MixedDocuments)) {
+                                field_error((t!(recipe_import_mixed_documents)))
+                            }
                             if matches!(error, Some(ImportError::Failed)) {
                                 field_error((t!(recipe_import_failed)))
                             }
@@ -118,12 +136,12 @@ fn import_page(cx: &Cx, error: Option<ImportError>) -> Result<impl View> {
                     }
                     field(
                         field_label(
-                            attrs: attributes! { for=(&images_id) },
+                            attrs: attributes! { for=(&documents_id) },
                             (t!(recipe_import_images))
                         )
-                        image_upload(
+                        document_upload(
                             multiple: true,
-                            attrs: attributes! { id=(&images_id) name="images" required="" }
+                            attrs: attributes! { id=(&documents_id) name="documents" required="" }
                         )
                         field_description((t!(recipe_import_hint)))
                     )
@@ -153,20 +171,20 @@ fn import_page(cx: &Cx, error: Option<ImportError>) -> Result<impl View> {
     })
 }
 
-async fn read_photos(multipart: &mut Multipart) -> Result<Vec<SourcePhoto>> {
-    let mut photos = Vec::new();
+async fn read_documents(multipart: &mut Multipart) -> Result<Vec<SourceDocument>> {
+    let mut documents = Vec::new();
 
     while let Some(part) = multipart.next_field().await? {
-        if part.name() != Some("images") {
+        if part.name() != Some("documents") {
             continue;
         }
 
         let original_name = part.file_name().map(str::to_owned);
         let bytes = part.bytes().await?;
-        photos.push(SourcePhoto::new(original_name, bytes.to_vec()));
+        documents.push(SourceDocument::new(original_name, bytes.to_vec()));
     }
 
-    Ok(photos)
+    Ok(documents)
 }
 
 fn require_enabled(cx: &Cx) -> Result<()> {

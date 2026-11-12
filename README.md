@@ -32,8 +32,9 @@ untrusted clients, make sure they cannot spoof that header.
 
 ## Vision recipe import
 
-Recipes can be imported from photos of an existing recipe using a vision-language model (VLM) via an
-OpenAI-compatible model endpoint. Configure a primary endpoint and an optional fallback:
+Recipes can be imported from photos or a PDF of an existing recipe using a vision-language model
+(VLM) via an OpenAI-compatible model endpoint. Configure a primary endpoint and an optional
+fallback:
 
 ```sh
 COOKBOOK_VLM_PRIMARY_URL=http://localhost:1234/v1/chat/completions
@@ -52,8 +53,13 @@ COOKBOOK_VLM_BACKUP_TIMEOUT_SECONDS=120
 - The app tries endpoints in order: primary first, then backup.
 - URLs are full chat-completions URLs, not just base URLs.
 - Requests use structured output (`response_format.json_schema`).
-- Uploaded originals are kept as recipe source photos. A resized copy is generated only for the
+- Uploaded originals are kept as recipe source documents. A resized copy is generated only for the
   vision request.
+- A PDF is imported as a single recipe and may contain at most 10 pages. Each page is rendered to an
+  image for the vision request only; the original PDF is stored unchanged and linked from the
+  recipe.
+- A PDF cannot be imported together with photos or another PDF.
+- Password-protected PDFs are not supported.
 
 ## Secrets
 

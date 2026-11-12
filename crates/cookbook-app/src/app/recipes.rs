@@ -1,19 +1,20 @@
 use std::time::SystemTime;
 
 use cookbook_domain::recipe::models::{
-    NewRecipeSourceImage, RecipeId as RecipeIdValue, RecipeImageId as RecipeImageIdValue,
-    RecipeRevision, RecipeRevisionId, RecipeScope, RecipeSourceImageId as RecipeSourceImageIdValue,
-    RecipeStructureKind, RevisionOrigin, RevisionVerification, Servings,
+    NewRecipeSourceDocument, RecipeId as RecipeIdValue, RecipeImageId as RecipeImageIdValue,
+    RecipeRevision, RecipeRevisionId, RecipeScope,
+    RecipeSourceDocumentId as RecipeSourceDocumentIdValue, RecipeStructureKind, RevisionOrigin,
+    RevisionVerification, Servings,
 };
 use cookbook_domain::recipe::ports::{
-    AddRecipeSourceImagesError, AddRecipeSourceImagesRequest, ConvertRecipeStructureRequest,
-    DeleteRecipeSourceImageError, RecipeService, RestoreRecipeRevisionError,
+    AddRecipeSourceDocumentsError, AddRecipeSourceDocumentsRequest, ConvertRecipeStructureRequest,
+    DeleteRecipeSourceDocumentError, RecipeService, RestoreRecipeRevisionError,
     RestoreRecipeRevisionRequest, UpdateRecipeError, UpdateRecipeScopeError,
     UpdateRecipeScopeRequest,
 };
 use cookbook_domain::user::models::UserId;
 use cookbook_infra::auth::ports::UserRepository;
-use cookbook_vision::detect_image_content_type;
+use cookbook_vision::detect_source_document_content_type;
 use topcoat::{
     Result,
     context::{Cx, app_context},
@@ -41,7 +42,7 @@ use crate::{
             recipe_images::recipe_image_gallery,
             recipe_scope_form::recipe_scope_form,
             recipe_view::recipe_view,
-            source_images::{source_image_editor, source_image_gallery},
+            source_documents::{source_document_editor, source_document_gallery},
         },
     },
     t,
@@ -96,7 +97,7 @@ pub async fn page(cx: &Cx) -> Result<impl View> {
 
 path_param!(pub recipe_id);
 path_param!(revision_id);
-path_param!(pub source_image_id);
+path_param!(pub source_document_id);
 path_param!(pub image_id);
 
 #[page("./{recipe_id}")]
@@ -109,8 +110,8 @@ pub async fn recipe_detail(cx: &Cx) -> Result<impl View> {
         .get_recipe(RecipeIdValue::new(recipe_id), user.id().clone())
         .await?
         .ok_or_not_found()?;
-    let source_images = recipe_service
-        .get_source_images(recipe.id().clone(), user.id().clone())
+    let source_documents = recipe_service
+        .get_source_documents(recipe.id().clone(), user.id().clone())
         .await?;
     let images = recipe_service
         .get_recipe_images(recipe.id().clone(), user.id().clone())
@@ -226,9 +227,9 @@ pub async fn recipe_detail(cx: &Cx) -> Result<impl View> {
                 content: recipe.content(),
                 images: &images
             )
-            source_image_gallery(
+            source_document_gallery(
                 recipe_id: recipe.id().as_str(),
-                images: &source_images
+                documents: &source_documents
             )
             if is_author {
                 <section class="rounded-lg border border-border bg-card p-4">
@@ -274,8 +275,8 @@ pub async fn edit_recipe(cx: &Cx) -> Result<impl View> {
         return Err(forbidden().into());
     }
 
-    let source_images = recipe_service
-        .get_source_images(recipe.id().clone(), user.id().clone())
+    let source_documents = recipe_service
+        .get_source_documents(recipe.id().clone(), user.id().clone())
         .await?;
     let needs_review = recipe.needs_review();
     let mode = RecipeFormMode::Edit {
@@ -336,11 +337,11 @@ pub async fn edit_recipe(cx: &Cx) -> Result<impl View> {
                 )
             )
             card(
-                card_header(card_title((t!(source_images_heading))))
+                card_header(card_title((t!(source_documents_heading))))
                 card_content(
-                    source_image_editor(
+                    source_document_editor(
                         recipe_id: recipe_id.as_str(),
-                        images: &source_images
+                        documents: &source_documents
                     )
                 )
             )
@@ -520,27 +521,53 @@ pub async fn update_recipe_scope(
     }
 }
 
-#[route(GET "./{recipe_id}/source-images/{source_image_id}")]
-pub async fn source_image(cx: &Cx) -> Result<Response> {
+#[route(GET "./{recipe_id}/source-documents/{source_document_id}")]
+pub async fn source_document(cx: &Cx) -> Result<Response> {
     let user = auth::require_user(cx)?;
 
     let recipe_id = path_param::<RecipeId>(cx).to_string();
-    let image_id = path_param::<SourceImageId>(cx).to_string();
+    let document_id = path_param::<SourceDocumentId>(cx).to_string();
     let recipe_service: &AppRecipeService = app_context(cx);
-    let image = recipe_service
-        .get_source_image(
+    let document = recipe_service
+        .get_source_document(
             RecipeIdValue::new(recipe_id),
-            RecipeSourceImageIdValue::new(image_id),
+            RecipeSourceDocumentIdValue::new(document_id),
             user.id().clone(),
         )
         .await?
         .ok_or_not_found()?;
 
-    Ok(Response::builder()
-        .header("Content-Type", image.content_type())
+    let mut response = Response::builder()
+        .header("Content-Type", document.content_type())
         .header("Cache-Control", "private, max-age=3600")
-        .header("X-Content-Type-Options", "nosniff")
-        .body(Body::from(image.bytes().to_vec()))?)
+        .header("X-Content-Type-Options", "nosniff");
+
+    if document.content_type() == "application/pdf" {
+        response = response.header(
+            "Content-Disposition",
+            inline_file_name(document.original_name()),
+        );
+    }
+
+    Ok(response.body(Body::from(document.bytes().to_vec()))?)
+}
+
+fn inline_file_name(original_name: Option<&str>) -> String {
+    let name = original_name
+        .filter(|name| !name.is_empty())
+        .unwrap_or("document.pdf");
+    let sanitized: String = name
+        .chars()
+        .map(|character| {
+            if character.is_ascii_graphic() && character != '"' && character != '\\' {
+                character
+            } else {
+                '_'
+            }
+        })
+        .collect();
+
+    format!("inline; filename=\"{sanitized}\"")
 }
 
 #[route(GET "./{recipe_id}/images/{image_id}")]
@@ -566,66 +593,66 @@ pub async fn recipe_image(cx: &Cx) -> Result<Response> {
         .body(Body::from(image.bytes().to_vec()))?)
 }
 
-#[route(POST "./{recipe_id}/source-images")]
-pub async fn upload_source_images(cx: &Cx, mut multipart: Multipart) -> Result<SeeOther> {
+#[route(POST "./{recipe_id}/source-documents")]
+pub async fn upload_source_documents(cx: &Cx, mut multipart: Multipart) -> Result<SeeOther> {
     let user = auth::require_user(cx)?;
     let recipe_id = path_param::<RecipeId>(cx).to_string();
-    let mut images = Vec::new();
+    let mut documents = Vec::new();
 
     while let Some(part) = multipart.next_field().await? {
-        if part.name() != Some("images") {
+        if part.name() != Some("documents") {
             continue;
         }
 
         let original_name = part.file_name().map(str::to_owned);
         let bytes = part.bytes().await?;
-        let Some(content_type) = detect_image_content_type(&bytes) else {
-            return Err(bad_request(t!(source_images_unsupported).resolve(cx)).into());
+        let Some(content_type) = detect_source_document_content_type(&bytes) else {
+            return Err(bad_request(t!(source_documents_unsupported).resolve(cx)).into());
         };
 
-        images.push(NewRecipeSourceImage::new(
+        documents.push(NewRecipeSourceDocument::new(
             content_type.to_string(),
             original_name,
             bytes.to_vec(),
         ));
     }
 
-    if images.is_empty() {
-        return Err(bad_request(t!(source_images_upload_empty).resolve(cx)).into());
+    if documents.is_empty() {
+        return Err(bad_request(t!(source_documents_upload_empty).resolve(cx)).into());
     }
 
     let recipe_service: &AppRecipeService = app_context(cx);
 
     match recipe_service
-        .add_source_images(AddRecipeSourceImagesRequest {
+        .add_source_documents(AddRecipeSourceDocumentsRequest {
             recipe_id: RecipeIdValue::new(recipe_id.clone()),
             added_by: user.id().clone(),
-            images,
+            documents,
         })
         .await
     {
         Ok(_) => Ok(see_other(
             href!(edit_recipe, RecipeId(recipe_id.as_str())).resolve(cx),
         )),
-        Err(AddRecipeSourceImagesError::RecipeNotFound) => Err(not_found().into()),
-        Err(AddRecipeSourceImagesError::Forbidden) => Err(forbidden().into()),
+        Err(AddRecipeSourceDocumentsError::RecipeNotFound) => Err(not_found().into()),
+        Err(AddRecipeSourceDocumentsError::Forbidden) => Err(forbidden().into()),
         Err(error) => Err(error.into()),
     }
 }
 
 // Not DELETE since its driven by an HTTP form that can only use POST
-#[route(POST "./{recipe_id}/source-images/{source_image_id}/delete")]
-pub async fn delete_source_image(cx: &Cx) -> Result<SeeOther> {
+#[route(POST "./{recipe_id}/source-documents/{source_document_id}/delete")]
+pub async fn delete_source_document(cx: &Cx) -> Result<SeeOther> {
     let user = auth::require_user(cx)?;
 
     let recipe_id = path_param::<RecipeId>(cx).to_string();
-    let image_id = path_param::<SourceImageId>(cx).to_string();
+    let document_id = path_param::<SourceDocumentId>(cx).to_string();
     let recipe_service: &AppRecipeService = app_context(cx);
 
     match recipe_service
-        .delete_source_image(
+        .delete_source_document(
             RecipeIdValue::new(recipe_id.clone()),
-            RecipeSourceImageIdValue::new(image_id),
+            RecipeSourceDocumentIdValue::new(document_id),
             user.id().clone(),
         )
         .await
@@ -633,8 +660,8 @@ pub async fn delete_source_image(cx: &Cx) -> Result<SeeOther> {
         Ok(_) => Ok(see_other(
             href!(edit_recipe, RecipeId(recipe_id.as_str())).resolve(cx),
         )),
-        Err(DeleteRecipeSourceImageError::NotFound) => Err(not_found().into()),
-        Err(DeleteRecipeSourceImageError::Forbidden) => Err(forbidden().into()),
+        Err(DeleteRecipeSourceDocumentError::NotFound) => Err(not_found().into()),
+        Err(DeleteRecipeSourceDocumentError::Forbidden) => Err(forbidden().into()),
         Err(error) => Err(error.into()),
     }
 }
@@ -1087,5 +1114,18 @@ mod tests {
             "12 cookies"
         );
         assert_eq!(servings_label(&cx, &Servings::portions(12)), "12");
+    }
+
+    #[test]
+    fn builds_a_safe_inline_file_name_for_pdfs() {
+        assert_eq!(
+            inline_file_name(Some("grandma's recipe.pdf")),
+            "inline; filename=\"grandma's_recipe.pdf\""
+        );
+        assert_eq!(
+            inline_file_name(Some("bad\"name\\\r\n.pdf")),
+            "inline; filename=\"bad_name___.pdf\""
+        );
+        assert_eq!(inline_file_name(None), "inline; filename=\"document.pdf\"");
     }
 }

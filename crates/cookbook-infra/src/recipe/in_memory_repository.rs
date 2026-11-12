@@ -8,14 +8,14 @@ use uuid::Uuid;
 use cookbook_domain::recipe::models::{
     DurationMinutes, Ingredient, IngredientName, Quantity, Recipe, RecipeBody, RecipeCategory,
     RecipeContent, RecipeDescription, RecipeDurations, RecipeId, RecipeImage, RecipeImageId,
-    RecipeImageMetadata, RecipeRevision, RecipeRevisionId, RecipeSourceImage, RecipeSourceImageId,
-    RecipeSourceImageSummary, RecipeStep, RecipeStepId, RecipeTitle, RecipeWithContent,
-    RevisionOrigin, RevisionVerification, Servings, Unit,
+    RecipeImageMetadata, RecipeRevision, RecipeRevisionId, RecipeSourceDocument,
+    RecipeSourceDocumentId, RecipeSourceDocumentSummary, RecipeStep, RecipeStepId, RecipeTitle,
+    RecipeWithContent, RevisionOrigin, RevisionVerification, Servings, Unit,
 };
 use cookbook_domain::recipe::ports::{
-    AddSourceImagesError, DeleteSourceImageError, GetRecipeError, GetRecipeImageError,
-    GetSourceImageError, ListRecipeImagesError, ListRecipeRevisionsError, ListRecipesError,
-    ListSourceImagesError, RecipeRepository, SaveRecipeError,
+    AddSourceDocumentsError, DeleteSourceDocumentError, GetRecipeError, GetRecipeImageError,
+    GetSourceDocumentError, ListRecipeImagesError, ListRecipeRevisionsError, ListRecipesError,
+    ListSourceDocumentsError, RecipeRepository, SaveRecipeError,
 };
 use cookbook_domain::user::models::UserId;
 
@@ -23,7 +23,7 @@ use cookbook_domain::user::models::UserId;
 struct RecipeRecord {
     recipe: Recipe,
     revisions: Vec<RecipeRevision>,
-    source_images: Vec<RecipeSourceImage>,
+    source_documents: Vec<RecipeSourceDocument>,
     images: Vec<RecipeImage>,
 }
 
@@ -68,7 +68,7 @@ impl InMemoryRecipeRepository {
                 RecipeRecord {
                     recipe: current.recipe().clone(),
                     revisions: vec![current.revision().clone()],
-                    source_images: Vec::new(),
+                    source_documents: Vec::new(),
                     images: Vec::new(),
                 },
             );
@@ -251,19 +251,19 @@ impl RecipeRepository for InMemoryRecipeRepository {
         &self,
         recipe: Recipe,
         revision: RecipeRevision,
-        source_images: Vec<RecipeSourceImage>,
+        source_documents: Vec<RecipeSourceDocument>,
         images: Vec<RecipeImage>,
     ) -> Result<(), SaveRecipeError> {
         if revision.recipe_id() != recipe.id() {
             return Err(SaveRecipeError::RecipeIdMismatch);
         }
 
-        if let Some(image) = source_images
+        if let Some(image) = source_documents
             .iter()
             .find(|image| image.recipe_id() != recipe.id())
         {
             return Err(SaveRecipeError::Storage(anyhow!(
-                "source image `{}` does not belong to recipe `{}`",
+                "source document `{}` does not belong to recipe `{}`",
                 image.id().as_str(),
                 recipe.id().as_str()
             )));
@@ -288,7 +288,7 @@ impl RecipeRepository for InMemoryRecipeRepository {
             RecipeRecord {
                 recipe,
                 revisions: vec![revision],
-                source_images,
+                source_documents,
                 images,
             },
         );
@@ -338,7 +338,7 @@ impl RecipeRepository for InMemoryRecipeRepository {
                 RecipeRecord {
                     recipe,
                     revisions: vec![revision],
-                    source_images: Vec::new(),
+                    source_documents: Vec::new(),
                     images: added_images,
                 },
             );
@@ -410,10 +410,10 @@ impl RecipeRepository for InMemoryRecipeRepository {
             .unwrap_or_default())
     }
 
-    async fn add_source_images(
+    async fn add_source_documents(
         &self,
-        images: Vec<RecipeSourceImage>,
-    ) -> Result<(), AddSourceImagesError> {
+        images: Vec<RecipeSourceDocument>,
+    ) -> Result<(), AddSourceDocumentsError> {
         if images.is_empty() {
             return Ok(());
         }
@@ -421,89 +421,87 @@ impl RecipeRepository for InMemoryRecipeRepository {
         let mut store = self
             .store
             .write()
-            .map_err(|_| AddSourceImagesError::Storage(anyhow!("recipe store lock poisoned")))?;
+            .map_err(|_| AddSourceDocumentsError::Storage(anyhow!("recipe store lock poisoned")))?;
 
         let recipe_id = images[0].recipe_id().clone();
         let recipe = store
             .recipes
             .get_mut(&recipe_id)
-            .ok_or(AddSourceImagesError::RecipeNotFound)?;
+            .ok_or(AddSourceDocumentsError::RecipeNotFound)?;
 
         if let Some(image) = images.iter().find(|image| image.recipe_id() != &recipe_id) {
-            return Err(AddSourceImagesError::Storage(anyhow!(
-                "source images belong to different recipes: `{}` and `{}`",
+            return Err(AddSourceDocumentsError::Storage(anyhow!(
+                "source documents belong to different recipes: `{}` and `{}`",
                 recipe_id.as_str(),
                 image.recipe_id().as_str()
             )));
         }
 
-        recipe.source_images.extend(images);
+        recipe.source_documents.extend(images);
 
         Ok(())
     }
 
-    async fn get_source_images(
+    async fn get_source_documents(
         &self,
         recipe_id: RecipeId,
-    ) -> Result<Vec<RecipeSourceImageSummary>, ListSourceImagesError> {
-        let store = self
-            .store
-            .read()
-            .map_err(|_| ListSourceImagesError::Storage(anyhow!("recipe store lock poisoned")))?;
+    ) -> Result<Vec<RecipeSourceDocumentSummary>, ListSourceDocumentsError> {
+        let store = self.store.read().map_err(|_| {
+            ListSourceDocumentsError::Storage(anyhow!("recipe store lock poisoned"))
+        })?;
 
         Ok(store
             .recipes
             .get(&recipe_id)
             .map(|record| {
                 record
-                    .source_images
+                    .source_documents
                     .iter()
-                    .map(RecipeSourceImage::summary)
+                    .map(RecipeSourceDocument::summary)
                     .collect()
             })
             .unwrap_or_default())
     }
 
-    async fn get_source_image(
+    async fn get_source_document(
         &self,
         recipe_id: RecipeId,
-        image_id: RecipeSourceImageId,
-    ) -> Result<Option<RecipeSourceImage>, GetSourceImageError> {
+        image_id: RecipeSourceDocumentId,
+    ) -> Result<Option<RecipeSourceDocument>, GetSourceDocumentError> {
         let store = self
             .store
             .read()
-            .map_err(|_| GetSourceImageError::Storage(anyhow!("recipe store lock poisoned")))?;
+            .map_err(|_| GetSourceDocumentError::Storage(anyhow!("recipe store lock poisoned")))?;
 
         Ok(store.recipes.get(&recipe_id).and_then(|record| {
             record
-                .source_images
+                .source_documents
                 .iter()
                 .find(|image| image.id() == &image_id)
                 .cloned()
         }))
     }
 
-    async fn delete_source_image(
+    async fn delete_source_document(
         &self,
         recipe_id: RecipeId,
-        image_id: RecipeSourceImageId,
-    ) -> Result<(), DeleteSourceImageError> {
-        let mut store = self
-            .store
-            .write()
-            .map_err(|_| DeleteSourceImageError::Storage(anyhow!("recipe store lock poisoned")))?;
+        image_id: RecipeSourceDocumentId,
+    ) -> Result<(), DeleteSourceDocumentError> {
+        let mut store = self.store.write().map_err(|_| {
+            DeleteSourceDocumentError::Storage(anyhow!("recipe store lock poisoned"))
+        })?;
 
         let recipe = store
             .recipes
             .get_mut(&recipe_id)
-            .ok_or(DeleteSourceImageError::NotFound)?;
+            .ok_or(DeleteSourceDocumentError::NotFound)?;
         let index = recipe
-            .source_images
+            .source_documents
             .iter()
             .position(|image| image.id() == &image_id)
-            .ok_or(DeleteSourceImageError::NotFound)?;
+            .ok_or(DeleteSourceDocumentError::NotFound)?;
 
-        recipe.source_images.remove(index);
+        recipe.source_documents.remove(index);
 
         Ok(())
     }
@@ -649,9 +647,9 @@ mod tests {
             .unwrap();
     }
 
-    fn source_image(recipe: &Recipe, id: &str, bytes: &[u8]) -> RecipeSourceImage {
-        RecipeSourceImage::new(
-            RecipeSourceImageId::new(id.to_string()),
+    fn source_document(recipe: &Recipe, id: &str, bytes: &[u8]) -> RecipeSourceDocument {
+        RecipeSourceDocument::new(
+            RecipeSourceDocumentId::new(id.to_string()),
             recipe.id().clone(),
             "image/jpeg".to_string(),
             Some(format!("{id}.jpg")),
@@ -818,11 +816,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn saves_a_new_recipe_with_its_source_images() {
+    async fn saves_a_new_recipe_with_its_source_documents() {
         let repository = InMemoryRecipeRepository::new();
         let recipe = recipe("soup");
         let revision = revision("revision-1", &recipe);
-        let image = source_image(&recipe, "image-1", b"front");
+        let image = source_document(&recipe, "image-1", b"front");
 
         repository
             .save_new_recipe(recipe.clone(), revision, vec![image], Vec::new())
@@ -830,7 +828,7 @@ mod tests {
             .unwrap();
 
         let images = repository
-            .get_source_images(RecipeId::new("soup".to_string()))
+            .get_source_documents(RecipeId::new("soup".to_string()))
             .await
             .unwrap();
 
@@ -887,7 +885,7 @@ mod tests {
         let soup = recipe("soup");
         let revision = revision("revision-1", &soup);
         let salad = recipe("salad");
-        let image = source_image(&salad, "image-1", b"front");
+        let image = source_document(&salad, "image-1", b"front");
 
         let result = repository
             .save_new_recipe(soup, revision, vec![image], Vec::new())
@@ -897,7 +895,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn adds_and_lists_source_images() {
+    async fn adds_and_lists_source_documents() {
         let repository = InMemoryRecipeRepository::new();
         let recipe = recipe("soup");
         let revision = revision("revision-1", &recipe);
@@ -907,15 +905,15 @@ mod tests {
             .unwrap();
 
         repository
-            .add_source_images(vec![
-                source_image(&recipe, "image-1", b"front"),
-                source_image(&recipe, "image-2", b"back"),
+            .add_source_documents(vec![
+                source_document(&recipe, "image-1", b"front"),
+                source_document(&recipe, "image-2", b"back"),
             ])
             .await
             .unwrap();
 
         let images = repository
-            .get_source_images(RecipeId::new("soup".to_string()))
+            .get_source_documents(RecipeId::new("soup".to_string()))
             .await
             .unwrap();
 
@@ -925,7 +923,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn gets_a_source_image_by_id() {
+    async fn gets_a_source_document_by_id() {
         let repository = InMemoryRecipeRepository::new();
         let recipe = recipe("soup");
         let revision = revision("revision-1", &recipe);
@@ -933,16 +931,16 @@ mod tests {
             .save_new_recipe(
                 recipe.clone(),
                 revision,
-                vec![source_image(&recipe, "image-1", b"front")],
+                vec![source_document(&recipe, "image-1", b"front")],
                 Vec::new(),
             )
             .await
             .unwrap();
 
         let image = repository
-            .get_source_image(
+            .get_source_document(
                 RecipeId::new("soup".to_string()),
-                RecipeSourceImageId::new("image-1".to_string()),
+                RecipeSourceDocumentId::new("image-1".to_string()),
             )
             .await
             .unwrap()
@@ -953,7 +951,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn returns_none_for_an_unknown_source_image() {
+    async fn returns_none_for_an_unknown_source_document() {
         let repository = InMemoryRecipeRepository::new();
         let recipe = recipe("soup");
         let revision = revision("revision-1", &recipe);
@@ -963,9 +961,9 @@ mod tests {
             .unwrap();
 
         let image = repository
-            .get_source_image(
+            .get_source_document(
                 RecipeId::new("soup".to_string()),
-                RecipeSourceImageId::new("missing".to_string()),
+                RecipeSourceDocumentId::new("missing".to_string()),
             )
             .await
             .unwrap();
@@ -974,7 +972,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn deletes_a_source_image() {
+    async fn deletes_a_source_document() {
         let repository = InMemoryRecipeRepository::new();
         let recipe = recipe("soup");
         let revision = revision("revision-1", &recipe);
@@ -982,22 +980,22 @@ mod tests {
             .save_new_recipe(
                 recipe.clone(),
                 revision,
-                vec![source_image(&recipe, "image-1", b"front")],
+                vec![source_document(&recipe, "image-1", b"front")],
                 Vec::new(),
             )
             .await
             .unwrap();
 
         repository
-            .delete_source_image(
+            .delete_source_document(
                 RecipeId::new("soup".to_string()),
-                RecipeSourceImageId::new("image-1".to_string()),
+                RecipeSourceDocumentId::new("image-1".to_string()),
             )
             .await
             .unwrap();
 
         let images = repository
-            .get_source_images(RecipeId::new("soup".to_string()))
+            .get_source_documents(RecipeId::new("soup".to_string()))
             .await
             .unwrap();
 
@@ -1005,18 +1003,21 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn rejects_source_images_for_an_unknown_recipe() {
+    async fn rejects_source_documents_for_an_unknown_recipe() {
         let repository = InMemoryRecipeRepository::new();
         let recipe = recipe("soup");
-        let image = source_image(&recipe, "image-1", b"front");
+        let image = source_document(&recipe, "image-1", b"front");
 
-        let result = repository.add_source_images(vec![image]).await;
+        let result = repository.add_source_documents(vec![image]).await;
 
-        assert!(matches!(result, Err(AddSourceImagesError::RecipeNotFound)));
+        assert!(matches!(
+            result,
+            Err(AddSourceDocumentsError::RecipeNotFound)
+        ));
     }
 
     #[tokio::test]
-    async fn deleting_an_unknown_source_image_is_not_found() {
+    async fn deleting_an_unknown_source_document_is_not_found() {
         let repository = InMemoryRecipeRepository::new();
         let recipe = recipe("soup");
         let revision = revision("revision-1", &recipe);
@@ -1026,21 +1027,21 @@ mod tests {
             .unwrap();
 
         let result = repository
-            .delete_source_image(
+            .delete_source_document(
                 RecipeId::new("soup".to_string()),
-                RecipeSourceImageId::new("missing".to_string()),
+                RecipeSourceDocumentId::new("missing".to_string()),
             )
             .await;
 
-        assert!(matches!(result, Err(DeleteSourceImageError::NotFound)));
+        assert!(matches!(result, Err(DeleteSourceDocumentError::NotFound)));
     }
 
     #[tokio::test]
-    async fn unknown_recipes_have_no_source_images() {
+    async fn unknown_recipes_have_no_source_documents() {
         let repository = InMemoryRecipeRepository::new();
 
         let images = repository
-            .get_source_images(RecipeId::new("unknown".to_string()))
+            .get_source_documents(RecipeId::new("unknown".to_string()))
             .await
             .unwrap();
 

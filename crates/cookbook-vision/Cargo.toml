@@ -6,6 +6,7 @@ edition.workspace = true
 [dependencies]
 base64.workspace = true
 cookbook-domain.workspace = true
+hayro.workspace = true
 image.workspace = true
 schemars.workspace = true
 serde.workspace = true

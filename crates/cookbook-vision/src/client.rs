@@ -1,12 +1,12 @@
 use base64::{Engine as _, engine::general_purpose::STANDARD};
-use cookbook_domain::recipe::models::{NewRecipeSourceImage, RecipeContent};
+use cookbook_domain::recipe::models::{NewRecipeSourceDocument, RecipeContent};
 use serde_json::{Value, json};
 use ureq::Agent;
 
 use crate::VisionError;
 use crate::VisionRecipe;
 use crate::config::{VisionConfig, VisionEndpoint};
-use crate::image::{PreparedImage, SourcePhoto, prepare_images};
+use crate::image::{PreparedImage, SourceDocument, prepare_sources};
 use crate::recipe_parser::{SYSTEM_PROMPT, parse_recipe_json, response_format, user_prompt};
 
 /// An ordered, failover-capable VLM client.
@@ -26,37 +26,40 @@ impl VisionClient {
         !self.endpoints.is_empty()
     }
 
-    /// Extracts a recipe from the supplied photos.
+    /// Extracts a recipe from the supplied source documents.
     ///
     /// The first endpoint that returns a valid recipe wins. Invalid model
     /// output (e.g. cannot be parsed) also triggers failover.
     pub async fn parse_recipe(
         &self,
-        photos: Vec<SourcePhoto>,
+        documents: Vec<SourceDocument>,
     ) -> Result<VisionRecipe, VisionError> {
         if !self.is_enabled() {
             return Err(VisionError::Disabled);
         }
 
         let client = self.clone();
-        tokio::task::spawn_blocking(move || client.parse_recipe_blocking(photos))
+        tokio::task::spawn_blocking(move || client.parse_recipe_blocking(documents))
             .await
             .map_err(|error| VisionError::Internal(error.to_string()))?
     }
 
-    fn parse_recipe_blocking(&self, photos: Vec<SourcePhoto>) -> Result<VisionRecipe, VisionError> {
-        let images = prepare_images(photos)?;
+    fn parse_recipe_blocking(
+        &self,
+        documents: Vec<SourceDocument>,
+    ) -> Result<VisionRecipe, VisionError> {
+        let sources = prepare_sources(documents)?;
         let mut failures = Vec::new();
 
         for (index, endpoint) in self.endpoints.iter().enumerate() {
             tracing::debug!(
                 endpoint = index + 1,
                 model = endpoint.model(),
-                images = images.len(),
+                images = sources.vlm_images.len(),
                 "trying vision endpoint"
             );
 
-            match self.try_endpoint(endpoint, &images) {
+            match self.try_endpoint(endpoint, &sources.vlm_images) {
                 Ok(content) => {
                     tracing::info!(
                         endpoint = index + 1,
@@ -64,18 +67,19 @@ impl VisionClient {
                         "vision endpoint returned a recipe"
                     );
 
-                    let source_images = images
+                    let source_documents = sources
+                        .documents
                         .iter()
-                        .map(|image| {
-                            NewRecipeSourceImage::new(
-                                image.content_type.to_string(),
-                                image.original_name.clone(),
-                                image.original_bytes.clone(),
+                        .map(|document| {
+                            NewRecipeSourceDocument::new(
+                                document.content_type.to_string(),
+                                document.original_name.clone(),
+                                document.original_bytes.clone(),
                             )
                         })
                         .collect();
 
-                    return Ok(VisionRecipe::new(content, source_images));
+                    return Ok(VisionRecipe::new(content, source_documents));
                 }
                 Err(reason) => {
                     tracing::warn!(
@@ -201,16 +205,10 @@ mod tests {
     fn builds_a_vision_request_with_all_images() {
         let images = vec![
             PreparedImage {
-                content_type: "image/jpeg",
-                original_name: Some("front.jpg".to_string()),
-                original_bytes: b"front".to_vec(),
                 vlm_bytes: b"front".to_vec(),
                 vlm_content_type: "image/jpeg",
             },
             PreparedImage {
-                content_type: "image/png",
-                original_name: Some("back.png".to_string()),
-                original_bytes: b"back".to_vec(),
                 vlm_bytes: b"back".to_vec(),
                 vlm_content_type: "image/png",
             },

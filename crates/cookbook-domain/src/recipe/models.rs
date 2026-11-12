@@ -950,18 +950,18 @@ pub enum Unit {
     Other(String),
 }
 
-/// A source image as supplied by the application before it is stored.
+/// A source document as supplied by the application before it is stored.
 ///
 /// The domain treats the payload as opaque bytes. The application layer
 /// determines and validates the content type.
 #[derive(Debug, Clone, Constructor)]
-pub struct NewRecipeSourceImage {
+pub struct NewRecipeSourceDocument {
     content_type: String,
     original_name: Option<String>,
     bytes: Vec<u8>,
 }
 
-impl NewRecipeSourceImage {
+impl NewRecipeSourceDocument {
     pub fn content_type(&self) -> &str {
         &self.content_type
     }
@@ -975,10 +975,10 @@ impl NewRecipeSourceImage {
     }
 }
 
-/// A stored source image belonging to a recipe.
+/// A stored source document belonging to a recipe.
 #[derive(Debug, Clone, Constructor)]
-pub struct RecipeSourceImage {
-    id: RecipeSourceImageId,
+pub struct RecipeSourceDocument {
+    id: RecipeSourceDocumentId,
     recipe_id: RecipeId,
     content_type: String,
     original_name: Option<String>,
@@ -987,8 +987,8 @@ pub struct RecipeSourceImage {
     added_at: SystemTime,
 }
 
-impl RecipeSourceImage {
-    pub fn id(&self) -> &RecipeSourceImageId {
+impl RecipeSourceDocument {
+    pub fn id(&self) -> &RecipeSourceDocumentId {
         &self.id
     }
 
@@ -1016,8 +1016,8 @@ impl RecipeSourceImage {
         self.added_at
     }
 
-    pub fn summary(&self) -> RecipeSourceImageSummary {
-        RecipeSourceImageSummary::new(
+    pub fn summary(&self) -> RecipeSourceDocumentSummary {
+        RecipeSourceDocumentSummary::new(
             self.id.clone(),
             self.recipe_id.clone(),
             self.content_type.clone(),
@@ -1029,10 +1029,10 @@ impl RecipeSourceImage {
     }
 }
 
-/// Source image metadata without the image bytes.
+/// Source document metadata without the document bytes.
 #[derive(Debug, Clone, Constructor)]
-pub struct RecipeSourceImageSummary {
-    id: RecipeSourceImageId,
+pub struct RecipeSourceDocumentSummary {
+    id: RecipeSourceDocumentId,
     recipe_id: RecipeId,
     content_type: String,
     original_name: Option<String>,
@@ -1041,8 +1041,8 @@ pub struct RecipeSourceImageSummary {
     added_at: SystemTime,
 }
 
-impl RecipeSourceImageSummary {
-    pub fn id(&self) -> &RecipeSourceImageId {
+impl RecipeSourceDocumentSummary {
+    pub fn id(&self) -> &RecipeSourceDocumentId {
         &self.id
     }
 
@@ -1072,9 +1072,9 @@ impl RecipeSourceImageSummary {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Constructor)]
-pub struct RecipeSourceImageId(String);
+pub struct RecipeSourceDocumentId(String);
 
-impl RecipeSourceImageId {
+impl RecipeSourceDocumentId {
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -1381,9 +1381,9 @@ mod tests {
     }
 
     #[test]
-    fn source_image_summary_contains_metadata_but_not_bytes() {
-        let image = RecipeSourceImage::new(
-            RecipeSourceImageId::new("image-1".to_string()),
+    fn source_document_summary_contains_metadata_but_not_bytes() {
+        let image = RecipeSourceDocument::new(
+            RecipeSourceDocumentId::new("image-1".to_string()),
             RecipeId::new("soup".to_string()),
             "image/jpeg".to_string(),
             Some("front.jpg".to_string()),

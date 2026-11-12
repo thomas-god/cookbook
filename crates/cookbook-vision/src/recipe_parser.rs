@@ -7,7 +7,7 @@ use schemars::{JsonSchema, generate::SchemaSettings};
 use serde::Deserialize;
 
 // TODO: test processing multipart recipes
-pub(crate) const SYSTEM_PROMPT: &str = r#"You extract recipes from photos of handwritten, printed, or book pages.
+pub(crate) const SYSTEM_PROMPT: &str = r#"You extract recipes from photos and PDF pages of handwritten, printed, or book pages.
 
 Preserve the recipe's original language and wording for the title, description, ingredient
 names, step titles, and instructions. Do not invent missing information.
@@ -36,7 +36,10 @@ Rules for category:
 - Use null only when the source does not make the category clear enough to choose."#;
 
 pub(crate) fn user_prompt(image_count: usize) -> String {
-    format!("Extract the recipe from these {image_count} photo(s).")
+    format!(
+        "Extract the recipe from these {image_count} photo(s) or document page(s). \
+         If they contain more than one recipe, extract the first complete recipe."
+    )
 }
 
 /// The JSON schema passed to the endpoint as structured output.
