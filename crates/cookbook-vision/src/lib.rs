@@ -100,26 +100,27 @@ impl std::error::Error for VisionError {}
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
-
     use cookbook_domain::recipe::models::{
-        RecipeContent, RecipeDurations, RecipeTitle, RevisionVerification,
+        RecipeBody, RecipeContent, RecipeDurations, RecipeTitle, RevisionVerification,
     };
 
     use super::*;
 
     #[test]
     fn imported_recipes_need_review() {
-        let content = RecipeContent::new(
+        let content = RecipeContent::new_simple(
             RecipeTitle::new("Soup".to_string()),
             None,
             None,
             None,
-            RecipeDurations::new(None, None, None),
-            HashMap::new(),
-            Vec::new(),
-            Vec::new(),
-        );
+            RecipeBody::new(
+                RecipeDurations::new(None, None, None),
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+            ),
+        )
+        .unwrap();
         let recipe = VisionRecipe::new(content, Vec::new());
 
         let request = recipe.into_create_request(UserId::new("user-1".to_string()));

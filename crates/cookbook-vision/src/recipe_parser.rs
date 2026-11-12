@@ -1,12 +1,12 @@
-use std::collections::HashMap;
-
 use cookbook_domain::recipe::models::{
-    DurationMinutes, IngredientName, Quantity, RecipeCategory, RecipeContent, RecipeDescription,
-    RecipeDurations, RecipeStep, RecipeStepId, RecipeTitle, Servings, Unit,
+    DurationMinutes, Ingredient, IngredientName, Quantity, RecipeBody, RecipeCategory,
+    RecipeContent, RecipeDescription, RecipeDurations, RecipeStep, RecipeStepId, RecipeTitle,
+    Servings, Unit,
 };
 use schemars::{JsonSchema, generate::SchemaSettings};
 use serde::Deserialize;
 
+// TODO: test processing multipart recipes
 pub(crate) const SYSTEM_PROMPT: &str = r#"You extract recipes from photos of handwritten, printed, or book pages.
 
 Preserve the recipe's original language and wording for the title, description, ingredient
@@ -218,8 +218,8 @@ impl RawRecipe {
         let ingredients = self
             .ingredients
             .into_iter()
-            .filter_map(RawIngredient::into_pair)
-            .collect::<Result<HashMap<_, _>, _>>()?;
+            .filter_map(RawIngredient::into_ingredient)
+            .collect::<Result<Vec<_>, _>>()?;
 
         let steps = self
             .steps
@@ -227,20 +227,23 @@ impl RawRecipe {
             .filter_map(RawStep::into_step)
             .collect::<Result<Vec<_>, _>>()?;
 
-        Ok(RecipeContent::new(
+        RecipeContent::new_simple(
             RecipeTitle::new(title),
             description,
             servings,
             category,
-            RecipeDurations::new(
-                duration_minutes(self.preparation_minutes),
-                duration_minutes(self.rest_minutes),
-                duration_minutes(self.cooking_minutes),
+            RecipeBody::new(
+                RecipeDurations::new(
+                    duration_minutes(self.preparation_minutes),
+                    duration_minutes(self.rest_minutes),
+                    duration_minutes(self.cooking_minutes),
+                ),
+                ingredients,
+                Vec::new(),
+                steps,
             ),
-            ingredients,
-            Vec::new(),
-            steps,
-        ))
+        )
+        .map_err(|error| error.to_string())
     }
 }
 
@@ -255,7 +258,7 @@ struct RawIngredient {
 }
 
 impl RawIngredient {
-    fn into_pair(self) -> Option<Result<(IngredientName, Quantity), String>> {
+    fn into_ingredient(self) -> Option<Result<Ingredient, String>> {
         let name = self.name.trim().to_string();
 
         if name.is_empty() {
@@ -269,7 +272,7 @@ impl RawIngredient {
                 self.amount_text.as_deref(),
             )
             .ok_or_else(|| format!("ingredient `{name}` has no valid amount"))
-            .map(|quantity| (IngredientName::new(name), quantity)),
+            .map(|quantity| Ingredient::new(IngredientName::new(name), quantity)),
         )
     }
 }
@@ -415,6 +418,8 @@ mod tests {
         )
         .unwrap();
 
+        let body = content.simple_body().unwrap();
+
         assert_eq!(content.title().as_str(), "Tomato Soup");
         assert_eq!(
             content.description().map(RecipeDescription::as_str),
@@ -424,14 +429,18 @@ mod tests {
         assert_eq!(content.servings(), Some(&Servings::people(4)));
         assert_eq!(content.category(), Some(RecipeCategory::Main));
         assert_eq!(
-            content.ingredients()[&IngredientName::new("tomatoes".to_string())],
-            Quantity::from_measure(800.0, Unit::Gram)
+            body.ingredients()[0].name(),
+            &IngredientName::new("tomatoes".to_string())
         );
         assert_eq!(
-            content.ingredients()[&IngredientName::new("salt".to_string())],
-            Quantity::from_text("to taste")
+            body.ingredients()[0].quantity(),
+            &Quantity::from_measure(800.0, Unit::Gram)
         );
-        assert_eq!(content.steps()[0].instruction(), "Simmer everything.");
+        assert_eq!(
+            body.ingredients()[1].quantity(),
+            &Quantity::from_text("to taste")
+        );
+        assert_eq!(body.steps()[0].instruction(), "Simmer everything.");
     }
 
     #[test]
@@ -544,17 +553,23 @@ mod tests {
         )
         .unwrap();
 
+        let body = content.simple_body().unwrap();
+
         assert_eq!(
-            content.ingredients()[&IngredientName::new("a".to_string())],
-            Quantity::from_measure(1.0, Unit::Tablespoon)
+            body.ingredients()[0].name(),
+            &IngredientName::new("a".to_string())
         );
         assert_eq!(
-            content.ingredients()[&IngredientName::new("b".to_string())],
-            Quantity::from_measure(2.0, Unit::Other("sachet".to_string()))
+            body.ingredients()[0].quantity(),
+            &Quantity::from_measure(1.0, Unit::Tablespoon)
         );
         assert_eq!(
-            content.ingredients()[&IngredientName::new("c".to_string())],
-            Quantity::from_measure(3.0, Unit::Piece)
+            body.ingredients()[1].quantity(),
+            &Quantity::from_measure(2.0, Unit::Other("sachet".to_string()))
+        );
+        assert_eq!(
+            body.ingredients()[2].quantity(),
+            &Quantity::from_measure(3.0, Unit::Piece)
         );
     }
 
