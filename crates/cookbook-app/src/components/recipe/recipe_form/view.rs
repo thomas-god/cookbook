@@ -326,10 +326,7 @@ pub(super) async fn revision_message_field(cx: &Cx, needs_review: bool) -> Resul
 
     Ok(view! {
         field(
-            field_label(
-                attrs: attributes! { for=(&message_id) },
-                (message_label)
-            )
+            field_label(attrs: attributes! { for=(&message_id) }, (message_label))
             <textarea
                 id=(&message_id)
                 name=(MESSAGE_FIELD)
@@ -448,10 +445,7 @@ async fn body_durations(
                 )
             )
             field(
-                field_label(
-                    attrs: attributes! { for=(&rest_id) },
-                    (t!(form_rest))
-                )
+                field_label(attrs: attributes! { for=(&rest_id) }, (t!(form_rest)))
                 input(
                     attrs: attributes! {
                         id=(&rest_id)
@@ -556,10 +550,7 @@ async fn body_ingredients(
                 button(
                     variant: ButtonVariant::Outline,
                     size: ButtonSize::Sm,
-                    attrs: attributes! {
-                        type="button"
-                        @click=$(|_e: Event| count.increment())
-                    },
+                    attrs: attributes! { type="button" @click=$(|_e: Event| count.increment()) },
                     (t!(form_add_ingredient))
                 )
             </div>
@@ -727,7 +718,9 @@ async fn part_row(
     let description_field = PartField::Description.key(row);
 
     Ok(view! {
-        <fieldset class="m-0 flex min-w-0 flex-col gap-4 rounded-lg border border-border p-4">
+        <fieldset
+            class="m-0 flex min-w-0 flex-col gap-4 rounded-lg border border-border p-4"
+        >
             <input type="hidden" name=(id_field) value=(id_value)>
             field(
                 field_label(
@@ -1011,7 +1004,9 @@ async fn ingredient_amount_fields(
                     @change=$(|e: Event| unit.set(e.target.value))
                 >
                     for unit_option in BUILT_IN_UNITS {
-                        <option value=(unit_option)>(unit_label(cx, unit_option))</option>
+                        <option value=(unit_option)>
+                            (unit_label(cx, unit_option))
+                        </option>
                     }
                     <option value=(OTHER_UNIT)>(unit_label(cx, OTHER_UNIT))</option>
                 </select>

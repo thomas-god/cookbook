@@ -81,7 +81,9 @@ pub async fn recipe_view(
                     <div>
                         <h3 class="text-xl font-semibold">(part.title().as_str())</h3>
                         if let Some(description) = part.description() {
-                            <p class="mt-2 whitespace-pre-line text-sm text-muted-foreground">
+                            <p
+                                class="mt-2 whitespace-pre-line text-sm text-muted-foreground"
+                            >
                                 (description.as_str())
                             </p>
                         }

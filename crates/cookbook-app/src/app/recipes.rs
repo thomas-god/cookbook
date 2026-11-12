@@ -325,7 +325,11 @@ pub async fn edit_recipe(cx: &Cx) -> Result<impl View> {
             card(
                 card_header(card_title((t!(form_recipe_type))))
                 card_content(
-                    <form method="post" action=(conversion_action) class="flex flex-col gap-3">
+                    <form
+                        method="post"
+                        action=(conversion_action)
+                        class="flex flex-col gap-3"
+                    >
                         <input
                             type="hidden"
                             name=(LATEST_REVISION_FIELD)
@@ -756,7 +760,11 @@ pub async fn recipe_history(cx: &Cx) -> Result<impl View> {
                             <div class="flex items-start justify-between gap-4">
                                 <div>
                                     <p class="font-medium">
-                                        (revision_origin_label(cx, entry.revision.origin(), &revisions))
+                                        (revision_origin_label(
+                                            cx,
+                                            entry.revision.origin(),
+                                            &revisions,
+                                        ))
                                     </p>
                                     <p class="mt-1">
                                         if entry.revision.verification()
@@ -909,7 +917,11 @@ pub async fn recipe_revision(cx: &Cx) -> Result<impl View> {
                     </a>
                 </p>
                 if can_edit && !is_current {
-                    <form method="post" action=(restore_action) class="mt-4 flex flex-col gap-2">
+                    <form
+                        method="post"
+                        action=(restore_action)
+                        class="mt-4 flex flex-col gap-2"
+                    >
                         <input
                             type="hidden"
                             name=(LATEST_REVISION_FIELD)

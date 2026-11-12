@@ -198,10 +198,7 @@ async fn recipe_form_fields(
                     image_lookup: image_lookup.clone()
                 )
             } else {
-                parts_editor(
-                    initial: part_initials,
-                    image_lookup: image_lookup.clone()
-                )
+                parts_editor(initial: part_initials, image_lookup: image_lookup.clone())
             }
 
             if is_edit {

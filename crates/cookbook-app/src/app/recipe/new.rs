@@ -28,16 +28,15 @@ pub async fn page(cx: &Cx) -> Result<impl View> {
     Ok(view! {
         <div class="flex flex-col gap-4">
             <p class="text-sm">
-                <a
-                    class="underline underline-offset-4"
-                    href=(href!(page_multipart))
-                >
+                <a class="underline underline-offset-4" href=(href!(page_multipart))>
                     (t!(form_new_multipart_recipe))
                 </a>
             </p>
             card(
                 card_header(card_title((t!(form_new_recipe))))
-                card_content(recipe_form(mode: RecipeFormMode::New { multipart: false }))
+                card_content(
+                    recipe_form(mode: RecipeFormMode::New { multipart: false })
+                )
             )
         </div>
     })
@@ -64,10 +63,7 @@ pub async fn page_multipart(cx: &Cx) -> Result<impl View> {
     Ok(view! {
         <div class="flex flex-col gap-4">
             <p class="text-sm">
-                <a
-                    class="underline underline-offset-4"
-                    href=(href!(page))
-                >
+                <a class="underline underline-offset-4" href=(href!(page))>
                     (t!(form_new_simple_recipe))
                 </a>
             </p>
