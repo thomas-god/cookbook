@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::HashSet;
 use std::fmt;
 use std::time::SystemTime;
 
@@ -205,16 +205,28 @@ impl RecipeWithContent {
         self.content().category()
     }
 
-    pub fn durations(&self) -> &RecipeDurations {
+    pub fn durations(&self) -> RecipeDurations {
         self.content().durations()
     }
 
-    pub fn ingredients(&self) -> &HashMap<IngredientName, Quantity> {
-        self.content().ingredients()
+    pub fn structure(&self) -> &RecipeStructure {
+        self.content().structure()
     }
 
-    pub fn steps(&self) -> &[RecipeStep] {
-        self.content().steps()
+    pub fn simple_body(&self) -> Option<&RecipeBody> {
+        self.content().simple_body()
+    }
+
+    pub fn parts(&self) -> &[RecipePart] {
+        self.content().parts()
+    }
+
+    pub fn bodies(&self) -> impl Iterator<Item = &RecipeBody> {
+        self.content().bodies()
+    }
+
+    pub fn all_image_ids(&self) -> Vec<RecipeImageId> {
+        self.content().all_image_ids()
     }
 }
 
@@ -229,20 +241,231 @@ impl fmt::Display for RecipeRevisionMismatch {
 
 impl std::error::Error for RecipeRevisionMismatch {}
 
-/// The editable part of a recipe. Revisions store a full copy of it.
+/// The edible content shared by a standard recipe and a multipart sub-recipe.
+#[derive(Debug, Clone)]
+pub struct RecipeBody {
+    durations: RecipeDurations,
+    ingredients: Vec<Ingredient>,
+    images: Vec<RecipeImageId>,
+    steps: Vec<RecipeStep>,
+}
+
+impl RecipeBody {
+    pub fn new(
+        durations: RecipeDurations,
+        ingredients: Vec<Ingredient>,
+        images: Vec<RecipeImageId>,
+        steps: Vec<RecipeStep>,
+    ) -> Self {
+        Self {
+            durations,
+            ingredients: normalize_ingredients(ingredients),
+            images,
+            steps,
+        }
+    }
+
+    pub fn durations(&self) -> &RecipeDurations {
+        &self.durations
+    }
+
+    pub fn ingredients(&self) -> &[Ingredient] {
+        &self.ingredients
+    }
+
+    pub fn images(&self) -> &[RecipeImageId] {
+        &self.images
+    }
+
+    pub fn steps(&self) -> &[RecipeStep] {
+        &self.steps
+    }
+
+    /// Returns the names of ingredients that still have more than one quantity.
+    pub fn ingredient_conflicts(&self) -> Vec<&IngredientName> {
+        let mut conflicts = Vec::new();
+
+        for (index, ingredient) in self.ingredients.iter().enumerate() {
+            let already_listed = conflicts
+                .iter()
+                .any(|name: &&IngredientName| **name == ingredient.name);
+
+            if !already_listed
+                && self.ingredients[index + 1..]
+                    .iter()
+                    .any(|other| other.name == ingredient.name)
+            {
+                conflicts.push(&ingredient.name);
+            }
+        }
+
+        conflicts
+    }
+
+    pub fn has_ingredient_conflicts(&self) -> bool {
+        !self.ingredient_conflicts().is_empty()
+    }
+}
+
+/// Ingredients with the same name and measured unit are summed. Identical
+/// free-text quantities are de-duplicated. Any other duplicate names stay
+/// as separate ingredients, which makes them visible as conflicts.
+fn normalize_ingredients(ingredients: Vec<Ingredient>) -> Vec<Ingredient> {
+    let mut normalized: Vec<Ingredient> = Vec::with_capacity(ingredients.len());
+
+    for ingredient in ingredients {
+        let mut merged = false;
+
+        for existing in &mut normalized {
+            if existing.name != ingredient.name {
+                continue;
+            }
+
+            match (&mut existing.quantity, &ingredient.quantity) {
+                (
+                    Quantity::Measured {
+                        value: existing_value,
+                        unit: existing_unit,
+                    },
+                    Quantity::Measured { value, unit },
+                ) if existing_unit == unit => {
+                    *existing_value += *value;
+                    merged = true;
+                    break;
+                }
+                (Quantity::Text(existing_text), Quantity::Text(text)) if existing_text == text => {
+                    merged = true;
+                    break;
+                }
+                _ => {}
+            }
+        }
+
+        if !merged {
+            normalized.push(ingredient);
+        }
+    }
+
+    normalized
+}
+
+#[derive(Debug, Clone, Constructor, PartialEq)]
+pub struct Ingredient {
+    name: IngredientName,
+    quantity: Quantity,
+}
+
+impl Ingredient {
+    pub fn name(&self) -> &IngredientName {
+        &self.name
+    }
+
+    pub fn quantity(&self) -> &Quantity {
+        &self.quantity
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum RecipeStructure {
+    Simple(RecipeBody),
+    Multipart(Vec<RecipePart>),
+}
+
+/// Titled [RecipeBody] for multipart recipes.
 #[derive(Debug, Clone, Constructor)]
+pub struct RecipePart {
+    id: RecipePartId,
+    title: RecipePartTitle,
+    description: Option<RecipeDescription>,
+    body: RecipeBody,
+}
+
+impl RecipePart {
+    pub fn id(&self) -> &RecipePartId {
+        &self.id
+    }
+
+    pub fn title(&self) -> &RecipePartTitle {
+        &self.title
+    }
+
+    pub fn description(&self) -> Option<&RecipeDescription> {
+        self.description.as_ref()
+    }
+
+    pub fn body(&self) -> &RecipeBody {
+        &self.body
+    }
+
+    pub fn durations(&self) -> &RecipeDurations {
+        self.body.durations()
+    }
+}
+
+/// The editable part of a recipe. Revisions store a full copy of it.
+#[derive(Debug, Clone)]
 pub struct RecipeContent {
     title: RecipeTitle,
     description: Option<RecipeDescription>,
     servings: Option<Servings>,
     category: Option<RecipeCategory>,
-    durations: RecipeDurations,
-    ingredients: HashMap<IngredientName, Quantity>,
-    images: Vec<RecipeImageId>,
-    steps: Vec<RecipeStep>,
+    structure: RecipeStructure,
 }
 
 impl RecipeContent {
+    pub fn new_simple(
+        title: RecipeTitle,
+        description: Option<RecipeDescription>,
+        servings: Option<Servings>,
+        category: Option<RecipeCategory>,
+        body: RecipeBody,
+    ) -> Result<Self, RecipeContentError> {
+        validate_recipe_title(&title)?;
+
+        Ok(Self {
+            title,
+            description,
+            servings,
+            category,
+            structure: RecipeStructure::Simple(body),
+        })
+    }
+
+    pub fn new_multipart(
+        title: RecipeTitle,
+        description: Option<RecipeDescription>,
+        servings: Option<Servings>,
+        category: Option<RecipeCategory>,
+        parts: Vec<RecipePart>,
+    ) -> Result<Self, RecipeContentError> {
+        validate_recipe_title(&title)?;
+
+        if parts.is_empty() {
+            return Err(RecipeContentError::NoParts);
+        }
+
+        for part in &parts {
+            if part.title.as_str().trim().is_empty() {
+                return Err(RecipeContentError::EmptyPartTitle);
+            }
+        }
+
+        let mut seen_ids = HashSet::new();
+        for part in &parts {
+            if !seen_ids.insert(part.id.clone()) {
+                return Err(RecipeContentError::DuplicatePartId(part.id.clone()));
+            }
+        }
+
+        Ok(Self {
+            title,
+            description,
+            servings,
+            category,
+            structure: RecipeStructure::Multipart(parts),
+        })
+    }
+
     pub fn title(&self) -> &RecipeTitle {
         &self.title
     }
@@ -259,22 +482,197 @@ impl RecipeContent {
         self.category
     }
 
-    pub fn durations(&self) -> &RecipeDurations {
-        &self.durations
+    pub fn structure(&self) -> &RecipeStructure {
+        &self.structure
     }
 
-    pub fn ingredients(&self) -> &HashMap<IngredientName, Quantity> {
-        &self.ingredients
+    pub fn is_multipart(&self) -> bool {
+        matches!(self.structure, RecipeStructure::Multipart(_))
     }
 
-    pub fn images(&self) -> &[RecipeImageId] {
-        &self.images
+    pub fn simple_body(&self) -> Option<&RecipeBody> {
+        match &self.structure {
+            RecipeStructure::Simple(body) => Some(body),
+            RecipeStructure::Multipart(_) => None,
+        }
     }
 
-    pub fn steps(&self) -> &[RecipeStep] {
-        &self.steps
+    pub fn parts(&self) -> &[RecipePart] {
+        match &self.structure {
+            RecipeStructure::Simple(_) => &[],
+            RecipeStructure::Multipart(parts) => parts,
+        }
+    }
+
+    pub fn bodies(&self) -> impl Iterator<Item = &RecipeBody> {
+        self.simple_body()
+            .into_iter()
+            .chain(self.parts().iter().map(RecipePart::body))
+    }
+
+    pub fn durations(&self) -> RecipeDurations {
+        match &self.structure {
+            RecipeStructure::Simple(body) => body.durations().clone(),
+            RecipeStructure::Multipart(parts) => {
+                RecipeDurations::sum(parts.iter().map(RecipePart::durations))
+            }
+        }
+    }
+
+    /// All body image ids in display order, without duplicates.
+    pub fn all_image_ids(&self) -> Vec<RecipeImageId> {
+        let mut seen = HashSet::new();
+
+        self.bodies()
+            .flat_map(|body| body.images().iter())
+            .filter(|image_id| seen.insert((*image_id).clone()))
+            .cloned()
+            .collect()
+    }
+
+    /// Converts a [RecipeStructure::Simple] recipe into a [RecipeStructure::Multipart] recipe.
+    ///
+    /// Wraps its body into a single part.
+    pub fn into_multipart(self) -> Self {
+        let body = match self.structure {
+            RecipeStructure::Simple(body) => body,
+            RecipeStructure::Multipart(_) => return self,
+        };
+
+        let part_title = RecipePartTitle::new(self.title.as_str().to_string());
+
+        let structure = RecipeStructure::Multipart(vec![RecipePart::new(
+            RecipePartId::generate(),
+            part_title,
+            None,
+            body,
+        )]);
+
+        Self {
+            title: self.title,
+            description: self.description,
+            servings: self.servings,
+            category: self.category,
+            structure,
+        }
+    }
+
+    /// Merges every part into a single simple body.
+    ///
+    /// Ingredients are concatenated and normalized. Incompatible quantities
+    /// remain as separate ingredients so the resulting content can expose them
+    /// as conflicts. Part descriptions are appended to the recipe description.
+    pub fn into_simple(self) -> Self {
+        let parts = match self.structure {
+            RecipeStructure::Simple(_) => return self,
+            RecipeStructure::Multipart(parts) => parts,
+        };
+        let RecipeContent {
+            title,
+            description,
+            servings,
+            category,
+            ..
+        } = self;
+
+        let mut durations = Vec::with_capacity(parts.len());
+        let mut ingredients = Vec::new();
+        let mut images = Vec::new();
+        let mut steps = Vec::new();
+        let mut seen_images = HashSet::new();
+        let mut part_descriptions = Vec::new();
+
+        for part in parts {
+            let RecipePart {
+                title,
+                description,
+                body:
+                    RecipeBody {
+                        durations: part_durations,
+                        ingredients: part_ingredients,
+                        images: part_images,
+                        steps: part_steps,
+                    },
+                ..
+            } = part;
+
+            durations.push(part_durations);
+            ingredients.extend(part_ingredients);
+            steps.extend(part_steps);
+
+            for image_id in part_images {
+                if seen_images.insert(image_id.clone()) {
+                    images.push(image_id);
+                }
+            }
+
+            if let Some(description) = description {
+                part_descriptions.push(format!("{}: {}", title.as_str(), description.as_str()));
+            }
+        }
+
+        let description = merge_descriptions(description, part_descriptions);
+
+        Self {
+            title,
+            description,
+            servings,
+            category,
+            structure: RecipeStructure::Simple(RecipeBody::new(
+                RecipeDurations::sum(durations.iter()),
+                ingredients,
+                images,
+                steps,
+            )),
+        }
     }
 }
+
+fn validate_recipe_title(title: &RecipeTitle) -> Result<(), RecipeContentError> {
+    if title.as_str().trim().is_empty() {
+        return Err(RecipeContentError::EmptyTitle);
+    }
+
+    Ok(())
+}
+
+fn merge_descriptions(
+    description: Option<RecipeDescription>,
+    part_descriptions: Vec<String>,
+) -> Option<RecipeDescription> {
+    let mut blocks = Vec::new();
+
+    if let Some(description) = description {
+        blocks.push(description.as_str().to_string());
+    }
+
+    blocks.extend(part_descriptions);
+
+    (!blocks.is_empty()).then(|| RecipeDescription::new(blocks.join("\n\n")))
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RecipeContentError {
+    EmptyTitle,
+    NoParts,
+    EmptyPartTitle,
+    DuplicatePartId(RecipePartId),
+}
+
+impl fmt::Display for RecipeContentError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::EmptyTitle => f.write_str("a recipe title cannot be empty"),
+            Self::NoParts => f.write_str("a multipart recipe needs at least one part"),
+            Self::EmptyPartTitle => f.write_str("a recipe part needs a title"),
+            Self::DuplicatePartId(id) => {
+                write!(f, "recipe part id `{}` is used more than once", id.as_str())
+            }
+        }
+    }
+}
+
+impl std::error::Error for RecipeContentError {}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RevisionVerification {
@@ -346,6 +744,28 @@ impl RecipeRevisionId {
 pub struct RecipeTitle(String);
 
 impl RecipeTitle {
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+#[derive(Debug, Clone, Constructor)]
+pub struct RecipePartTitle(String);
+
+impl RecipePartTitle {
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Constructor)]
+pub struct RecipePartId(String);
+
+impl RecipePartId {
+    pub fn generate() -> Self {
+        Self(Uuid::new_v4().to_string())
+    }
+
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -426,6 +846,30 @@ impl RecipeDurations {
                 + self.rest.as_ref().map_or_default(|d| d.0)
                 + self.cooking.as_ref().map_or_default(|d| d.0),
         )
+    }
+
+    pub fn sum<'a>(durations: impl IntoIterator<Item = &'a RecipeDurations>) -> Self {
+        let mut preparation: Option<usize> = None;
+        let mut rest: Option<usize> = None;
+        let mut cooking: Option<usize> = None;
+
+        for durations in durations {
+            if let Some(value) = durations.preparation() {
+                preparation = Some(preparation.unwrap_or_default() + value.as_minutes());
+            }
+            if let Some(value) = durations.rest() {
+                rest = Some(rest.unwrap_or_default() + value.as_minutes());
+            }
+            if let Some(value) = durations.cooking() {
+                cooking = Some(cooking.unwrap_or_default() + value.as_minutes());
+            }
+        }
+
+        Self {
+            preparation: preparation.map(DurationMinutes::new),
+            rest: rest.map(DurationMinutes::new),
+            cooking: cooking.map(DurationMinutes::new),
+        }
     }
 }
 
@@ -1033,5 +1477,326 @@ mod tests {
         assert_eq!(RecipeScope::parse("viewable"), Some(RecipeScope::Viewable));
         assert_eq!(RecipeScope::parse("editable"), Some(RecipeScope::Editable));
         assert_eq!(RecipeScope::parse("public"), None);
+    }
+
+    fn ingredient(name: &str, quantity: Quantity) -> Ingredient {
+        Ingredient::new(IngredientName::new(name.to_string()), quantity)
+    }
+
+    fn simple_content(title: &str, body: RecipeBody) -> RecipeContent {
+        RecipeContent::new_simple(RecipeTitle::new(title.to_string()), None, None, None, body)
+            .unwrap()
+    }
+
+    fn part(title: &str, body: RecipeBody) -> RecipePart {
+        RecipePart::new(
+            RecipePartId::generate(),
+            RecipePartTitle::new(title.to_string()),
+            None,
+            body,
+        )
+    }
+
+    #[test]
+    fn body_normalization_sums_same_unit_quantities_and_keeps_conflicts() {
+        let body = RecipeBody::new(
+            RecipeDurations::new(None, None, None),
+            vec![
+                ingredient("flour", Quantity::from_measure(100.0, Unit::Gram)),
+                ingredient("flour", Quantity::from_measure(50.0, Unit::Gram)),
+                ingredient("flour", Quantity::from_measure(2.0, Unit::Tablespoon)),
+                ingredient("salt", Quantity::from_text("to taste")),
+                ingredient("salt", Quantity::from_text("to taste")),
+            ],
+            Vec::new(),
+            Vec::new(),
+        );
+
+        assert_eq!(body.ingredients().len(), 3);
+        assert_eq!(
+            body.ingredients()[0].quantity(),
+            &Quantity::from_measure(150.0, Unit::Gram)
+        );
+        assert_eq!(
+            body.ingredients()[1].quantity(),
+            &Quantity::from_measure(2.0, Unit::Tablespoon)
+        );
+        assert_eq!(
+            body.ingredients()[2].quantity(),
+            &Quantity::from_text("to taste")
+        );
+        assert_eq!(body.ingredient_conflicts().len(), 1);
+        assert!(body.has_ingredient_conflicts());
+    }
+
+    #[test]
+    fn multipart_durations_are_summed_across_parts() {
+        let content = RecipeContent::new_multipart(
+            RecipeTitle::new("Cake".to_string()),
+            None,
+            None,
+            None,
+            vec![
+                part(
+                    "Sponge",
+                    RecipeBody::new(
+                        RecipeDurations::new(
+                            Some(DurationMinutes::new(10)),
+                            None,
+                            Some(DurationMinutes::new(20)),
+                        ),
+                        Vec::new(),
+                        Vec::new(),
+                        Vec::new(),
+                    ),
+                ),
+                part(
+                    "Filling",
+                    RecipeBody::new(
+                        RecipeDurations::new(
+                            Some(DurationMinutes::new(5)),
+                            Some(DurationMinutes::new(30)),
+                            None,
+                        ),
+                        Vec::new(),
+                        Vec::new(),
+                        Vec::new(),
+                    ),
+                ),
+            ],
+        )
+        .unwrap();
+        let durations = content.durations();
+
+        assert_eq!(
+            durations.preparation().map(DurationMinutes::as_minutes),
+            Some(15)
+        );
+        assert_eq!(durations.rest().map(DurationMinutes::as_minutes), Some(30));
+        assert_eq!(
+            durations.cooking().map(DurationMinutes::as_minutes),
+            Some(20)
+        );
+        assert_eq!(durations.total_duration().as_minutes(), 65);
+    }
+
+    #[test]
+    fn simple_and_multipart_conversions_preserve_body_content() {
+        let step = RecipeStep::new(
+            RecipeStepId::generate(),
+            Some("Mix".to_string()),
+            "Stir.".to_string(),
+            vec![RecipeImageId::new("step-image".to_string())],
+        );
+        let simple = simple_content(
+            "Pastry",
+            RecipeBody::new(
+                RecipeDurations::new(Some(DurationMinutes::new(10)), None, None),
+                vec![ingredient(
+                    "flour",
+                    Quantity::from_measure(200.0, Unit::Gram),
+                )],
+                vec![RecipeImageId::new("hero".to_string())],
+                vec![step],
+            ),
+        );
+
+        let multipart = simple.clone().into_multipart();
+
+        assert!(multipart.is_multipart());
+        assert_eq!(multipart.parts()[0].title().as_str(), "Pastry");
+
+        let restored = multipart.into_simple();
+
+        assert_eq!(restored.simple_body().unwrap().ingredients().len(), 1);
+        assert_eq!(restored.simple_body().unwrap().images()[0].as_str(), "hero");
+        assert_eq!(
+            restored.simple_body().unwrap().steps()[0].title(),
+            Some("Mix")
+        );
+        assert_eq!(
+            restored
+                .durations()
+                .preparation()
+                .map(DurationMinutes::as_minutes),
+            Some(10)
+        );
+    }
+
+    #[test]
+    fn multipart_to_simple_merges_images_and_folds_part_descriptions() {
+        let content = RecipeContent::new_multipart(
+            RecipeTitle::new("Cake".to_string()),
+            Some(RecipeDescription::new("Overall description.".to_string())),
+            None,
+            None,
+            vec![
+                RecipePart::new(
+                    RecipePartId::generate(),
+                    RecipePartTitle::new("Sponge".to_string()),
+                    Some(RecipeDescription::new("Light and airy.".to_string())),
+                    RecipeBody::new(
+                        RecipeDurations::new(None, None, None),
+                        Vec::new(),
+                        vec![RecipeImageId::new("shared".to_string())],
+                        Vec::new(),
+                    ),
+                ),
+                RecipePart::new(
+                    RecipePartId::generate(),
+                    RecipePartTitle::new("Filling".to_string()),
+                    Some(RecipeDescription::new("Whipped cream.".to_string())),
+                    RecipeBody::new(
+                        RecipeDurations::new(None, None, None),
+                        Vec::new(),
+                        vec![
+                            RecipeImageId::new("shared".to_string()),
+                            RecipeImageId::new("filling".to_string()),
+                        ],
+                        Vec::new(),
+                    ),
+                ),
+            ],
+        )
+        .unwrap();
+
+        let simple = content.into_simple();
+        let body = simple.simple_body().unwrap();
+
+        assert_eq!(
+            simple.description().map(RecipeDescription::as_str),
+            Some("Overall description.\n\nSponge: Light and airy.\n\nFilling: Whipped cream.")
+        );
+        assert_eq!(body.images().len(), 2);
+        assert_eq!(body.images()[0].as_str(), "shared");
+        assert_eq!(body.images()[1].as_str(), "filling");
+    }
+
+    #[test]
+    fn all_image_ids_are_unique_and_ordered() {
+        let content = RecipeContent::new_multipart(
+            RecipeTitle::new("Cake".to_string()),
+            None,
+            None,
+            None,
+            vec![
+                part(
+                    "Sponge",
+                    RecipeBody::new(
+                        RecipeDurations::new(None, None, None),
+                        Vec::new(),
+                        vec![
+                            RecipeImageId::new("a".to_string()),
+                            RecipeImageId::new("b".to_string()),
+                        ],
+                        Vec::new(),
+                    ),
+                ),
+                part(
+                    "Filling",
+                    RecipeBody::new(
+                        RecipeDurations::new(None, None, None),
+                        Vec::new(),
+                        vec![
+                            RecipeImageId::new("b".to_string()),
+                            RecipeImageId::new("c".to_string()),
+                        ],
+                        Vec::new(),
+                    ),
+                ),
+            ],
+        )
+        .unwrap();
+
+        let ids: Vec<_> = content
+            .all_image_ids()
+            .into_iter()
+            .map(|id| id.as_str().to_string())
+            .collect();
+
+        assert_eq!(ids, vec!["a", "b", "c"]);
+    }
+
+    #[test]
+    fn content_construction_rejects_an_empty_title() {
+        let content = RecipeContent::new_simple(
+            RecipeTitle::new("   ".to_string()),
+            None,
+            None,
+            None,
+            RecipeBody::new(
+                RecipeDurations::new(None, None, None),
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+            ),
+        );
+
+        assert_eq!(content.unwrap_err(), RecipeContentError::EmptyTitle);
+    }
+
+    #[test]
+    fn multipart_construction_rejects_invalid_structures() {
+        let empty = RecipeContent::new_multipart(
+            RecipeTitle::new("Cake".to_string()),
+            None,
+            None,
+            None,
+            Vec::new(),
+        );
+        assert_eq!(empty.unwrap_err(), RecipeContentError::NoParts);
+
+        let empty_title = RecipeContent::new_multipart(
+            RecipeTitle::new("Cake".to_string()),
+            None,
+            None,
+            None,
+            vec![part(
+                "   ",
+                RecipeBody::new(
+                    RecipeDurations::new(None, None, None),
+                    Vec::new(),
+                    Vec::new(),
+                    Vec::new(),
+                ),
+            )],
+        );
+        assert_eq!(empty_title.unwrap_err(), RecipeContentError::EmptyPartTitle);
+
+        let duplicate_id = RecipePartId::generate();
+        let duplicate = RecipeContent::new_multipart(
+            RecipeTitle::new("Cake".to_string()),
+            None,
+            None,
+            None,
+            vec![
+                RecipePart::new(
+                    duplicate_id.clone(),
+                    RecipePartTitle::new("Sponge".to_string()),
+                    None,
+                    RecipeBody::new(
+                        RecipeDurations::new(None, None, None),
+                        Vec::new(),
+                        Vec::new(),
+                        Vec::new(),
+                    ),
+                ),
+                RecipePart::new(
+                    duplicate_id,
+                    RecipePartTitle::new("Filling".to_string()),
+                    None,
+                    RecipeBody::new(
+                        RecipeDurations::new(None, None, None),
+                        Vec::new(),
+                        Vec::new(),
+                        Vec::new(),
+                    ),
+                ),
+            ],
+        );
+        assert!(matches!(
+            duplicate,
+            Err(RecipeContentError::DuplicatePartId(_))
+        ));
     }
 }

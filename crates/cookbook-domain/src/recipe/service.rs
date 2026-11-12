@@ -480,32 +480,29 @@ fn image_references_are_valid(
     content: &RecipeContent,
     known_image_ids: &HashSet<RecipeImageId>,
 ) -> bool {
-    if !content
-        .images()
-        .iter()
-        .all(|image_id| known_image_ids.contains(image_id))
-    {
-        return false;
-    }
-
-    content.steps().iter().all(|step| {
-        step.images()
+    content.bodies().all(|body| {
+        body.images()
             .iter()
             .all(|image_id| known_image_ids.contains(image_id))
+            && body.steps().iter().all(|step| {
+                step.images()
+                    .iter()
+                    .all(|image_id| known_image_ids.contains(image_id))
+            })
     })
 }
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
     use std::time::{Duration, SystemTime};
 
     use anyhow::anyhow;
 
     use super::*;
     use crate::recipe::models::{
-        RecipeContent, RecipeDurations, RecipeImageId, RecipeImageMetadata, RecipeRevision,
-        RecipeScope, RecipeStep, RecipeStepId, RecipeTitle, RevisionMessage,
+        RecipeBody, RecipeContent, RecipeDurations, RecipeImageId, RecipeImageMetadata, RecipePart,
+        RecipePartId, RecipePartTitle, RecipeRevision, RecipeScope, RecipeStep, RecipeStepId,
+        RecipeTitle, RevisionMessage,
     };
     use crate::recipe::ports::{MockRecipeRepository, SaveRecipeError, UpdateRecipeRequest};
     use crate::user::models::UserId;
@@ -554,16 +551,19 @@ mod tests {
     }
 
     fn content(title: &str) -> RecipeContent {
-        RecipeContent::new(
+        RecipeContent::new_simple(
             RecipeTitle::new(title.to_string()),
             None,
             None,
             None,
-            RecipeDurations::new(None, None, None),
-            HashMap::new(),
-            Vec::new(),
-            Vec::new(),
+            RecipeBody::new(
+                RecipeDurations::new(None, None, None),
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+            ),
         )
+        .unwrap()
     }
 
     fn recipe(id: &str) -> Recipe {
@@ -1589,21 +1589,24 @@ mod tests {
         let revision = RecipeRevision::new(
             RecipeRevisionId::new(format!("{id}-revision")),
             recipe.id().clone(),
-            RecipeContent::new(
+            RecipeContent::new_simple(
                 RecipeTitle::new("Soup".to_string()),
                 None,
                 None,
                 None,
-                RecipeDurations::new(None, None, None),
-                HashMap::new(),
-                Vec::new(),
-                vec![RecipeStep::new(
-                    RecipeStepId::generate(),
-                    None,
-                    instruction.to_string(),
+                RecipeBody::new(
+                    RecipeDurations::new(None, None, None),
                     Vec::new(),
-                )],
-            ),
+                    Vec::new(),
+                    vec![RecipeStep::new(
+                        RecipeStepId::generate(),
+                        None,
+                        instruction.to_string(),
+                        Vec::new(),
+                    )],
+                ),
+            )
+            .unwrap(),
             recipe.author().clone(),
             FixedClock::new().0,
             None,
@@ -1638,16 +1641,19 @@ mod tests {
         let service = RecipeServiceImpl::new(repository, FixedClock::new());
         let mut request = create_request();
         request.images = vec![new_recipe_image("image-1", b"image")];
-        request.content = RecipeContent::new(
+        request.content = RecipeContent::new_simple(
             RecipeTitle::new("Soup".to_string()),
             None,
             None,
             None,
-            RecipeDurations::new(None, None, None),
-            HashMap::new(),
-            vec![RecipeImageId::new("image-1".to_string())],
-            Vec::new(),
-        );
+            RecipeBody::new(
+                RecipeDurations::new(None, None, None),
+                Vec::new(),
+                vec![RecipeImageId::new("image-1".to_string())],
+                Vec::new(),
+            ),
+        )
+        .unwrap();
 
         service.create_verified_recipe(request).await.unwrap();
     }
@@ -1657,16 +1663,19 @@ mod tests {
         let repository = MockRecipeRepository::new();
         let service = RecipeServiceImpl::new(repository, FixedClock::new());
         let mut request = create_request();
-        request.content = RecipeContent::new(
+        request.content = RecipeContent::new_simple(
             RecipeTitle::new("Soup".to_string()),
             None,
             None,
             None,
-            RecipeDurations::new(None, None, None),
-            HashMap::new(),
-            vec![RecipeImageId::new("missing".to_string())],
-            Vec::new(),
-        );
+            RecipeBody::new(
+                RecipeDurations::new(None, None, None),
+                Vec::new(),
+                vec![RecipeImageId::new("missing".to_string())],
+                Vec::new(),
+            ),
+        )
+        .unwrap();
 
         let result = service.create_verified_recipe(request).await;
 
@@ -1677,9 +1686,54 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn create_recipe_accepts_images_referenced_by_multipart_parts() {
+        let mut repository = MockRecipeRepository::new();
+        repository
+            .expect_save_new_recipe()
+            .times(1)
+            .returning(|_, _, _, _| Ok(()));
+        let service = RecipeServiceImpl::new(repository, FixedClock::new());
+        let mut request = create_request();
+        request.images = vec![new_recipe_image("part-image", b"image")];
+        request.content = RecipeContent::new_multipart(
+            RecipeTitle::new("Cake".to_string()),
+            None,
+            None,
+            None,
+            vec![
+                RecipePart::new(
+                    RecipePartId::generate(),
+                    RecipePartTitle::new("Sponge".to_string()),
+                    None,
+                    RecipeBody::new(
+                        RecipeDurations::new(None, None, None),
+                        Vec::new(),
+                        Vec::new(),
+                        Vec::new(),
+                    ),
+                ),
+                RecipePart::new(
+                    RecipePartId::generate(),
+                    RecipePartTitle::new("Filling".to_string()),
+                    None,
+                    RecipeBody::new(
+                        RecipeDurations::new(None, None, None),
+                        Vec::new(),
+                        vec![RecipeImageId::new("part-image".to_string())],
+                        Vec::new(),
+                    ),
+                ),
+            ],
+        )
+        .unwrap();
+
+        service.create_verified_recipe(request).await.unwrap();
+    }
+
+    #[tokio::test]
     async fn update_recipe_adds_images_referenced_by_the_revision() {
         let current = recipe_with_step("soup", "Stir.");
-        let retained_step_id = current.steps()[0].id().clone();
+        let retained_step_id = current.simple_body().unwrap().steps()[0].id().clone();
         let latest_revision = current.revision().id().clone();
         let mut repository = MockRecipeRepository::new();
         let current_for_mock = current.clone();
@@ -1700,21 +1754,24 @@ mod tests {
             .returning(|_, _, _| Ok(()));
 
         let service = RecipeServiceImpl::new(repository, FixedClock::new());
-        let content = RecipeContent::new(
+        let content = RecipeContent::new_simple(
             RecipeTitle::new("Soup".to_string()),
             None,
             None,
             None,
-            RecipeDurations::new(None, None, None),
-            HashMap::new(),
-            vec![RecipeImageId::new("kept".to_string())],
-            vec![RecipeStep::new(
-                retained_step_id,
-                None,
-                "Stir.".to_string(),
-                vec![RecipeImageId::new("step-image".to_string())],
-            )],
-        );
+            RecipeBody::new(
+                RecipeDurations::new(None, None, None),
+                Vec::new(),
+                vec![RecipeImageId::new("kept".to_string())],
+                vec![RecipeStep::new(
+                    retained_step_id,
+                    None,
+                    "Stir.".to_string(),
+                    vec![RecipeImageId::new("step-image".to_string())],
+                )],
+            ),
+        )
+        .unwrap();
 
         service
             .update_recipe(UpdateRecipeRequest {

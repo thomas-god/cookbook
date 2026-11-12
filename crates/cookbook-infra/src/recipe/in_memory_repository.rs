@@ -6,9 +6,9 @@ use anyhow::anyhow;
 use uuid::Uuid;
 
 use cookbook_domain::recipe::models::{
-    DurationMinutes, IngredientName, Quantity, Recipe, RecipeCategory, RecipeContent,
-    RecipeDescription, RecipeDurations, RecipeId, RecipeImage, RecipeImageId, RecipeImageMetadata,
-    RecipeRevision, RecipeRevisionId, RecipeSourceImage, RecipeSourceImageId,
+    DurationMinutes, Ingredient, IngredientName, Quantity, Recipe, RecipeBody, RecipeCategory,
+    RecipeContent, RecipeDescription, RecipeDurations, RecipeId, RecipeImage, RecipeImageId,
+    RecipeImageMetadata, RecipeRevision, RecipeRevisionId, RecipeSourceImage, RecipeSourceImageId,
     RecipeSourceImageSummary, RecipeStep, RecipeStepId, RecipeTitle, RecipeWithContent,
     RevisionVerification, Servings, Unit,
 };
@@ -88,20 +88,18 @@ fn seeded_recipe(
     servings: Option<Servings>,
     category: Option<RecipeCategory>,
     durations: RecipeDurations,
-    ingredients: HashMap<IngredientName, Quantity>,
+    ingredients: Vec<Ingredient>,
     steps: Vec<RecipeStep>,
 ) -> RecipeWithContent {
     let recipe = Recipe::new(RecipeId::new(id.to_string()), seed_author());
-    let content = RecipeContent::new(
+    let content = RecipeContent::new_simple(
         RecipeTitle::new(title.to_string()),
         Some(RecipeDescription::new(description.to_string())),
         servings,
         category,
-        durations,
-        ingredients,
-        Vec::new(),
-        steps,
-    );
+        RecipeBody::new(durations, ingredients, Vec::new(), steps),
+    )
+    .expect("seed recipe content is valid");
     let revision = RecipeRevision::new(
         RecipeRevisionId::new(Uuid::new_v4().to_string()),
         recipe.id().clone(),
@@ -128,20 +126,20 @@ fn seed_recipes() -> Vec<RecipeWithContent> {
                 None,
                 Some(DurationMinutes::new(30)),
             ),
-            HashMap::from([
-                (
+            vec![
+                Ingredient::new(
                     IngredientName::new("tomatoes".to_string()),
                     Quantity::from_measure(800.0, Unit::Gram),
                 ),
-                (
+                Ingredient::new(
                     IngredientName::new("vegetable stock".to_string()),
                     Quantity::from_measure(0.5, Unit::Litre),
                 ),
-                (
+                Ingredient::new(
                     IngredientName::new("olive oil".to_string()),
                     Quantity::from_measure(30.0, Unit::MilliLitre),
                 ),
-            ]),
+            ],
             vec![
                 RecipeStep::new(
                     RecipeStepId::generate(),
@@ -168,20 +166,20 @@ fn seed_recipes() -> Vec<RecipeWithContent> {
                 None,
                 Some(DurationMinutes::new(12)),
             ),
-            HashMap::from([
-                (
+            vec![
+                Ingredient::new(
                     IngredientName::new("spaghetti".to_string()),
                     Quantity::from_measure(400.0, Unit::Gram),
                 ),
-                (
+                Ingredient::new(
                     IngredientName::new("lemon".to_string()),
                     Quantity::from_measure(100.0, Unit::Gram),
                 ),
-                (
+                Ingredient::new(
                     IngredientName::new("olive oil".to_string()),
                     Quantity::from_measure(30.0, Unit::MilliLitre),
                 ),
-            ]),
+            ],
             vec![
                 RecipeStep::new(
                     RecipeStepId::generate(),
@@ -208,24 +206,24 @@ fn seed_recipes() -> Vec<RecipeWithContent> {
                 Some(DurationMinutes::new(10)),
                 Some(DurationMinutes::new(55)),
             ),
-            HashMap::from([
-                (
+            vec![
+                Ingredient::new(
                     IngredientName::new("bananas".to_string()),
                     Quantity::from_measure(300.0, Unit::Gram),
                 ),
-                (
+                Ingredient::new(
                     IngredientName::new("flour".to_string()),
                     Quantity::from_measure(250.0, Unit::Gram),
                 ),
-                (
+                Ingredient::new(
                     IngredientName::new("sugar".to_string()),
                     Quantity::from_measure(150.0, Unit::Gram),
                 ),
-                (
+                Ingredient::new(
                     IngredientName::new("butter".to_string()),
                     Quantity::from_measure(100.0, Unit::Gram),
                 ),
-            ]),
+            ],
             vec![
                 RecipeStep::new(
                     RecipeStepId::generate(),
@@ -577,7 +575,6 @@ fn validate_images(recipe_id: &RecipeId, images: &[RecipeImage]) -> Result<(), S
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
     use std::time::SystemTime;
 
     use super::*;
@@ -594,16 +591,19 @@ mod tests {
         RecipeRevision::new(
             RecipeRevisionId::new(id.to_string()),
             recipe.id().clone(),
-            RecipeContent::new(
+            RecipeContent::new_simple(
                 RecipeTitle::new("Soup".to_string()),
                 None,
                 None,
                 None,
-                RecipeDurations::new(None, None, None),
-                HashMap::new(),
-                Vec::new(),
-                Vec::new(),
-            ),
+                RecipeBody::new(
+                    RecipeDurations::new(None, None, None),
+                    Vec::new(),
+                    Vec::new(),
+                    Vec::new(),
+                ),
+            )
+            .unwrap(),
             recipe.author().clone(),
             SystemTime::UNIX_EPOCH,
             None,
@@ -616,16 +616,19 @@ mod tests {
         let revision = RecipeRevision::new(
             RecipeRevisionId::new(format!("{id}-revision")),
             recipe.id().clone(),
-            RecipeContent::new(
+            RecipeContent::new_simple(
                 RecipeTitle::new(title.to_string()),
                 None,
                 None,
                 None,
-                RecipeDurations::new(None, None, None),
-                HashMap::new(),
-                Vec::new(),
-                Vec::new(),
-            ),
+                RecipeBody::new(
+                    RecipeDurations::new(None, None, None),
+                    Vec::new(),
+                    Vec::new(),
+                    Vec::new(),
+                ),
+            )
+            .unwrap(),
             recipe.author().clone(),
             SystemTime::UNIX_EPOCH,
             None,
@@ -844,16 +847,19 @@ mod tests {
         let revision = RecipeRevision::new(
             RecipeRevisionId::new("revision-1".to_string()),
             recipe.id().clone(),
-            RecipeContent::new(
+            RecipeContent::new_simple(
                 RecipeTitle::new("Soup".to_string()),
                 None,
                 None,
                 None,
-                RecipeDurations::new(None, None, None),
-                HashMap::new(),
-                Vec::new(),
-                Vec::new(),
-            ),
+                RecipeBody::new(
+                    RecipeDurations::new(None, None, None),
+                    Vec::new(),
+                    Vec::new(),
+                    Vec::new(),
+                ),
+            )
+            .unwrap(),
             recipe.author().clone(),
             SystemTime::UNIX_EPOCH,
             None,
@@ -1133,21 +1139,24 @@ mod tests {
         RecipeRevision::new(
             RecipeRevisionId::new(id.to_string()),
             recipe.id().clone(),
-            RecipeContent::new(
+            RecipeContent::new_simple(
                 RecipeTitle::new("Soup".to_string()),
                 None,
                 None,
                 None,
-                RecipeDurations::new(None, None, None),
-                HashMap::new(),
-                Vec::new(),
-                vec![RecipeStep::new(
-                    RecipeStepId::generate(),
-                    None,
-                    "Stir everything together.".to_string(),
+                RecipeBody::new(
+                    RecipeDurations::new(None, None, None),
                     Vec::new(),
-                )],
-            ),
+                    Vec::new(),
+                    vec![RecipeStep::new(
+                        RecipeStepId::generate(),
+                        None,
+                        "Stir everything together.".to_string(),
+                        Vec::new(),
+                    )],
+                ),
+            )
+            .unwrap(),
             recipe.author().clone(),
             SystemTime::UNIX_EPOCH,
             None,
