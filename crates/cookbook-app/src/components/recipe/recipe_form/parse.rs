@@ -8,27 +8,11 @@ use cookbook_domain::recipe::models::{
 use topcoat::{Error, Result, router::error::bad_request};
 
 use super::fields::{
-    CATEGORY_FIELD, COOKING_FIELD, DESCRIPTION_FIELD, IMAGE_IDS_FIELD, IngredientField,
-    LATEST_REVISION_FIELD, MESSAGE_FIELD, PREPARATION_FIELD, PartField, RECIPE_TYPE_FIELD,
-    REST_FIELD, SERVINGS_COUNT_FIELD, SERVINGS_LABEL_FIELD, SERVINGS_TYPE_FIELD, StepField,
-    TITLE_FIELD,
+    AmountType, CATEGORY_FIELD, COOKING_FIELD, DESCRIPTION_FIELD, IMAGE_IDS_FIELD, IngredientField,
+    LATEST_REVISION_FIELD, MESSAGE_FIELD, OTHER_UNIT, PREPARATION_FIELD, PartField,
+    RECIPE_TYPE_FIELD, REST_FIELD, RecipeFormType, SERVINGS_COUNT_FIELD, SERVINGS_LABEL_FIELD,
+    SERVINGS_TYPE_FIELD, ServingsType, StepField, TITLE_FIELD, unit_from_wire,
 };
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum RecipeFormType {
-    Simple,
-    Multipart,
-}
-
-impl RecipeFormType {
-    fn parse(value: &str) -> Result<Self> {
-        match value.trim() {
-            "" | "simple" => Ok(Self::Simple),
-            "multipart" => Ok(Self::Multipart),
-            other => Err(invalid(format!("unknown recipe type `{other}`"))),
-        }
-    }
-}
 
 #[derive(Debug)]
 pub(super) struct BodyFormData {
@@ -270,7 +254,9 @@ pub(super) fn parse_recipe_form(pairs: &[(String, String)]) -> Result<RecipeForm
                 .ok_or_else(|| invalid(format!("unknown recipe category `{category}`")))
         })
         .transpose()?;
-    let recipe_type = RecipeFormType::parse(recipe_type.as_deref().unwrap_or("simple"))?;
+    let recipe_type = recipe_type.as_deref().map(str::trim).unwrap_or_default();
+    let recipe_type = RecipeFormType::parse(recipe_type)
+        .ok_or_else(|| invalid(format!("unknown recipe type `{recipe_type}`")))?;
 
     let structure = match recipe_type {
         RecipeFormType::Simple => {
@@ -498,9 +484,11 @@ fn parse_servings(
     let servings_type = servings_type.map(str::trim).unwrap_or_default();
     let count = count.map(str::trim).unwrap_or_default();
     let label = label.map(str::trim).unwrap_or_default();
+    let servings_type = ServingsType::parse(servings_type)
+        .ok_or_else(|| invalid(format!("unknown servings type `{servings_type}`")))?;
 
     match servings_type {
-        "" | "none" => {
+        ServingsType::None => {
             if !count.is_empty() || !label.is_empty() {
                 return Err(invalid(
                     "servings cannot have a count or label when they are not specified",
@@ -509,14 +497,14 @@ fn parse_servings(
 
             Ok(None)
         }
-        "people" => {
+        ServingsType::People => {
             if !label.is_empty() {
                 return Err(invalid("people servings cannot have a free-form label"));
             }
 
             Ok(Some(Servings::people(parse_servings_count(count)?)))
         }
-        "portions" => {
+        ServingsType::Portions => {
             let count = parse_servings_count(count)?;
 
             if label.is_empty() {
@@ -531,7 +519,6 @@ fn parse_servings(
 
             Ok(Some(Servings::portions_with_label(count, label)))
         }
-        other => Err(invalid(format!("unknown servings type `{other}`"))),
     }
 }
 
@@ -595,8 +582,11 @@ fn parse_ingredient_rows(
             return Err(invalid(format!("ingredient row {} needs a name", row + 1)));
         }
 
+        let amount_type = AmountType::parse(amount_type)
+            .ok_or_else(|| invalid(format!("unknown ingredient amount type `{amount_type}`")))?;
+
         let quantity = match amount_type {
-            "" | "measured" => {
+            AmountType::Measured => {
                 if quantity.is_empty() {
                     return Err(invalid(format!("quantity is required for `{name}`")));
                 }
@@ -615,7 +605,7 @@ fn parse_ingredient_rows(
 
                 Quantity::from_measure(quantity, unit)
             }
-            "text" => {
+            AmountType::Text => {
                 if quantity_text.is_empty() {
                     return Err(invalid(format!(
                         "a free-form amount is required for `{name}`"
@@ -623,9 +613,6 @@ fn parse_ingredient_rows(
                 }
 
                 Quantity::from_text(quantity_text)
-            }
-            other => {
-                return Err(invalid(format!("unknown ingredient amount type `{other}`")));
             }
         };
 
@@ -642,15 +629,7 @@ const MAX_CUSTOM_UNIT_LENGTH: usize = 40;
 
 fn parse_unit(value: &str, unit_other: &str) -> Result<Unit> {
     match value.trim() {
-        "gram" => Ok(Unit::Gram),
-        "kilogram" => Ok(Unit::Kilogram),
-        "millilitre" => Ok(Unit::MilliLitre),
-        "centilitre" => Ok(Unit::CentiLitre),
-        "litre" => Ok(Unit::Litre),
-        "piece" => Ok(Unit::Piece),
-        "teaspoon" => Ok(Unit::Teaspoon),
-        "tablespoon" => Ok(Unit::Tablespoon),
-        "other" => {
+        OTHER_UNIT => {
             let label = unit_other.trim();
 
             if label.is_empty() {
@@ -666,7 +645,8 @@ fn parse_unit(value: &str, unit_other: &str) -> Result<Unit> {
             Ok(Unit::Other(label.to_string()))
         }
         "" => Err(invalid("an ingredient unit is required")),
-        other => Err(invalid(format!("unknown ingredient unit `{other}`"))),
+        other => unit_from_wire(other)
+            .ok_or_else(|| invalid(format!("unknown ingredient unit `{other}`"))),
     }
 }
 

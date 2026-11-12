@@ -24,6 +24,8 @@ use crate::{
     t,
 };
 
+use super::fields::{AmountType, DEFAULT_UNIT, ServingsType, unit_wire};
+
 #[derive(Clone, Default)]
 pub(super) struct IngredientInitial {
     pub(super) name: String,
@@ -180,15 +182,21 @@ impl FormInitial {
         image_lookup: &HashMap<String, FormImageInitial>,
     ) -> Self {
         let (servings_type, servings_count, servings_label) = match recipe.servings() {
-            Some(Servings::People(count)) => {
-                ("people".to_string(), count.to_string(), String::new())
-            }
+            Some(Servings::People(count)) => (
+                ServingsType::People.wire_name().to_string(),
+                count.to_string(),
+                String::new(),
+            ),
             Some(Servings::Portions { count, label }) => (
-                "portions".to_string(),
+                ServingsType::Portions.wire_name().to_string(),
                 count.to_string(),
                 label.clone().unwrap_or_default(),
             ),
-            None => ("none".to_string(), String::new(), String::new()),
+            None => (
+                ServingsType::None.wire_name().to_string(),
+                String::new(),
+                String::new(),
+            ),
         };
 
         let structure = if let Some(body) = recipe.content().simple_body() {
@@ -251,13 +259,13 @@ fn ingredient_initial(name: &str, quantity: &Quantity) -> IngredientInitial {
     match quantity {
         Quantity::Measured { value, unit } => {
             let (unit, unit_other) = match unit {
-                Unit::Other(label) => ("other", label.clone()),
+                Unit::Other(label) => (unit_wire(unit), label.clone()),
                 unit => (unit_wire(unit), String::new()),
             };
 
             IngredientInitial {
                 name: name.to_string(),
-                amount_type: "measured".to_string(),
+                amount_type: AmountType::Measured.wire_name().to_string(),
                 quantity: value.to_string(),
                 quantity_text: String::new(),
                 unit: unit.to_string(),
@@ -266,26 +274,12 @@ fn ingredient_initial(name: &str, quantity: &Quantity) -> IngredientInitial {
         }
         Quantity::Text(text) => IngredientInitial {
             name: name.to_string(),
-            amount_type: "text".to_string(),
+            amount_type: AmountType::Text.wire_name().to_string(),
             quantity: String::new(),
             quantity_text: text.clone(),
-            unit: "gram".to_string(),
+            unit: DEFAULT_UNIT.to_string(),
             unit_other: String::new(),
         },
-    }
-}
-
-fn unit_wire(unit: &Unit) -> &'static str {
-    match unit {
-        Unit::Gram => "gram",
-        Unit::Kilogram => "kilogram",
-        Unit::MilliLitre => "millilitre",
-        Unit::CentiLitre => "centilitre",
-        Unit::Litre => "litre",
-        Unit::Piece => "piece",
-        Unit::Teaspoon => "teaspoon",
-        Unit::Tablespoon => "tablespoon",
-        Unit::Other(_) => "other",
     }
 }
 

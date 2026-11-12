@@ -23,7 +23,7 @@ use crate::{
 };
 
 use self::{
-    fields::RECIPE_TYPE_FIELD,
+    fields::{RECIPE_TYPE_FIELD, RecipeFormType},
     initial::{
         FormImageInitial, FormInitial, StructureInitial, form_image_initial, load_current_recipe,
     },
@@ -133,6 +133,11 @@ async fn recipe_form_fields(
         .unwrap_or_else(|| FormInitial::new(multipart));
     let is_edit = !latest_revision.is_empty();
     let is_multipart = matches!(initial.structure, StructureInitial::Multipart(_));
+    let recipe_type = if is_multipart {
+        RecipeFormType::Multipart
+    } else {
+        RecipeFormType::Simple
+    };
 
     let FormInitial {
         title,
@@ -160,7 +165,7 @@ async fn recipe_form_fields(
             <input
                 type="hidden"
                 name=(RECIPE_TYPE_FIELD)
-                value=(if is_multipart { "multipart" } else { "simple" })
+                value=(recipe_type.wire_name())
             >
             if let Some(latest_revision) = &latest_revision {
                 <input

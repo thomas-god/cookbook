@@ -1,5 +1,7 @@
 //! Wire vocabulary shared by the recipe form view and its parser.
 
+use cookbook_domain::recipe::models::Unit;
+
 pub(super) const TITLE_FIELD: &str = "title";
 pub(super) const DESCRIPTION_FIELD: &str = "description";
 pub(super) const CATEGORY_FIELD: &str = "category";
@@ -14,6 +16,127 @@ pub(super) const MESSAGE_FIELD: &str = "message";
 pub(crate) const LATEST_REVISION_FIELD: &str = "latest_revision";
 pub(super) const IMAGES_FIELD: &str = "images";
 pub(super) const IMAGE_IDS_FIELD: &str = "image_ids";
+
+/// The servings mode selected in the form.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum ServingsType {
+    None,
+    People,
+    Portions,
+}
+
+impl ServingsType {
+    pub(super) const ALL: [Self; 3] = [Self::None, Self::People, Self::Portions];
+
+    pub(super) const fn wire_name(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::People => "people",
+            Self::Portions => "portions",
+        }
+    }
+
+    pub(super) fn parse(value: &str) -> Option<Self> {
+        match value.trim() {
+            "" | "none" => Some(Self::None),
+            "people" => Some(Self::People),
+            "portions" => Some(Self::Portions),
+            _ => None,
+        }
+    }
+}
+
+/// How an ingredient amount is expressed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum AmountType {
+    Measured,
+    Text,
+}
+
+impl AmountType {
+    pub(super) const ALL: [Self; 2] = [Self::Measured, Self::Text];
+
+    pub(super) const fn wire_name(self) -> &'static str {
+        match self {
+            Self::Measured => "measured",
+            Self::Text => "text",
+        }
+    }
+
+    pub(super) fn parse(value: &str) -> Option<Self> {
+        match value.trim() {
+            "" | "measured" => Some(Self::Measured),
+            "text" => Some(Self::Text),
+            _ => None,
+        }
+    }
+}
+
+/// Whether a recipe has one body or multiple parts.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum RecipeFormType {
+    Simple,
+    Multipart,
+}
+
+impl RecipeFormType {
+    pub(super) const fn wire_name(self) -> &'static str {
+        match self {
+            Self::Simple => "simple",
+            Self::Multipart => "multipart",
+        }
+    }
+
+    pub(super) fn parse(value: &str) -> Option<Self> {
+        match value.trim() {
+            "" | "simple" => Some(Self::Simple),
+            "multipart" => Some(Self::Multipart),
+            _ => None,
+        }
+    }
+}
+
+pub(super) const DEFAULT_UNIT: &str = "gram";
+pub(super) const OTHER_UNIT: &str = "other";
+
+pub(super) const BUILT_IN_UNITS: [&str; 8] = [
+    "gram",
+    "kilogram",
+    "millilitre",
+    "centilitre",
+    "litre",
+    "piece",
+    "teaspoon",
+    "tablespoon",
+];
+
+pub(super) fn unit_wire(unit: &Unit) -> &'static str {
+    match unit {
+        Unit::Gram => "gram",
+        Unit::Kilogram => "kilogram",
+        Unit::MilliLitre => "millilitre",
+        Unit::CentiLitre => "centilitre",
+        Unit::Litre => "litre",
+        Unit::Piece => "piece",
+        Unit::Teaspoon => "teaspoon",
+        Unit::Tablespoon => "tablespoon",
+        Unit::Other(_) => OTHER_UNIT,
+    }
+}
+
+pub(super) fn unit_from_wire(value: &str) -> Option<Unit> {
+    match value.trim() {
+        "gram" => Some(Unit::Gram),
+        "kilogram" => Some(Unit::Kilogram),
+        "millilitre" => Some(Unit::MilliLitre),
+        "centilitre" => Some(Unit::CentiLitre),
+        "litre" => Some(Unit::Litre),
+        "piece" => Some(Unit::Piece),
+        "teaspoon" => Some(Unit::Teaspoon),
+        "tablespoon" => Some(Unit::Tablespoon),
+        _ => None,
+    }
+}
 
 /// The fields of one ingredient row on the wire.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -136,5 +259,55 @@ pub(super) fn body_field(prefix: &str, wire_field: &str) -> String {
         wire_field.to_string()
     } else {
         format!("{prefix}[{wire_field}]")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn servings_types_round_trip_through_the_wire() {
+        for servings_type in ServingsType::ALL {
+            assert_eq!(
+                ServingsType::parse(servings_type.wire_name()),
+                Some(servings_type)
+            );
+        }
+        assert_eq!(ServingsType::parse(""), Some(ServingsType::None));
+        assert_eq!(ServingsType::parse("unknown"), None);
+    }
+
+    #[test]
+    fn amount_types_round_trip_through_the_wire() {
+        for amount_type in AmountType::ALL {
+            assert_eq!(
+                AmountType::parse(amount_type.wire_name()),
+                Some(amount_type)
+            );
+        }
+        assert_eq!(AmountType::parse(""), Some(AmountType::Measured));
+        assert_eq!(AmountType::parse("unknown"), None);
+    }
+
+    #[test]
+    fn recipe_form_types_round_trip_through_the_wire() {
+        for recipe_type in [RecipeFormType::Simple, RecipeFormType::Multipart] {
+            assert_eq!(
+                RecipeFormType::parse(recipe_type.wire_name()),
+                Some(recipe_type)
+            );
+        }
+        assert_eq!(RecipeFormType::parse(""), Some(RecipeFormType::Simple));
+        assert_eq!(RecipeFormType::parse("unknown"), None);
+    }
+
+    #[test]
+    fn built_in_units_round_trip_through_the_wire() {
+        for wire in BUILT_IN_UNITS {
+            let unit = unit_from_wire(wire).expect("built-in unit should parse");
+            assert_eq!(unit_wire(&unit), wire);
+        }
+        assert_eq!(unit_from_wire("other"), None);
     }
 }

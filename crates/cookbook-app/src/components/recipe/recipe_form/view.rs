@@ -32,6 +32,36 @@ pub(super) const TEXTAREA_CLASS: &str = "min-h-24 w-full rounded-lg border borde
 
 pub(super) const SELECT_CLASS: &str = "h-9 w-full rounded-lg border border-border bg-transparent px-3 text-sm transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background";
 
+fn servings_type_label(cx: &Cx, servings_type: ServingsType) -> String {
+    match servings_type {
+        ServingsType::None => t!(form_servings_none).resolve(cx).into_owned(),
+        ServingsType::People => t!(form_servings_people).resolve(cx).into_owned(),
+        ServingsType::Portions => t!(form_servings_portions).resolve(cx).into_owned(),
+    }
+}
+
+fn amount_type_label(cx: &Cx, amount_type: AmountType) -> String {
+    match amount_type {
+        AmountType::Measured => t!(form_amount_measured).resolve(cx).into_owned(),
+        AmountType::Text => t!(form_amount_text).resolve(cx).into_owned(),
+    }
+}
+
+fn unit_label(cx: &Cx, unit: &str) -> String {
+    match unit {
+        "gram" => t!(unit_gram).resolve(cx).into_owned(),
+        "kilogram" => t!(unit_kilogram).resolve(cx).into_owned(),
+        "millilitre" => t!(unit_millilitre).resolve(cx).into_owned(),
+        "centilitre" => t!(unit_centilitre).resolve(cx).into_owned(),
+        "litre" => t!(unit_litre).resolve(cx).into_owned(),
+        "piece" => t!(unit_piece).resolve(cx).into_owned(),
+        "teaspoon" => t!(unit_teaspoon).resolve(cx).into_owned(),
+        "tablespoon" => t!(unit_tablespoon).resolve(cx).into_owned(),
+        "other" => t!(unit_other).resolve(cx).into_owned(),
+        _ => unreachable!("unknown unit label"),
+    }
+}
+
 /// Inserts a step slot at a display position, clamping past the end.
 fn insert_order_key(mut order: Vec<usize>, index: usize, key: usize) -> Vec<usize> {
     order.insert(index.min(order.len()), key);
@@ -193,13 +223,16 @@ async fn servings_fields(
     servings_label: String,
 ) -> Result<impl View> {
     let servings_type_value = if servings_type.is_empty() {
-        "none".to_string()
+        ServingsType::None.wire_name().to_string()
     } else {
         servings_type
     };
     let servings_type = signal(cx, move || servings_type_value.clone());
     let servings_count = signal(cx, move || servings_count.clone());
     let servings_label = signal(cx, move || servings_label.clone());
+
+    let none = ServingsType::None.wire_name();
+    let portions = ServingsType::Portions.wire_name();
 
     let servings_type_id = element_id(cx);
     let servings_count_id = element_id(cx);
@@ -221,15 +254,15 @@ async fn servings_fields(
                         :value=$(servings_type.get())
                         @change=$(|e: Event| servings_type.set(e.target.value))
                     >
-                        <option value="none">(t!(form_servings_none))</option>
-                        <option value="people">(t!(form_servings_people))</option>
-                        <option value="portions">
-                            (t!(form_servings_portions))
-                        </option>
+                        for option_type in ServingsType::ALL {
+                            <option value=(option_type.wire_name())>
+                                (servings_type_label(cx, option_type))
+                            </option>
+                        }
                     </select>
                 )
                 field(
-                    attrs: attributes! { :hidden=$(servings_type.get() == "none") },
+                    attrs: attributes! { :hidden=$(servings_type.get() == none) },
                     field_label(
                         attrs: attributes! { for=(&servings_count_id) },
                         (t!(form_servings_count))
@@ -242,14 +275,14 @@ async fn servings_fields(
                             min="1"
                             step="1"
                             placeholder="4"
-                            :disabled=$(servings_type.get() == "none")
+                            :disabled=$(servings_type.get() == none)
                             :value=$(servings_count.get())
                             @input=$(|e: Event| servings_count.set(e.target.value))
                         }
                     )
                 )
                 field(
-                    attrs: attributes! { :hidden=$(servings_type.get() != "portions") },
+                    attrs: attributes! { :hidden=$(servings_type.get() != portions) },
                     field_label(
                         attrs: attributes! { for=(&servings_label_id) },
                         (t!(form_servings_label))
@@ -260,7 +293,7 @@ async fn servings_fields(
                             name=(SERVINGS_LABEL_FIELD)
                             type="text"
                             placeholder=(t!(form_servings_label.placeholder))
-                            :disabled=$(servings_type.get() != "portions")
+                            :disabled=$(servings_type.get() != portions)
                             :value=$(servings_label.get())
                             @input=$(|e: Event| servings_label.set(e.target.value))
                         }
@@ -825,7 +858,7 @@ async fn ingredient_row(
 
     let name = signal(cx, move || name.clone());
     let amount_type_value = if amount_type.is_empty() {
-        "measured".to_string()
+        AmountType::Measured.wire_name().to_string()
     } else {
         amount_type
     };
@@ -875,8 +908,11 @@ async fn ingredient_row(
                         :value=$(amount_type.get())
                         @change=$(|e: Event| amount_type.set(e.target.value))
                     >
-                        <option value="measured">(t!(form_amount_measured))</option>
-                        <option value="text">(t!(form_amount_text))</option>
+                        for option_type in AmountType::ALL {
+                            <option value=(option_type.wire_name())>
+                                (amount_type_label(cx, option_type))
+                            </option>
+                        }
                     </select>
                 )
                 <div class="flex items-end">
@@ -916,12 +952,16 @@ async fn ingredient_amount_fields(
     let quantity = signal(cx, move || quantity.clone());
     let quantity_text = signal(cx, move || quantity_text.clone());
     let unit_value = if unit.is_empty() {
-        "gram".to_string()
+        DEFAULT_UNIT.to_string()
     } else {
         unit
     };
     let unit = signal(cx, move || unit_value.clone());
     let unit_other = signal(cx, move || unit_other.clone());
+
+    let measured = AmountType::Measured.wire_name();
+    let text = AmountType::Text.wire_name();
+    let other_unit = OTHER_UNIT;
 
     let quantity_id = element_id(cx);
     let quantity_text_id = element_id(cx);
@@ -935,7 +975,7 @@ async fn ingredient_amount_fields(
 
     Ok(view! {
         <div
-            :hidden=$(amount_type.get() != "measured")
+            :hidden=$(amount_type.get() != measured)
             class="grid gap-3 sm:grid-cols-[8rem_10rem_minmax(0,1fr)] sm:items-end"
         >
             field(
@@ -951,7 +991,7 @@ async fn ingredient_amount_fields(
                         min="0"
                         step="any"
                         placeholder=(t!(form_quantity.placeholder))
-                        :disabled=$(amount_type.get() != "measured")
+                        :disabled=$(amount_type.get() != measured)
                         :value=$(quantity.get())
                         @input=$(|e: Event| quantity.set(e.target.value))
                     }
@@ -963,23 +1003,18 @@ async fn ingredient_amount_fields(
                     id=(&unit_id)
                     name=(unit_field)
                     class=(SELECT_CLASS)
-                    :disabled=$(amount_type.get() != "measured")
+                    :disabled=$(amount_type.get() != measured)
                     :value=$(unit.get())
                     @change=$(|e: Event| unit.set(e.target.value))
                 >
-                    <option value="gram">(t!(unit_gram))</option>
-                    <option value="kilogram">(t!(unit_kilogram))</option>
-                    <option value="millilitre">(t!(unit_millilitre))</option>
-                    <option value="centilitre">(t!(unit_centilitre))</option>
-                    <option value="litre">(t!(unit_litre))</option>
-                    <option value="piece">(t!(unit_piece))</option>
-                    <option value="teaspoon">(t!(unit_teaspoon))</option>
-                    <option value="tablespoon">(t!(unit_tablespoon))</option>
-                    <option value="other">(t!(unit_other))</option>
+                    for unit_option in BUILT_IN_UNITS {
+                        <option value=(unit_option)>(unit_label(cx, unit_option))</option>
+                    }
+                    <option value=(OTHER_UNIT)>(unit_label(cx, OTHER_UNIT))</option>
                 </select>
             )
             field(
-                attrs: attributes! { :hidden=$(unit.get() != "other") },
+                attrs: attributes! { :hidden=$(unit.get() != other_unit) },
                 field_label(
                     attrs: attributes! { for=(&unit_other_id) },
                     (t!(form_unit_other))
@@ -990,7 +1025,7 @@ async fn ingredient_amount_fields(
                         name=(unit_other_field)
                         type="text"
                         placeholder=(t!(form_unit_other.placeholder))
-                        :disabled=$(amount_type.get() != "measured")
+                        :disabled=$(amount_type.get() != measured)
                         :value=$(unit_other.get())
                         @input=$(|e: Event| unit_other.set(e.target.value))
                     }
@@ -999,7 +1034,7 @@ async fn ingredient_amount_fields(
         </div>
 
         field(
-            attrs: attributes! { :hidden=$(amount_type.get() != "text") },
+            attrs: attributes! { :hidden=$(amount_type.get() != text) },
             field_label(
                 attrs: attributes! { for=(&quantity_text_id) },
                 (t!(form_amount_text_value))
@@ -1010,7 +1045,7 @@ async fn ingredient_amount_fields(
                     name=(quantity_text_field)
                     type="text"
                     placeholder=(t!(form_amount_text_value.placeholder))
-                    :disabled=$(amount_type.get() != "text")
+                    :disabled=$(amount_type.get() != text)
                     :value=$(quantity_text.get())
                     @input=$(|e: Event| quantity_text.set(e.target.value))
                 }
