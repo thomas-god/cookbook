@@ -7,40 +7,27 @@ mod view;
 use std::collections::HashMap;
 
 use cookbook_domain::recipe::{
-    models::{RecipeCategory, RecipeId as RecipeIdValue, RecipeRevisionId},
+    models::{RecipeId as RecipeIdValue, RecipeRevisionId},
     ports::RecipeService,
 };
 use topcoat::{
     Result,
     context::{Cx, app_context},
-    router::href,
-    runtime::{Event, shard, signal},
-    view::{View, attributes, component, element_id, view},
+    runtime::shard,
+    view::{View, component, view},
 };
 
 use crate::{
-    app::{
-        AppRecipeService, auth,
-        recipes::{RecipeId, recipe_detail},
-    },
-    components::base::{
-        button::{ButtonVariant, button},
-        field::{field, field_label, field_legend, field_set},
-        input::input,
-    },
-    components::recipe::category::category_label,
+    app::{AppRecipeService, auth},
     t,
 };
 
 use self::{
-    fields::{
-        CATEGORY_FIELD, DESCRIPTION_FIELD, MESSAGE_FIELD, RECIPE_TYPE_FIELD, SERVINGS_COUNT_FIELD,
-        SERVINGS_LABEL_FIELD, SERVINGS_TYPE_FIELD, TITLE_FIELD,
-    },
+    fields::RECIPE_TYPE_FIELD,
     initial::{
         FormImageInitial, FormInitial, StructureInitial, form_image_initial, load_current_recipe,
     },
-    view::{SELECT_CLASS, TEXTAREA_CLASS, body_fields, parts_editor},
+    view::{body_fields, form_actions, metadata_fields, parts_editor, revision_message_field},
 };
 
 pub(crate) use self::fields::LATEST_REVISION_FIELD;
@@ -147,55 +134,21 @@ async fn recipe_form_fields(
         })
         .collect();
 
-    let title_value = initial.title.clone();
-    let title = signal(cx, move || title_value.clone());
-    let description_value = initial.description.clone();
-    let description = signal(cx, move || description_value.clone());
-    let category_value = initial.category.clone();
-    let category = signal(cx, move || category_value.clone());
-    let servings_type_value = if initial.servings_type.is_empty() {
-        "none".to_string()
-    } else {
-        initial.servings_type.clone()
-    };
-    let servings_type = signal(cx, move || servings_type_value.clone());
-    let servings_count_value = initial.servings_count.clone();
-    let servings_count = signal(cx, move || servings_count_value.clone());
-    let servings_label_value = initial.servings_label.clone();
-    let servings_label = signal(cx, move || servings_label_value.clone());
-    let message = signal(cx, String::new);
-
-    let (simple_initial, part_initials) = match initial.structure {
+    let FormInitial {
+        title,
+        description,
+        category,
+        servings_type,
+        servings_count,
+        servings_label,
+        structure,
+    } = initial;
+    let (simple_initial, part_initials) = match structure {
         StructureInitial::Simple(body) => (Some(body), Vec::new()),
         StructureInitial::Multipart(parts) => (None, parts),
     };
 
     let latest_revision = (!latest_revision.is_empty()).then_some(latest_revision);
-
-    let title_id = element_id(cx);
-    let description_id = element_id(cx);
-    let category_id = element_id(cx);
-    let servings_type_id = element_id(cx);
-    let servings_count_id = element_id(cx);
-    let servings_label_id = element_id(cx);
-    let message_id = element_id(cx);
-    let message_label = if needs_review {
-        t!(form_verification_message).resolve(cx).into_owned()
-    } else {
-        t!(form_edit_message).resolve(cx).into_owned()
-    };
-    let message_placeholder = if needs_review {
-        t!(form_verification_message.placeholder)
-            .resolve(cx)
-            .into_owned()
-    } else {
-        t!(form_edit_message.placeholder).resolve(cx).into_owned()
-    };
-    let submit_label = if needs_review {
-        t!(form_verify_and_save).resolve(cx).into_owned()
-    } else {
-        t!(form_save_recipe).resolve(cx).into_owned()
-    };
 
     Ok(view! {
         <form
@@ -224,117 +177,13 @@ async fn recipe_form_fields(
                     (t!(recipe_needs_review_notice))
                 </p>
             }
-            field_set(
-                field(
-                    input(
-                        attrs: attributes! {
-                            id=(&title_id)
-                            name=(TITLE_FIELD)
-                            type="text"
-                            placeholder=(t!(form_title.placeholder))
-                            required=""
-                            :value=$(title.get())
-                            @input=$(|e: Event| title.set(e.target.value))
-                        }
-                    )
-                )
-                field(
-                    field_label(
-                        attrs: attributes! { for=(&description_id) },
-                        (t!(form_description))
-                    )
-                    <textarea
-                        id=(&description_id)
-                        name=(DESCRIPTION_FIELD)
-                        rows="2"
-                        class=(TEXTAREA_CLASS)
-                        placeholder=(t!(form_description.placeholder))
-                        :value=$(description.get())
-                        @input=$(|e: Event| description.set(e.target.value))
-                    ></textarea>
-                )
-                field(
-                    field_label(
-                        attrs: attributes! { for=(&category_id) },
-                        (t!(category_label))
-                    )
-                    <select
-                        id=(&category_id)
-                        name=(CATEGORY_FIELD)
-                        class=(SELECT_CLASS)
-                        :value=$(category.get())
-                        @change=$(|e: Event| category.set(e.target.value))
-                    >
-                        <option value="">(t!(category_none))</option>
-                        for option_category in RecipeCategory::ALL {
-                            <option value=(option_category.as_str())>
-                                (category_label(cx, option_category))
-                            </option>
-                        }
-                    </select>
-                )
-                field_set(
-                    field_legend((t!(form_servings)))
-                    <div class="grid gap-4 sm:grid-cols-3">
-                        field(
-                            field_label(
-                                attrs: attributes! { for=(&servings_type_id) },
-                                (t!(form_servings_type))
-                            )
-                            <select
-                                id=(&servings_type_id)
-                                name=(SERVINGS_TYPE_FIELD)
-                                class=(SELECT_CLASS)
-                                :value=$(servings_type.get())
-                                @change=$(|e: Event| servings_type.set(e.target.value))
-                            >
-                                <option value="none">(t!(form_servings_none))</option>
-                                <option value="people">(t!(form_servings_people))</option>
-                                <option value="portions">
-                                    (t!(form_servings_portions))
-                                </option>
-                            </select>
-                        )
-                        field(
-                            attrs: attributes! { :hidden=$(servings_type.get() == "none") },
-                            field_label(
-                                attrs: attributes! { for=(&servings_count_id) },
-                                (t!(form_servings_count))
-                            )
-                            input(
-                                attrs: attributes! {
-                                    id=(&servings_count_id)
-                                    name=(SERVINGS_COUNT_FIELD)
-                                    type="number"
-                                    min="1"
-                                    step="1"
-                                    placeholder="4"
-                                    :disabled=$(servings_type.get() == "none")
-                                    :value=$(servings_count.get())
-                                    @input=$(|e: Event| servings_count.set(e.target.value))
-                                }
-                            )
-                        )
-                        field(
-                            attrs: attributes! { :hidden=$(servings_type.get() != "portions") },
-                            field_label(
-                                attrs: attributes! { for=(&servings_label_id) },
-                                (t!(form_servings_label))
-                            )
-                            input(
-                                attrs: attributes! {
-                                    id=(&servings_label_id)
-                                    name=(SERVINGS_LABEL_FIELD)
-                                    type="text"
-                                    placeholder=(t!(form_servings_label.placeholder))
-                                    :disabled=$(servings_type.get() != "portions")
-                                    :value=$(servings_label.get())
-                                    @input=$(|e: Event| servings_label.set(e.target.value))
-                                }
-                            )
-                        )
-                    </div>
-                )
+            metadata_fields(
+                title: title,
+                description: description,
+                category: category,
+                servings_type: servings_type,
+                servings_count: servings_count,
+                servings_label: servings_label
             )
 
             if let Some(body_initial) = simple_initial {
@@ -351,33 +200,10 @@ async fn recipe_form_fields(
             }
 
             if is_edit {
-                field(
-                    field_label(
-                        attrs: attributes! { for=(&message_id) },
-                        (message_label)
-                    )
-                    <textarea
-                        id=(&message_id)
-                        name=(MESSAGE_FIELD)
-                        rows="2"
-                        class=(TEXTAREA_CLASS)
-                        placeholder=(message_placeholder)
-                        :value=$(message.get())
-                        @input=$(|e: Event| message.set(e.target.value))
-                    ></textarea>
-                )
+                revision_message_field(needs_review: needs_review)
             }
 
-            <div class="flex justify-end gap-2">
-                if is_edit {
-                    <a href=(href!(recipe_detail, RecipeId(recipe_id)))>
-                        button(variant: ButtonVariant::Secondary, (t!(form_cancel)))
-                    </a>
-                    button(attrs: attributes! { type="submit" }, (submit_label))
-                } else {
-                    button(attrs: attributes! { type="submit" }, (t!(form_add_recipe)))
-                }
-            </div>
+            form_actions(recipe_id: recipe_id, needs_review: needs_review)
         </form>
     })
 }

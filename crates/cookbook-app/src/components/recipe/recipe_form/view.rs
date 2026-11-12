@@ -1,18 +1,24 @@
 use std::collections::HashMap;
 
+use cookbook_domain::recipe::models::RecipeCategory;
 use topcoat::{
     Result,
     context::Cx,
+    router::href,
     runtime::{Event, Signal, procedure, signal},
     view::{View, attributes, component, element_id, view},
 };
 
 use crate::{
-    components::base::{
-        button::{ButtonSize, ButtonVariant, button},
-        field::{field, field_description, field_label, field_legend, field_set},
-        image_upload::image_upload,
-        input::input,
+    app::recipes::{RecipeId, recipe_detail},
+    components::{
+        base::{
+            button::{ButtonSize, ButtonVariant, button},
+            field::{field, field_description, field_label, field_legend, field_set},
+            image_upload::image_upload,
+            input::input,
+        },
+        recipe::category::category_label,
     },
     t,
 };
@@ -115,6 +121,232 @@ struct StepListState {
 struct PartListState {
     order: Signal<Vec<usize>>,
     next_key: Signal<usize>,
+}
+
+#[component]
+pub(super) async fn metadata_fields(
+    cx: &Cx,
+    title: String,
+    description: String,
+    category: String,
+    servings_type: String,
+    servings_count: String,
+    servings_label: String,
+) -> Result<impl View> {
+    let title = signal(cx, move || title.clone());
+    let description = signal(cx, move || description.clone());
+    let category = signal(cx, move || category.clone());
+
+    let title_id = element_id(cx);
+    let description_id = element_id(cx);
+    let category_id = element_id(cx);
+
+    Ok(view! {
+        field_set(
+            field(
+                input(
+                    attrs: attributes! {
+                        id=(&title_id)
+                        name=(TITLE_FIELD)
+                        type="text"
+                        placeholder=(t!(form_title.placeholder))
+                        required=""
+                        :value=$(title.get())
+                        @input=$(|e: Event| title.set(e.target.value))
+                    }
+                )
+            )
+            field(
+                field_label(
+                    attrs: attributes! { for=(&description_id) },
+                    (t!(form_description))
+                )
+                <textarea
+                    id=(&description_id)
+                    name=(DESCRIPTION_FIELD)
+                    rows="2"
+                    class=(TEXTAREA_CLASS)
+                    placeholder=(t!(form_description.placeholder))
+                    :value=$(description.get())
+                    @input=$(|e: Event| description.set(e.target.value))
+                ></textarea>
+            )
+            field(
+                field_label(
+                    attrs: attributes! { for=(&category_id) },
+                    (t!(category_label))
+                )
+                <select
+                    id=(&category_id)
+                    name=(CATEGORY_FIELD)
+                    class=(SELECT_CLASS)
+                    :value=$(category.get())
+                    @change=$(|e: Event| category.set(e.target.value))
+                >
+                    <option value="">(t!(category_none))</option>
+                    for option_category in RecipeCategory::ALL {
+                        <option value=(option_category.as_str())>
+                            (category_label(cx, option_category))
+                        </option>
+                    }
+                </select>
+            )
+            servings_fields(
+                servings_type: servings_type,
+                servings_count: servings_count,
+                servings_label: servings_label
+            )
+        )
+    })
+}
+
+#[component]
+async fn servings_fields(
+    cx: &Cx,
+    servings_type: String,
+    servings_count: String,
+    servings_label: String,
+) -> Result<impl View> {
+    let servings_type_value = if servings_type.is_empty() {
+        "none".to_string()
+    } else {
+        servings_type
+    };
+    let servings_type = signal(cx, move || servings_type_value.clone());
+    let servings_count = signal(cx, move || servings_count.clone());
+    let servings_label = signal(cx, move || servings_label.clone());
+
+    let servings_type_id = element_id(cx);
+    let servings_count_id = element_id(cx);
+    let servings_label_id = element_id(cx);
+
+    Ok(view! {
+        field_set(
+            field_legend((t!(form_servings)))
+            <div class="grid gap-4 sm:grid-cols-3">
+                field(
+                    field_label(
+                        attrs: attributes! { for=(&servings_type_id) },
+                        (t!(form_servings_type))
+                    )
+                    <select
+                        id=(&servings_type_id)
+                        name=(SERVINGS_TYPE_FIELD)
+                        class=(SELECT_CLASS)
+                        :value=$(servings_type.get())
+                        @change=$(|e: Event| servings_type.set(e.target.value))
+                    >
+                        <option value="none">(t!(form_servings_none))</option>
+                        <option value="people">(t!(form_servings_people))</option>
+                        <option value="portions">
+                            (t!(form_servings_portions))
+                        </option>
+                    </select>
+                )
+                field(
+                    attrs: attributes! { :hidden=$(servings_type.get() == "none") },
+                    field_label(
+                        attrs: attributes! { for=(&servings_count_id) },
+                        (t!(form_servings_count))
+                    )
+                    input(
+                        attrs: attributes! {
+                            id=(&servings_count_id)
+                            name=(SERVINGS_COUNT_FIELD)
+                            type="number"
+                            min="1"
+                            step="1"
+                            placeholder="4"
+                            :disabled=$(servings_type.get() == "none")
+                            :value=$(servings_count.get())
+                            @input=$(|e: Event| servings_count.set(e.target.value))
+                        }
+                    )
+                )
+                field(
+                    attrs: attributes! { :hidden=$(servings_type.get() != "portions") },
+                    field_label(
+                        attrs: attributes! { for=(&servings_label_id) },
+                        (t!(form_servings_label))
+                    )
+                    input(
+                        attrs: attributes! {
+                            id=(&servings_label_id)
+                            name=(SERVINGS_LABEL_FIELD)
+                            type="text"
+                            placeholder=(t!(form_servings_label.placeholder))
+                            :disabled=$(servings_type.get() != "portions")
+                            :value=$(servings_label.get())
+                            @input=$(|e: Event| servings_label.set(e.target.value))
+                        }
+                    )
+                )
+            </div>
+        )
+    })
+}
+
+#[component]
+pub(super) async fn revision_message_field(cx: &Cx, needs_review: bool) -> Result<impl View> {
+    let message = signal(cx, String::new);
+    let message_id = element_id(cx);
+    let message_label = if needs_review {
+        t!(form_verification_message).resolve(cx).into_owned()
+    } else {
+        t!(form_edit_message).resolve(cx).into_owned()
+    };
+    let message_placeholder = if needs_review {
+        t!(form_verification_message.placeholder)
+            .resolve(cx)
+            .into_owned()
+    } else {
+        t!(form_edit_message.placeholder).resolve(cx).into_owned()
+    };
+
+    Ok(view! {
+        field(
+            field_label(
+                attrs: attributes! { for=(&message_id) },
+                (message_label)
+            )
+            <textarea
+                id=(&message_id)
+                name=(MESSAGE_FIELD)
+                rows="2"
+                class=(TEXTAREA_CLASS)
+                placeholder=(message_placeholder)
+                :value=$(message.get())
+                @input=$(|e: Event| message.set(e.target.value))
+            ></textarea>
+        )
+    })
+}
+
+#[component]
+pub(super) async fn form_actions(
+    cx: &Cx,
+    recipe_id: String,
+    needs_review: bool,
+) -> Result<impl View> {
+    let is_edit = !recipe_id.is_empty();
+    let submit_label = if needs_review {
+        t!(form_verify_and_save).resolve(cx).into_owned()
+    } else {
+        t!(form_save_recipe).resolve(cx).into_owned()
+    };
+
+    Ok(view! {
+        <div class="flex justify-end gap-2">
+            if is_edit {
+                <a href=(href!(recipe_detail, RecipeId(recipe_id)))>
+                    button(variant: ButtonVariant::Secondary, (t!(form_cancel)))
+                </a>
+                button(attrs: attributes! { type="submit" }, (submit_label))
+            } else {
+                button(attrs: attributes! { type="submit" }, (t!(form_add_recipe)))
+            }
+        </div>
+    })
 }
 
 #[component]
