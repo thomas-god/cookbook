@@ -17,8 +17,8 @@ pub const IMAGE_ACCEPT: &str = "image/jpeg,image/png";
 
 /// The MIME types accepted for recipe source documents.
 ///
-/// A source document is either a photo or a PDF. Accepting PDFs alongside the
-/// image types may prevent iOS from converting HEIC photos automatically.
+/// A source document is either a photo or a PDF. Adding pdf does not prevent
+/// iOS from converting images to jpeg (as of November 2026).
 pub const DOCUMENT_ACCEPT: &str = "image/jpeg,image/png,application/pdf";
 
 /// A file input restricted to JPEG and PNG images.
