@@ -4,8 +4,9 @@ use cookbook_domain::recipe::models::{
     RecipeWithContent, RevisionOrigin, RevisionVerification,
 };
 use cookbook_domain::recipe::ports::{
-    GetRecipeError, ListRecipeRevisionsError, ListRecipesError, RecipeRepository,
-    RecipeSearchCriteria, RecipeSort, SaveRecipeError, SearchRecipesError, SortDirection,
+    DeleteRecipeRecordError, GetRecipeError, ListRecipeRevisionsError, ListRecipesError,
+    RecipeRepository, RecipeSearchCriteria, RecipeSort, SaveRecipeError, SearchRecipesError,
+    SortDirection,
 };
 use cookbook_domain::user::models::UserId;
 use sqlx::sqlite::{Sqlite, SqlitePool, SqliteRow};
@@ -280,6 +281,20 @@ impl RecipeRepository for SqliteRecipeRepository {
             .map(decode_revision)
             .collect::<anyhow::Result<Vec<_>>>()
             .map_err(revisions_storage)
+    }
+
+    async fn delete_recipe(&self, id: RecipeId) -> Result<(), DeleteRecipeRecordError> {
+        let result = sqlx::query("DELETE FROM recipes WHERE id = ?")
+            .bind(id.as_str())
+            .execute(&self.pool)
+            .await
+            .map_err(|error| DeleteRecipeRecordError::Storage(error.into()))?;
+
+        if result.rows_affected() == 0 {
+            return Err(DeleteRecipeRecordError::NotFound);
+        }
+
+        Ok(())
     }
 }
 
@@ -954,5 +969,83 @@ mod tests {
 
         assert_eq!(titles(&ascending), ["apple pie", "Banana Bread"]);
         assert_eq!(titles(&descending), ["Banana Bread", "apple pie"]);
+    }
+
+    #[tokio::test]
+    async fn deletes_a_recipe_and_cascades_its_rows() {
+        let repository = repository().await;
+        let recipe = recipe("soup");
+        save(
+            &repository,
+            recipe.clone(),
+            revision("revision-1", &recipe, "Soup", SystemTime::UNIX_EPOCH),
+        )
+        .await;
+
+        sqlx::query(
+            "INSERT INTO recipe_images (
+                id, recipe_id, content_type, byte_len, added_by, added_at_ms, storage_key
+             ) VALUES (
+                'image-1', 'soup', 'image/jpeg', 4, 'user-1', 0,
+                'recipes/soup/images/image-1'
+             )",
+        )
+        .execute(repository.pool())
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO recipe_source_documents (
+                id, recipe_id, content_type, original_name, byte_len, added_by,
+                added_at_ms, storage_key
+             ) VALUES (
+                'document-1', 'soup', 'image/jpeg', 'front.jpg', 4, 'user-1',
+                0, 'recipes/soup/documents/document-1'
+             )",
+        )
+        .execute(repository.pool())
+        .await
+        .unwrap();
+
+        repository
+            .delete_recipe(RecipeId::new("soup".to_string()))
+            .await
+            .unwrap();
+
+        assert!(
+            repository
+                .get_recipe(RecipeId::new("soup".to_string()))
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            repository
+                .get_recipe_revisions(RecipeId::new("soup".to_string()))
+                .await
+                .unwrap()
+                .is_empty()
+        );
+
+        let images: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM recipe_images")
+            .fetch_one(repository.pool())
+            .await
+            .unwrap();
+        let documents: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM recipe_source_documents")
+            .fetch_one(repository.pool())
+            .await
+            .unwrap();
+
+        assert_eq!((images, documents), (0, 0));
+    }
+
+    #[tokio::test]
+    async fn deleting_an_unknown_recipe_is_not_found() {
+        let repository = repository().await;
+
+        let result = repository
+            .delete_recipe(RecipeId::new("missing".to_string()))
+            .await;
+
+        assert!(matches!(result, Err(DeleteRecipeRecordError::NotFound)));
     }
 }

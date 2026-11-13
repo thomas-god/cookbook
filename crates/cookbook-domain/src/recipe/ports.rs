@@ -151,6 +151,12 @@ pub trait RecipeService: Clone + Send + Sync + 'static {
         request: UpdateRecipeScopeRequest,
     ) -> impl Future<Output = Result<RecipeWithContent, UpdateRecipeScopeError>> + Send;
 
+    fn delete_recipe(
+        &self,
+        id: RecipeId,
+        actor: UserId,
+    ) -> impl Future<Output = Result<(), DeleteRecipeError>> + Send;
+
     fn get_recipes(
         &self,
         viewer: UserId,
@@ -248,6 +254,11 @@ pub trait RecipeRepository: Clone + Send + Sync + 'static {
         &self,
         id: RecipeId,
     ) -> impl Future<Output = Result<Vec<RecipeRevision>, ListRecipeRevisionsError>> + Send;
+
+    fn delete_recipe(
+        &self,
+        id: RecipeId,
+    ) -> impl Future<Output = Result<(), DeleteRecipeRecordError>> + Send;
 }
 
 /// Outbound (driven) port for recipe documents (images, source) persistence.
@@ -289,6 +300,11 @@ pub trait RecipeDocumentRepository: Clone + Send + Sync + 'static {
         recipe_id: RecipeId,
         image_id: RecipeImageId,
     ) -> impl Future<Output = Result<Option<RecipeImage>, GetRecipeImageError>> + Send;
+
+    fn delete_recipe_assets(
+        &self,
+        recipe_id: RecipeId,
+    ) -> impl Future<Output = Result<(), DeleteRecipeAssetsError>> + Send;
 }
 
 #[derive(Debug)]
@@ -381,6 +397,57 @@ impl fmt::Display for UpdateRecipeScopeError {
 }
 
 impl std::error::Error for UpdateRecipeScopeError {}
+
+#[derive(Debug)]
+pub enum DeleteRecipeError {
+    NotFound,
+    Forbidden,
+    Storage(anyhow::Error),
+}
+
+impl fmt::Display for DeleteRecipeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NotFound => f.write_str("recipe not found"),
+            Self::Forbidden => f.write_str("only the recipe author can delete it"),
+            Self::Storage(reason) => write!(f, "failed to delete recipe: {reason}"),
+        }
+    }
+}
+
+impl std::error::Error for DeleteRecipeError {}
+
+#[derive(Debug)]
+pub enum DeleteRecipeRecordError {
+    NotFound,
+    Storage(anyhow::Error),
+}
+
+impl fmt::Display for DeleteRecipeRecordError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NotFound => f.write_str("recipe not found"),
+            Self::Storage(reason) => write!(f, "failed to delete recipe: {reason}"),
+        }
+    }
+}
+
+impl std::error::Error for DeleteRecipeRecordError {}
+
+#[derive(Debug)]
+pub enum DeleteRecipeAssetsError {
+    Storage(anyhow::Error),
+}
+
+impl fmt::Display for DeleteRecipeAssetsError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Storage(reason) => write!(f, "failed to delete recipe assets: {reason}"),
+        }
+    }
+}
+
+impl std::error::Error for DeleteRecipeAssetsError {}
 
 #[derive(Debug)]
 pub enum GetRecipesError {
@@ -740,6 +807,12 @@ mockall::mock! {
             request: UpdateRecipeScopeRequest,
         ) -> Result<RecipeWithContent, UpdateRecipeScopeError>;
 
+        async fn delete_recipe(
+            &self,
+            id: RecipeId,
+            actor: UserId,
+        ) -> Result<(), DeleteRecipeError>;
+
         async fn get_recipes(
             &self,
             viewer: UserId,
@@ -840,6 +913,10 @@ mockall::mock! {
             id: RecipeId,
         ) -> Result<Vec<RecipeRevision>, ListRecipeRevisionsError>;
 
+        async fn delete_recipe(
+            &self,
+            id: RecipeId,
+        ) -> Result<(), DeleteRecipeRecordError>;
 
     }
 }
@@ -891,5 +968,10 @@ mockall::mock! {
                 recipe_id: RecipeId,
                 image_id: RecipeImageId,
             ) -> Result<Option<RecipeImage>, GetRecipeImageError>;
+
+            async fn delete_recipe_assets(
+                &self,
+                recipe_id: RecipeId,
+            ) -> Result<(), DeleteRecipeAssetsError>;
     }
 }

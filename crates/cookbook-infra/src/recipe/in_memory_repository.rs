@@ -14,10 +14,11 @@ use cookbook_domain::recipe::models::{
     RecipeWithContent, RevisionOrigin, RevisionVerification, Servings, Unit,
 };
 use cookbook_domain::recipe::ports::{
-    AddRecipeImagesError, AddSourceDocumentsError, DeleteSourceDocumentError, GetRecipeError,
-    GetRecipeImageError, GetSourceDocumentError, ListRecipeImagesError, ListRecipeRevisionsError,
-    ListRecipesError, ListSourceDocumentsError, RecipeDocumentRepository, RecipeRepository,
-    RecipeSearchCriteria, RecipeSort, SaveRecipeError, SearchRecipesError, SortDirection,
+    AddRecipeImagesError, AddSourceDocumentsError, DeleteRecipeAssetsError,
+    DeleteRecipeRecordError, DeleteSourceDocumentError, GetRecipeError, GetRecipeImageError,
+    GetSourceDocumentError, ListRecipeImagesError, ListRecipeRevisionsError, ListRecipesError,
+    ListSourceDocumentsError, RecipeDocumentRepository, RecipeRepository, RecipeSearchCriteria,
+    RecipeSort, SaveRecipeError, SearchRecipesError, SortDirection,
 };
 use cookbook_domain::user::models::UserId;
 
@@ -392,6 +393,23 @@ impl RecipeRepository for InMemoryRecipeRepository {
 
         Ok(store.revisions.get(&id).cloned().unwrap_or_default())
     }
+
+    async fn delete_recipe(&self, id: RecipeId) -> Result<(), DeleteRecipeRecordError> {
+        let mut store = self
+            .store
+            .write()
+            .map_err(|_| DeleteRecipeRecordError::Storage(anyhow!("recipe store lock poisoned")))?;
+
+        if store.recipes.remove(&id).is_none() {
+            return Err(DeleteRecipeRecordError::NotFound);
+        }
+
+        store.revisions.remove(&id);
+        store.source_documents.remove(&id);
+        store.images.remove(&id);
+
+        Ok(())
+    }
 }
 
 impl RecipeDocumentRepository for InMemoryRecipeRepository {
@@ -586,6 +604,13 @@ impl RecipeDocumentRepository for InMemoryRecipeRepository {
             .images
             .get(&recipe_id)
             .and_then(|images| images.iter().find(|image| image.id() == &image_id).cloned()))
+    }
+
+    async fn delete_recipe_assets(
+        &self,
+        _recipe_id: RecipeId,
+    ) -> Result<(), DeleteRecipeAssetsError> {
+        Ok(())
     }
 }
 
@@ -1684,5 +1709,69 @@ mod tests {
 
         assert_eq!(images.len(), 1);
         assert_eq!(images[0].id().as_str(), "image-1");
+    }
+
+    #[tokio::test]
+    async fn deletes_a_recipe_and_its_related_rows() {
+        let repository = InMemoryRecipeRepository::new();
+        let recipe = recipe("soup");
+        let revision = revision("revision-1", &recipe);
+        repository
+            .save_recipe_revision(recipe.clone(), revision)
+            .await
+            .unwrap();
+        repository
+            .add_source_documents(vec![source_document(&recipe, "document-1", b"front")])
+            .await
+            .unwrap();
+        repository
+            .add_recipe_images(vec![recipe_image(&recipe, "image-1", b"front")])
+            .await
+            .unwrap();
+
+        repository
+            .delete_recipe(RecipeId::new("soup".to_string()))
+            .await
+            .unwrap();
+
+        assert!(
+            repository
+                .get_recipe(RecipeId::new("soup".to_string()))
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            repository
+                .get_recipe_revisions(RecipeId::new("soup".to_string()))
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            repository
+                .get_source_documents(RecipeId::new("soup".to_string()))
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            repository
+                .get_recipe_images(RecipeId::new("soup".to_string()))
+                .await
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn deleting_an_unknown_recipe_is_not_found() {
+        let repository = InMemoryRecipeRepository::new();
+
+        let result = repository
+            .delete_recipe(RecipeId::new("missing".to_string()))
+            .await;
+
+        assert!(matches!(result, Err(DeleteRecipeRecordError::NotFound)));
     }
 }

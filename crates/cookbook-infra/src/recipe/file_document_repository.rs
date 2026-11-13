@@ -6,9 +6,9 @@ use cookbook_domain::recipe::models::{
     RecipeSourceDocumentId, RecipeSourceDocumentSummary,
 };
 use cookbook_domain::recipe::ports::{
-    AddRecipeImagesError, AddSourceDocumentsError, DeleteSourceDocumentError, GetRecipeImageError,
-    GetSourceDocumentError, ListRecipeImagesError, ListSourceDocumentsError,
-    RecipeDocumentRepository,
+    AddRecipeImagesError, AddSourceDocumentsError, DeleteRecipeAssetsError,
+    DeleteSourceDocumentError, GetRecipeImageError, GetSourceDocumentError, ListRecipeImagesError,
+    ListSourceDocumentsError, RecipeDocumentRepository,
 };
 use cookbook_domain::user::models::UserId;
 use sqlx::sqlite::{SqlitePool, SqliteRow};
@@ -411,6 +411,15 @@ impl RecipeDocumentRepository for FileRecipeDocumentRepository {
             decode_image(&row, bytes).map_err(GetRecipeImageError::Storage)?,
         ))
     }
+
+    async fn delete_recipe_assets(
+        &self,
+        recipe_id: RecipeId,
+    ) -> Result<(), DeleteRecipeAssetsError> {
+        self.files
+            .delete_recipe(&recipe_id)
+            .map_err(DeleteRecipeAssetsError::Storage)
+    }
 }
 
 async fn recipe_exists(pool: &SqlitePool, recipe_id: &RecipeId) -> Result<bool, sqlx::Error> {
@@ -771,5 +780,36 @@ mod tests {
 
         repository.add_source_documents(Vec::new()).await.unwrap();
         repository.add_recipe_images(Vec::new()).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn deleting_recipe_assets_removes_the_recipe_directory() {
+        let (repository, directory) = repository().await;
+        seed_recipe(&repository, "soup").await;
+        repository
+            .add_source_documents(vec![source_document("soup", "document-1", b"front")])
+            .await
+            .unwrap();
+        repository
+            .add_recipe_images(vec![recipe_image("soup", "image-1", b"front")])
+            .await
+            .unwrap();
+
+        repository
+            .delete_recipe_assets(RecipeId::new("soup".to_string()))
+            .await
+            .unwrap();
+
+        assert!(!directory.path().join("recipes/soup").exists());
+    }
+
+    #[tokio::test]
+    async fn deleting_assets_for_a_recipe_without_files_is_a_no_op() {
+        let (repository, _directory) = repository().await;
+
+        repository
+            .delete_recipe_assets(RecipeId::new("missing".to_string()))
+            .await
+            .unwrap();
     }
 }

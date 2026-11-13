@@ -12,14 +12,15 @@ use crate::recipe::models::{
 };
 use crate::recipe::ports::{
     AddRecipeSourceDocumentsError, AddRecipeSourceDocumentsRequest, AddSourceDocumentsError,
-    ConvertRecipeStructureRequest, CreateRecipeError, CreateRecipeRequest,
-    DeleteRecipeSourceDocumentError, DeleteSourceDocumentError, GetRecipeError,
-    GetRecipeHistoryError, GetRecipeImageError, GetRecipeImagesError, GetRecipeSourceDocumentError,
-    GetRecipeSourceDocumentsError, GetRecipesError, GetSourceDocumentError, ListRecipeImagesError,
-    ListSourceDocumentsError, RecipeDocumentRepository, RecipeRepository, RecipeService,
-    RestoreRecipeRevisionError, RestoreRecipeRevisionRequest, SaveRecipeError, SearchRecipesError,
-    SearchRecipesQuery, SearchRecipesResult, UpdateRecipeError, UpdateRecipeRequest,
-    UpdateRecipeScopeError, UpdateRecipeScopeRequest,
+    ConvertRecipeStructureRequest, CreateRecipeError, CreateRecipeRequest, DeleteRecipeError,
+    DeleteRecipeRecordError, DeleteRecipeSourceDocumentError, DeleteSourceDocumentError,
+    GetRecipeError, GetRecipeHistoryError, GetRecipeImageError, GetRecipeImagesError,
+    GetRecipeSourceDocumentError, GetRecipeSourceDocumentsError, GetRecipesError,
+    GetSourceDocumentError, ListRecipeImagesError, ListSourceDocumentsError,
+    RecipeDocumentRepository, RecipeRepository, RecipeService, RestoreRecipeRevisionError,
+    RestoreRecipeRevisionRequest, SaveRecipeError, SearchRecipesError, SearchRecipesQuery,
+    SearchRecipesResult, UpdateRecipeError, UpdateRecipeRequest, UpdateRecipeScopeError,
+    UpdateRecipeScopeRequest,
 };
 use crate::user::models::UserId;
 
@@ -386,6 +387,42 @@ where
             .map_err(|error| UpdateRecipeScopeError::Storage(error.into()))
     }
 
+    async fn delete_recipe(&self, id: RecipeId, actor: UserId) -> Result<(), DeleteRecipeError> {
+        let current = self
+            .recipe_repository
+            .get_recipe(id.clone())
+            .await
+            .map_err(|error| DeleteRecipeError::Storage(error.into()))?
+            .filter(|recipe| recipe.can_view(&actor))
+            .ok_or(DeleteRecipeError::NotFound)?;
+
+        if current.author() != &actor {
+            return Err(DeleteRecipeError::Forbidden);
+        }
+
+        self.recipe_repository
+            .delete_recipe(id.clone())
+            .await
+            .map_err(|error| match error {
+                DeleteRecipeRecordError::NotFound => DeleteRecipeError::NotFound,
+                DeleteRecipeRecordError::Storage(reason) => DeleteRecipeError::Storage(reason),
+            })?;
+
+        if let Err(error) = self
+            .document_repository
+            .delete_recipe_assets(id.clone())
+            .await
+        {
+            tracing::warn!(
+                recipe_id = id.as_str(),
+                %error,
+                "deleted recipe but failed to remove its assets"
+            );
+        }
+
+        Ok(())
+    }
+
     async fn get_recipes(&self, viewer: UserId) -> Result<Vec<RecipeWithContent>, GetRecipesError> {
         let recipes = self
             .recipe_repository
@@ -700,8 +737,9 @@ mod tests {
         RecipeScope, RecipeStep, RecipeStepId, RecipeTitle, RevisionMessage,
     };
     use crate::recipe::ports::{
-        AddRecipeImagesError, MockRecipeDocumentRepository, MockRecipeRepository,
-        RecipeSearchCriteria, SaveRecipeError, SearchRecipesQuery, UpdateRecipeRequest,
+        AddRecipeImagesError, DeleteRecipeAssetsError, DeleteRecipeRecordError,
+        MockRecipeDocumentRepository, MockRecipeRepository, RecipeSearchCriteria, SaveRecipeError,
+        SearchRecipesQuery, UpdateRecipeRequest,
     };
     use crate::user::models::UserId;
 
@@ -2469,5 +2507,97 @@ mod tests {
             .unwrap();
 
         assert!(image.is_none());
+    }
+
+    #[tokio::test]
+    async fn delete_recipe_deletes_an_author_owned_recipe() {
+        let current = current_recipe("soup", "Soup");
+        let mut repository = MockRecipeRepository::new();
+        expect_visible_recipe(&mut repository, current);
+        repository
+            .expect_delete_recipe()
+            .times(1)
+            .withf(|id: &RecipeId| id.as_str() == "soup")
+            .returning(|_| Ok(()));
+        let mut documents = MockRecipeDocumentRepository::new();
+        documents
+            .expect_delete_recipe_assets()
+            .times(1)
+            .withf(|id: &RecipeId| id.as_str() == "soup")
+            .returning(|_| Ok(()));
+
+        let service = RecipeServiceImpl::new(repository, documents, FixedClock::new());
+
+        service.delete_recipe(recipe_id(), user_id()).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn delete_recipe_forbids_a_non_author() {
+        let current = current_recipe_with_scope("soup", "Soup", "author-1", RecipeScope::Viewable);
+        let mut repository = MockRecipeRepository::new();
+        expect_visible_recipe(&mut repository, current);
+        let documents = MockRecipeDocumentRepository::new();
+
+        let service = RecipeServiceImpl::new(repository, documents, FixedClock::new());
+
+        let result = service
+            .delete_recipe(recipe_id(), UserId::new("viewer".to_string()))
+            .await;
+
+        assert!(matches!(result, Err(DeleteRecipeError::Forbidden)));
+    }
+
+    #[tokio::test]
+    async fn delete_recipe_hides_a_private_recipe_from_a_non_author() {
+        let current = current_recipe_with_scope("soup", "Soup", "author-1", RecipeScope::Private);
+        let mut repository = MockRecipeRepository::new();
+        expect_visible_recipe(&mut repository, current);
+        let documents = MockRecipeDocumentRepository::new();
+
+        let service = RecipeServiceImpl::new(repository, documents, FixedClock::new());
+
+        let result = service
+            .delete_recipe(recipe_id(), UserId::new("viewer".to_string()))
+            .await;
+
+        assert!(matches!(result, Err(DeleteRecipeError::NotFound)));
+    }
+
+    #[tokio::test]
+    async fn delete_recipe_maps_a_missing_record() {
+        let current = current_recipe("soup", "Soup");
+        let mut repository = MockRecipeRepository::new();
+        expect_visible_recipe(&mut repository, current);
+        repository
+            .expect_delete_recipe()
+            .times(1)
+            .returning(|_| Err(DeleteRecipeRecordError::NotFound));
+        let documents = MockRecipeDocumentRepository::new();
+
+        let service = RecipeServiceImpl::new(repository, documents, FixedClock::new());
+
+        let result = service.delete_recipe(recipe_id(), user_id()).await;
+
+        assert!(matches!(result, Err(DeleteRecipeError::NotFound)));
+    }
+
+    #[tokio::test]
+    async fn delete_recipe_tolerates_asset_cleanup_failure() {
+        let current = current_recipe("soup", "Soup");
+        let mut repository = MockRecipeRepository::new();
+        expect_visible_recipe(&mut repository, current);
+        repository
+            .expect_delete_recipe()
+            .times(1)
+            .returning(|_| Ok(()));
+        let mut documents = MockRecipeDocumentRepository::new();
+        documents
+            .expect_delete_recipe_assets()
+            .times(1)
+            .returning(|_| Err(DeleteRecipeAssetsError::Storage(anyhow!("cleanup failed"))));
+
+        let service = RecipeServiceImpl::new(repository, documents, FixedClock::new());
+
+        service.delete_recipe(recipe_id(), user_id()).await.unwrap();
     }
 }
