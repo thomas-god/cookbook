@@ -7,10 +7,7 @@ use topcoat::{
 };
 
 use crate::{
-    components::base::{
-        field::{field, field_label},
-        input::input,
-    },
+    components::base::{field::field, input::input},
     t,
 };
 
@@ -27,15 +24,8 @@ pub async fn recipe_search_form(
 ) -> Result<impl View> {
     Ok(view! {
         cx =>
-        <div
-            role="search"
-            class="rounded-lg border border-border bg-card p-4"
-        >
+        <div role="search">
             field(
-                field_label(
-                    attrs: attributes! { for="recipe-search-q" },
-                    (t!(recipe_search))
-                )
                 <div class="relative">
                     icon(
                         data: SEARCH,

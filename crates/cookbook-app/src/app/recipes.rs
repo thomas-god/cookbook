@@ -248,12 +248,9 @@ pub async fn page(cx: &Cx) -> Result<impl View> {
 
     Ok(view! {
         cx =>
-        <h2 class="mb-6 text-2xl font-semibold">(t!(recipes_list_heading))</h2>
+        <h2 class="mb-4 text-2xl font-semibold">(t!(recipes_list_heading))</h2>
 
-        recipe_search_form(
-            query: query.clone(),
-            page: current_page.clone()
-        )
+        recipe_search_form(query: query.clone(), page: current_page.clone())
 
         recipe_search_results(
             query: $(query.get()),
@@ -310,18 +307,6 @@ async fn recipe_search_results(
     let base = href!(page).resolve(cx);
     let previous_page = (page_number > 1).then(|| params.page_href(&base, page_number - 1));
     let next_page = (page_number < total_pages).then(|| params.page_href(&base, page_number + 1));
-    let count_label = if result.total == 1 {
-        t!(recipe_search_result_count, count = result.total.to_string())
-            .resolve(cx)
-            .into_owned()
-    } else {
-        t!(
-            recipe_search_result_count_plural,
-            count = result.total.to_string()
-        )
-        .resolve(cx)
-        .into_owned()
-    };
 
     Ok(view! {
         if result.total == 0 {
@@ -333,9 +318,6 @@ async fn recipe_search_results(
                 <p class="mt-8 text-sm text-muted-foreground">(t!(recipes_empty))</p>
             }
         } else {
-            <p class="mt-8 text-sm text-muted-foreground" role="status">
-                (count_label)
-            </p>
             <ul class="mt-3 flex flex-col gap-2">
                 for recipe in &result.recipes {
                     <li
