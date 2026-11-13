@@ -32,8 +32,13 @@ WORKDIR /app
 COPY --from=builder /app/dist/cookbook-app /app/cookbook-app
 COPY --from=builder /app/dist/assets /app/assets
 
+RUN mkdir -p /data && chown 10001:10001 /data
+
 ENV HOST=0.0.0.0
 ENV PORT=3000
+ENV COOKBOOK_DATA_DIR=/data
+
+VOLUME ["/data"]
 
 EXPOSE 3000
 

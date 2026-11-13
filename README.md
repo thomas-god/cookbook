@@ -30,6 +30,29 @@ Session cookie security follows the `X-Forwarded-Proto` header:
 A TLS-terminating reverse proxy must set `X-Forwarded-Proto`. If the app is exposed directly to
 untrusted clients, make sure they cannot spoof that header.
 
+## Persistence
+
+Data is stored under `COOKBOOK_DATA_DIR`, which defaults to `./data`:
+
+```text
+data/
+  cookbook.sqlite3
+  recipes/
+    <recipe_id>/
+      images/<image_id>
+      documents/<document_id>
+```
+
+SQLite holds users, sessions, recipes, revisions, and asset metadata. Image and source-document
+bytes live in the per-recipe directories. Migrations run automatically at startup.
+
+The Docker image uses `/data` and declares it as a volume. Mount it to keep data across container
+replacements:
+
+```sh
+docker run -v cookbook-data:/data -p 3000:3000 ghcr.io/thomas-god/cookbook
+```
+
 ## Vision recipe import
 
 Recipes can be imported from photos or a PDF of an existing recipe using a vision-language model
@@ -91,6 +114,19 @@ To run the app outside the dev server, build the asset bundle first:
 topcoat asset bundle
 cargo run
 ```
+
+### Dev seed data
+
+Seed the dev user and sample recipes into the configured data directory:
+
+```sh
+./scripts/seed-dev.sh
+# or
+cargo run -p cookbook-infra --bin seed_dev -- --data-dir ./data
+```
+
+The dev user is `dev@example.com` / `test` and owns the sample recipes. Seeding is idempotent and is
+never run automatically by the server.
 
 ### Persisted JSON fixtures
 
