@@ -56,6 +56,7 @@ pub(crate) type AppAuthService = AuthServiceImpl<
 >;
 
 const GEIST: topcoat::font::Font = fontsource_font!(GEIST);
+const APP_JS: topcoat::asset::Asset = topcoat::asset::asset!("assets/app.js");
 
 pub async fn router() -> topcoat::router::Router {
     let recipe_service =
@@ -120,6 +121,7 @@ async fn root_layout(cx: &Cx, slot: Slot<'_>) -> Result<impl View> {
                 <title>(t!(app_name))</title>
                 link(font: GEIST, preload: false)
                 <link rel="stylesheet" href=(topcoat::tailwind::stylesheet!())>
+                <script type="module" src=(APP_JS)></script>
                 topcoat::runtime::script()
                 topcoat::dev::script()
             </head>

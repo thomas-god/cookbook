@@ -53,7 +53,12 @@ pub async fn recipe_search_form(
                             :value=$(query.get())
                             @input=$(|_e: Event| {
                                 raw!(
-                                    "(clearTimeout(${_e}.target.__cookbookSearchDebounce), ${_e}.target.__cookbookSearchDebounce = setTimeout(() => (${query}.set(${_e}.target.value), ${page}.set(\"1\")), 250))",
+                                    "cookbook.debounce(
+                                        ${_e}.target.id, 250,
+                                        () => (
+                                            ${query}.set(${_e}.target.value), ${page}.set(\"1\")
+                                        )
+                                    )",
                                     (),
                                 )
                             })
