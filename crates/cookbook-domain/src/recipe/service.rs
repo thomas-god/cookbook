@@ -1,5 +1,6 @@
 use std::collections::HashSet;
 
+use anyhow::anyhow;
 use uuid::Uuid;
 
 use crate::clock::Clock;
@@ -215,9 +216,9 @@ where
             .save_recipe_revision(recipe, revision)
             .await
             .map_err(|error| match error {
-                SaveRecipeError::RecipeIdMismatch | SaveRecipeError::RecipeAuthorMismatch => {
-                    UpdateRecipeError::Conflict
-                }
+                SaveRecipeError::RecipeIdMismatch
+                | SaveRecipeError::RecipeAuthorMismatch
+                | SaveRecipeError::InvalidRecipeReference => UpdateRecipeError::Conflict,
                 SaveRecipeError::RecipeNotFound => UpdateRecipeError::NotFound,
                 SaveRecipeError::InvalidImageReference => UpdateRecipeError::InvalidImageReference,
                 SaveRecipeError::Storage(reason) => UpdateRecipeError::Storage(reason),
@@ -276,9 +277,9 @@ where
             .save_recipe_revision(recipe, revision)
             .await
             .map_err(|error| match error {
-                SaveRecipeError::RecipeIdMismatch | SaveRecipeError::RecipeAuthorMismatch => {
-                    UpdateRecipeError::Conflict
-                }
+                SaveRecipeError::RecipeIdMismatch
+                | SaveRecipeError::RecipeAuthorMismatch
+                | SaveRecipeError::InvalidRecipeReference => UpdateRecipeError::Conflict,
                 SaveRecipeError::RecipeNotFound => UpdateRecipeError::NotFound,
                 SaveRecipeError::InvalidImageReference => UpdateRecipeError::InvalidImageReference,
                 SaveRecipeError::Storage(reason) => UpdateRecipeError::Storage(reason),
@@ -336,9 +337,9 @@ where
             .save_recipe_revision(recipe, revision)
             .await
             .map_err(|error| match error {
-                SaveRecipeError::RecipeIdMismatch | SaveRecipeError::RecipeAuthorMismatch => {
-                    RestoreRecipeRevisionError::Conflict
-                }
+                SaveRecipeError::RecipeIdMismatch
+                | SaveRecipeError::RecipeAuthorMismatch
+                | SaveRecipeError::InvalidRecipeReference => RestoreRecipeRevisionError::Conflict,
                 SaveRecipeError::RecipeNotFound => RestoreRecipeRevisionError::NotFound,
                 error @ SaveRecipeError::InvalidImageReference => {
                     RestoreRecipeRevisionError::Storage(error.into())
@@ -376,6 +377,9 @@ where
                 SaveRecipeError::RecipeIdMismatch
                 | SaveRecipeError::InvalidImageReference
                 | SaveRecipeError::Storage(_) => UpdateRecipeScopeError::Storage(error.into()),
+                SaveRecipeError::InvalidRecipeReference => {
+                    UpdateRecipeScopeError::Storage(anyhow!("conflict"))
+                }
             })?;
 
         RecipeWithContent::new(updated_recipe, current.revision().clone())

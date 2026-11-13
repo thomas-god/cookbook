@@ -284,8 +284,8 @@ impl RecipeRepository for InMemoryRecipeRepository {
         let id = recipe.id().clone();
 
         if let Some(stored) = store.recipes.get(&id) {
-            if stored.author() != recipe.author() {
-                return Err(SaveRecipeError::RecipeAuthorMismatch);
+            if *stored != recipe {
+                return Err(SaveRecipeError::InvalidRecipeReference);
             }
 
             store
@@ -1143,7 +1143,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn rejects_a_different_author_for_an_existing_recipe() {
+    async fn rejects_a_revision_when_the_recipe_author_differs_from_the_stored_recipe() {
         let repository = InMemoryRecipeRepository::new();
         let soup = recipe("soup");
         let first_revision = revision("revision-1", &soup);
@@ -1162,7 +1162,53 @@ mod tests {
             .save_recipe_revision(other_recipe, second_revision)
             .await;
 
-        assert!(matches!(result, Err(SaveRecipeError::RecipeAuthorMismatch)));
+        assert!(matches!(
+            result,
+            Err(SaveRecipeError::InvalidRecipeReference)
+        ));
+
+        let revisions = repository
+            .get_recipe_revisions(RecipeId::new("soup".to_string()))
+            .await
+            .unwrap();
+
+        assert_eq!(revisions.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn rejects_a_revision_when_the_recipe_scope_differs_from_the_stored_recipe() {
+        let repository = InMemoryRecipeRepository::new();
+        let soup = recipe("soup");
+        let first_revision = revision("revision-1", &soup);
+        repository
+            .save_recipe_revision(soup.clone(), first_revision)
+            .await
+            .unwrap();
+
+        let private_soup = soup.update_scope(RecipeScope::Private);
+        let second_revision = revision("revision-2", &private_soup);
+
+        let result = repository
+            .save_recipe_revision(private_soup, second_revision)
+            .await;
+
+        assert!(matches!(
+            result,
+            Err(SaveRecipeError::InvalidRecipeReference)
+        ));
+
+        let stored = repository
+            .get_recipe(RecipeId::new("soup".to_string()))
+            .await
+            .unwrap()
+            .unwrap();
+        let revisions = repository
+            .get_recipe_revisions(RecipeId::new("soup".to_string()))
+            .await
+            .unwrap();
+
+        assert_eq!(stored.scope(), RecipeScope::default());
+        assert_eq!(revisions.len(), 1);
     }
 
     #[tokio::test]

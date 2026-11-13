@@ -434,6 +434,7 @@ pub enum SaveRecipeError {
     RecipeIdMismatch,
     RecipeAuthorMismatch,
     RecipeNotFound,
+    InvalidRecipeReference,
     InvalidImageReference,
     Storage(anyhow::Error),
 }
@@ -444,6 +445,9 @@ impl fmt::Display for SaveRecipeError {
             Self::RecipeIdMismatch => f.write_str("revision does not belong to the recipe"),
             Self::RecipeAuthorMismatch => f.write_str("a recipe author cannot be changed"),
             Self::RecipeNotFound => f.write_str("recipe not found"),
+            Self::InvalidRecipeReference => {
+                f.write_str("recipe information do not match the stored information")
+            }
             Self::InvalidImageReference => {
                 f.write_str("an image reference is invalid for this recipe")
             }
