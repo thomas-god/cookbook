@@ -4,3 +4,5 @@ target
 images
 **/.venv
 *.log
+icons
+data
