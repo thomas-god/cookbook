@@ -703,6 +703,23 @@ pub enum RevisionVerification {
     NeedsReview,
 }
 
+impl RevisionVerification {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Verified => "verified",
+            Self::NeedsReview => "needs_review",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "verified" => Some(Self::Verified),
+            "needs_review" => Some(Self::NeedsReview),
+            _ => None,
+        }
+    }
+}
+
 /// An immutable snapshot of a recipe after a create or edit operation.
 #[derive(Debug, Clone, Constructor)]
 pub struct RecipeRevision {
