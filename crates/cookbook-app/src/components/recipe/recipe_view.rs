@@ -33,8 +33,8 @@ fn unit_label(cx: &Cx, unit: &Unit) -> String {
         Unit::MilliLitre => "mL".to_string(),
         Unit::CentiLitre => "cL".to_string(),
         Unit::Litre => "L".to_string(),
+        Unit::Piece => "".to_string(),
         // Word-like units are localized and can carry the optional plural marker.
-        Unit::Piece => t!(unit_piece).resolve(cx).into_owned(),
         Unit::Teaspoon => t!(unit_teaspoon).resolve(cx).into_owned(),
         Unit::Tablespoon => t!(unit_tablespoon).resolve(cx).into_owned(),
         Unit::Other(label) => label.clone(),
@@ -42,10 +42,7 @@ fn unit_label(cx: &Cx, unit: &Unit) -> String {
 }
 
 fn unit_takes_optional_plural(unit: &Unit) -> bool {
-    matches!(
-        unit,
-        Unit::Piece | Unit::Teaspoon | Unit::Tablespoon | Unit::Other(_)
-    )
+    matches!(unit, Unit::Teaspoon | Unit::Tablespoon | Unit::Other(_))
 }
 
 pub(crate) fn quantity_label(cx: &Cx, quantity: &Quantity) -> String {
@@ -188,12 +185,12 @@ async fn recipe_body_view(
                 for (index, step) in body.steps().iter().enumerate() {
                     <li class="rounded-lg border border-border bg-card p-4 text-sm">
                         <h4 class="font-semibold">
+                            (t!(recipe_step))
+                            " "
+                            (index + 1)
                             if let Some(title) = step.title() {
+                                ": "
                                 (title)
-                            } else {
-                                (t!(recipe_step))
-                                " "
-                                (index + 1)
                             }
                         </h4>
                         <p class="mt-2 text-muted-foreground">(step.instruction())</p>

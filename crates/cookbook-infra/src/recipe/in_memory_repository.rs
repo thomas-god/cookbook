@@ -211,7 +211,7 @@ fn seed_recipes() -> Vec<RecipeWithContent> {
             vec![
                 Ingredient::new(
                     IngredientName::new("bananas".to_string()),
-                    Quantity::from_measure(300.0, Unit::Gram),
+                    Quantity::from_measure(3.0, Unit::Piece),
                 ),
                 Ingredient::new(
                     IngredientName::new("flour".to_string()),

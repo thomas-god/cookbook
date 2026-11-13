@@ -15,6 +15,8 @@ use cookbook_domain::recipe::ports::{
 use cookbook_domain::user::models::UserId;
 use cookbook_infra::auth::ports::UserRepository;
 use cookbook_vision::detect_source_document_content_type;
+use topcoat::icon::iconify::iconify_icon;
+use topcoat::icon::{IconData, icon};
 use topcoat::{
     Result,
     context::{Cx, app_context},
@@ -384,6 +386,8 @@ path_param!(revision_id);
 path_param!(pub source_document_id);
 path_param!(pub image_id);
 
+const BACK_ARROW: IconData = iconify_icon!("si:arrow-left-line");
+
 #[page("/recipe/{recipe_id}")]
 pub async fn recipe_detail(cx: &Cx) -> Result<impl View> {
     let user = auth::require_user(cx)?;
@@ -404,7 +408,6 @@ pub async fn recipe_detail(cx: &Cx) -> Result<impl View> {
     let can_edit = recipe.can_edit(user.id());
     let is_author = recipe.author() == user.id();
     let scope = recipe.scope();
-    let scope_label = scope_label(cx, scope);
     let author_name = display_name(cx, recipe.author()).await?;
     let total_minutes = recipe.durations().total_duration().as_minutes();
 
@@ -412,9 +415,10 @@ pub async fn recipe_detail(cx: &Cx) -> Result<impl View> {
         <div class="flex flex-col gap-8">
             <div>
                 <a
-                    class="text-sm text-muted-foreground underline-offset-4 hover:underline"
+                    class="text-sm text-muted-foreground underline-offset-4 hover:underline italic opacity-80 flex items-center gap-1.5"
                     href=(href!(page))
                 >
+                    icon(data: BACK_ARROW)
                     (t!(recipe_back_to_list))
                 </a>
                 <div class="mt-3 flex items-start justify-between gap-4">
@@ -422,18 +426,6 @@ pub async fn recipe_detail(cx: &Cx) -> Result<impl View> {
                         <h2 class="text-3xl font-semibold">
                             (recipe.title().as_str())
                         </h2>
-                        if recipe.needs_review() {
-                            <span
-                                class="inline-flex items-center rounded-full border border-warning/40 bg-warning/10 px-2.5 py-0.5 text-sm font-medium text-warning-foreground"
-                            >
-                                (t!(recipe_needs_review))
-                            </span>
-                        }
-                        <span
-                            class="inline-flex items-center rounded-full border border-border px-2.5 py-0.5 text-sm font-medium text-muted-foreground"
-                        >
-                            (scope_label)
-                        </span>
                         if let Some(category) = recipe.category() {
                             <span
                                 class="inline-flex items-center rounded-full border border-border px-2.5 py-0.5 text-sm font-medium text-muted-foreground"
@@ -442,7 +434,7 @@ pub async fn recipe_detail(cx: &Cx) -> Result<impl View> {
                             </span>
                         }
                     </div>
-                    <div class="flex flex-col items-end gap-2 text-sm">
+                    <div class="flex flex-row items-center gap-3 text-sm">
                         <a
                             class=(button_variants(
                                 ButtonVariant::Primary,
@@ -472,11 +464,7 @@ pub async fn recipe_detail(cx: &Cx) -> Result<impl View> {
                         </a>
                     </div>
                 </div>
-                if let Some(description) = recipe.description() {
-                    <p class="mt-2 text-sm text-muted-foreground">
-                        (description.as_str())
-                    </p>
-                }
+
                 if recipe.needs_review() {
                     <p
                         role="status"
@@ -485,25 +473,36 @@ pub async fn recipe_detail(cx: &Cx) -> Result<impl View> {
                         (t!(recipe_needs_review_notice))
                     </p>
                 }
-                <p class="mt-2 text-sm text-muted-foreground">
-                    (t!(recipe_author))
-                    ": "
-                    (author_name)
-                </p>
-                if total_minutes > 0 {
-                    <p class="mt-2 text-sm text-muted-foreground">
-                        (t!(recipe_total_duration))
+                <div
+                    class="flex flex-row gap-2 items-center mt-2 text-sm text-muted-foreground"
+                >
+                    <span>
+                        (t!(recipe_author))
                         ": "
-                        (total_minutes)
-                        " "
-                        (t!(recipe_minutes))
-                    </p>
-                }
-                if let Some(servings) = recipe.content().servings() {
-                    <p class="mt-2 text-sm text-muted-foreground">
-                        (t!(recipe_servings))
-                        ": "
-                        (servings_label(cx, servings))
+                        (author_name)
+                    </span>
+                    if total_minutes > 0 {
+                        <span>" · "</span>
+                        <p>
+                            (t!(recipe_total_duration))
+                            ": "
+                            (total_minutes)
+                            " "
+                            (t!(recipe_minutes))
+                        </p>
+                    }
+                    if let Some(servings) = recipe.content().servings() {
+                        <span>" · "</span>
+                        <p>
+                            (t!(recipe_servings))
+                            ": "
+                            (servings_label(cx, servings))
+                        </p>
+                    }
+                </div>
+                if let Some(description) = recipe.description() {
+                    <p class="mt-3 pl-3 text-md text-foreground">
+                        (description.as_str())
                     </p>
                 }
             </div>
