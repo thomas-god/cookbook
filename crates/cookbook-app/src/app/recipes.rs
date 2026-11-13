@@ -8,8 +8,8 @@ use cookbook_domain::recipe::models::{
 };
 use cookbook_domain::recipe::ports::{
     AddRecipeSourceDocumentsError, AddRecipeSourceDocumentsRequest, ConvertRecipeStructureRequest,
-    DeleteRecipeSourceDocumentError, RecipeSearchCriteria, RecipeService,
-    RestoreRecipeRevisionError, RestoreRecipeRevisionRequest, SearchRecipesQuery,
+    DeleteRecipeSourceDocumentError, RecipeSearchCriteria, RecipeService, RecipeSort,
+    RestoreRecipeRevisionError, RestoreRecipeRevisionRequest, SearchRecipesQuery, SortDirection,
     UpdateRecipeError, UpdateRecipeScopeError, UpdateRecipeScopeRequest,
 };
 use cookbook_domain::user::models::UserId;
@@ -44,7 +44,7 @@ use crate::{
             recipe_images::recipe_image_gallery,
             recipe_scope_form::recipe_scope_form,
             recipe_view::recipe_view,
-            search_form::{SortChoice, recipe_search_form},
+            search_form::recipe_search_form,
             source_documents::{source_document_editor, source_document_gallery},
         },
     },
@@ -54,6 +54,47 @@ use crate::{
 pub(crate) const MAX_UPLOAD_BYTES: usize = 100 * 1024 * 1024;
 
 const RECIPE_PAGE_SIZE: usize = 20;
+
+/// A sort order accepted by the recipe list query.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum SortChoice {
+    #[default]
+    UpdatedDesc,
+    UpdatedAsc,
+    TitleAsc,
+    TitleDesc,
+}
+
+impl SortChoice {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::UpdatedDesc => "updated-desc",
+            Self::UpdatedAsc => "updated-asc",
+            Self::TitleAsc => "title-asc",
+            Self::TitleDesc => "title-desc",
+        }
+    }
+
+    /// Parses a wire value. A missing value selects the default order.
+    fn parse(value: Option<&str>) -> Option<Self> {
+        match value.unwrap_or("updated-desc") {
+            "updated-desc" => Some(Self::UpdatedDesc),
+            "updated-asc" => Some(Self::UpdatedAsc),
+            "title-asc" => Some(Self::TitleAsc),
+            "title-desc" => Some(Self::TitleDesc),
+            _ => None,
+        }
+    }
+
+    fn to_domain(self) -> RecipeSort {
+        match self {
+            Self::UpdatedDesc => RecipeSort::LastEdited(SortDirection::Descending),
+            Self::UpdatedAsc => RecipeSort::LastEdited(SortDirection::Ascending),
+            Self::TitleAsc => RecipeSort::Title(SortDirection::Ascending),
+            Self::TitleDesc => RecipeSort::Title(SortDirection::Descending),
+        }
+    }
+}
 
 /// Query parameters accepted by the recipe list page.
 #[query_params(error = bad_request)]
@@ -203,7 +244,7 @@ pub async fn page(cx: &Cx) -> Result<impl View> {
         .map(|category| category.as_str().to_string())
         .collect::<Vec<_>>();
     let sort = params.sort.as_str().to_string();
-    let page_number = params.page;
+    let current_page = signal(cx, || params.page.to_string());
 
     Ok(view! {
         cx =>
@@ -211,9 +252,7 @@ pub async fn page(cx: &Cx) -> Result<impl View> {
 
         recipe_search_form(
             query: query.clone(),
-            categories: &params.categories,
-            exclude_needs_review: params.exclude_needs_review,
-            sort: params.sort
+            page: current_page.clone()
         )
 
         recipe_search_results(
@@ -221,7 +260,7 @@ pub async fn page(cx: &Cx) -> Result<impl View> {
             categories: category_names,
             exclude_needs_review: params.exclude_needs_review,
             sort: sort,
-            page_number: page_number
+            page_number: $(current_page.get())
         )
     })
 }
@@ -233,7 +272,7 @@ async fn recipe_search_results(
     categories: Vec<String>,
     exclude_needs_review: bool,
     sort: String,
-    page_number: usize,
+    page_number: String,
 ) -> Result<impl View> {
     let user = auth::require_user(cx)?;
     let params = SearchParams {
@@ -244,7 +283,7 @@ async fn recipe_search_results(
             .collect(),
         exclude_needs_review,
         sort: SortChoice::parse(Some(&sort)).unwrap_or_default(),
-        page: page_number.max(1),
+        page: page_number.parse().unwrap_or(1).max(1),
     };
     let has_filters = params.has_filters();
 
@@ -1349,9 +1388,14 @@ mod tests {
 
     #[test]
     fn list_query_parses_every_sort_and_rejects_unknown_values() {
-        for choice in SortChoice::ALL {
+        for (value, choice) in [
+            ("updated-desc", SortChoice::UpdatedDesc),
+            ("updated-asc", SortChoice::UpdatedAsc),
+            ("title-asc", SortChoice::TitleAsc),
+            ("title-desc", SortChoice::TitleDesc),
+        ] {
             let mut query = list_query();
-            query.sort = Some(choice.as_str().to_string());
+            query.sort = Some(value.to_string());
 
             assert_eq!(query.sort_choice().unwrap(), choice);
         }
