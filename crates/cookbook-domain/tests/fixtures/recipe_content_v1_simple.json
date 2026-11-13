@@ -1,0 +1,62 @@
+{
+  "title": "Tomato Soup",
+  "description": "A comforting soup.",
+  "servings": {
+    "people": 4
+  },
+  "category": "main",
+  "structure": {
+    "simple": {
+      "durations": {
+        "preparation": 10,
+        "rest": null,
+        "cooking": 30
+      },
+      "ingredients": [
+        {
+          "name": "tomatoes",
+          "quantity": {
+            "measured": {
+              "value": 800.0,
+              "unit": "gram"
+            }
+          }
+        },
+        {
+          "name": "vegetable stock",
+          "quantity": {
+            "measured": {
+              "value": 0.5,
+              "unit": "litre"
+            }
+          }
+        },
+        {
+          "name": "salt",
+          "quantity": {
+            "text": "to taste"
+          }
+        }
+      ],
+      "images": [
+        "image-hero"
+      ],
+      "steps": [
+        {
+          "id": "step-1",
+          "title": "Soften",
+          "instruction": "Warm the oil.",
+          "images": []
+        },
+        {
+          "id": "step-2",
+          "title": null,
+          "instruction": "Simmer.",
+          "images": [
+            "image-step"
+          ]
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,91 @@
+{
+  "title": "Layer Cake",
+  "description": "A two-part cake.",
+  "servings": {
+    "portions": {
+      "count": 12,
+      "label": "slices"
+    }
+  },
+  "category": "dessert",
+  "structure": {
+    "multipart": [
+      {
+        "id": "part-sponge",
+        "title": "Sponge",
+        "description": "Light and airy.",
+        "body": {
+          "durations": {
+            "preparation": 10,
+            "rest": null,
+            "cooking": 25
+          },
+          "ingredients": [
+            {
+              "name": "flour",
+              "quantity": {
+                "measured": {
+                  "value": 200.0,
+                  "unit": "gram"
+                }
+              }
+            },
+            {
+              "name": "flour",
+              "quantity": {
+                "measured": {
+                  "value": 2.0,
+                  "unit": "tablespoon"
+                }
+              }
+            },
+            {
+              "name": "salt",
+              "quantity": {
+                "text": "a pinch"
+              }
+            }
+          ],
+          "images": [
+            "image-sponge"
+          ],
+          "steps": [
+            {
+              "id": "step-mix",
+              "title": "Mix",
+              "instruction": "Whisk everything together.",
+              "images": [
+                "image-mix"
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "id": "part-filling",
+        "title": "Filling",
+        "description": null,
+        "body": {
+          "durations": {
+            "preparation": null,
+            "rest": 30,
+            "cooking": null
+          },
+          "ingredients": [
+            {
+              "name": "cream",
+              "quantity": {
+                "measured": {
+                  "value": 0.5,
+                  "unit": "litre"
+                }
+              }
+            }
+          ],
+          "images": [],
+          "steps": []
+        }
+      }
+    ]
+  }
+}

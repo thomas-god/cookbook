@@ -34,6 +34,8 @@ impl RecipeScope {
     }
 }
 
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum RecipeCategory {
     Aperitif,
@@ -242,6 +244,7 @@ impl fmt::Display for RecipeRevisionMismatch {
 impl std::error::Error for RecipeRevisionMismatch {}
 
 /// The edible content shared by a standard recipe and a multipart sub-recipe.
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Debug, Clone)]
 pub struct RecipeBody {
     durations: RecipeDurations,
@@ -349,6 +352,7 @@ fn normalize_ingredients(ingredients: Vec<Ingredient>) -> Vec<Ingredient> {
     normalized
 }
 
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Debug, Clone, Constructor, PartialEq)]
 pub struct Ingredient {
     name: IngredientName,
@@ -365,12 +369,16 @@ impl Ingredient {
     }
 }
 
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RecipeStructureKind {
     Simple,
     Multipart,
 }
 
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
 #[derive(Debug, Clone)]
 pub enum RecipeStructure {
     Simple(RecipeBody),
@@ -378,6 +386,7 @@ pub enum RecipeStructure {
 }
 
 /// Titled [RecipeBody] for multipart recipes.
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Debug, Clone, Constructor)]
 pub struct RecipePart {
     id: RecipePartId,
@@ -409,6 +418,7 @@ impl RecipePart {
 }
 
 /// The editable part of a recipe. Revisions store a full copy of it.
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Debug, Clone)]
 pub struct RecipeContent {
     title: RecipeTitle,
@@ -744,6 +754,7 @@ impl RecipeId {
     }
 }
 
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Constructor)]
 pub struct RecipeRevisionId(String);
 
@@ -753,6 +764,7 @@ impl RecipeRevisionId {
     }
 }
 
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Debug, Clone, Constructor)]
 pub struct RecipeTitle(String);
 
@@ -762,6 +774,7 @@ impl RecipeTitle {
     }
 }
 
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Debug, Clone, Constructor)]
 pub struct RecipePartTitle(String);
 
@@ -771,6 +784,7 @@ impl RecipePartTitle {
     }
 }
 
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Constructor)]
 pub struct RecipePartId(String);
 
@@ -784,6 +798,7 @@ impl RecipePartId {
     }
 }
 
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Debug, Clone, Constructor)]
 pub struct RecipeDescription(String);
 
@@ -794,6 +809,8 @@ impl RecipeDescription {
 }
 
 /// How much a recipe yields.
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Servings {
     /// A number of people, such as `4 people`.
@@ -833,6 +850,7 @@ impl Servings {
     }
 }
 
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Debug, Clone, Constructor)]
 pub struct RecipeDurations {
     preparation: Option<DurationMinutes>,
@@ -886,6 +904,7 @@ impl RecipeDurations {
     }
 }
 
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Debug, Clone, Constructor, Default)]
 pub struct DurationMinutes(usize);
 
@@ -895,6 +914,7 @@ impl DurationMinutes {
     }
 }
 
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Constructor)]
 pub struct IngredientName(String);
 
@@ -904,6 +924,8 @@ impl IngredientName {
     }
 }
 
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
 #[derive(Debug, Clone, PartialEq)]
 pub enum Quantity {
     /// A numeric amount with a unit, such as `200 g` or `2 eggs`.
@@ -936,6 +958,8 @@ impl Quantity {
     }
 }
 
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
 #[derive(Debug, Clone, PartialEq)]
 pub enum Unit {
     Litre,
@@ -1190,6 +1214,7 @@ impl RecipeImageMetadata {
     }
 }
 
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Constructor)]
 pub struct RecipeImageId(String);
 
@@ -1203,6 +1228,7 @@ impl RecipeImageId {
     }
 }
 
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Constructor)]
 pub struct RecipeStepId(String);
 
@@ -1216,6 +1242,7 @@ impl RecipeStepId {
     }
 }
 
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Debug, Clone, Constructor)]
 pub struct RecipeStep {
     id: RecipeStepId,
@@ -1242,6 +1269,8 @@ impl RecipeStep {
     }
 }
 
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RevisionOrigin {
     Created,
@@ -1252,6 +1281,7 @@ pub enum RevisionOrigin {
 }
 
 /// An optional edit note, similar to a commit message.
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RevisionMessage(String);
 
@@ -1820,5 +1850,88 @@ mod tests {
             duplicate,
             Err(RecipeContentError::DuplicatePartId(_))
         ));
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn serde_round_trips_multipart_content_exactly() {
+        let content = RecipeContent::new_multipart(
+            RecipeTitle::new("Cake".to_string()),
+            Some(RecipeDescription::new("Overall.".to_string())),
+            Some(Servings::portions_with_label(12, "slices")),
+            Some(RecipeCategory::Dessert),
+            vec![RecipePart::new(
+                RecipePartId::new("part-1".to_string()),
+                RecipePartTitle::new("Sponge".to_string()),
+                Some(RecipeDescription::new("Light.".to_string())),
+                RecipeBody::new(
+                    RecipeDurations::new(
+                        Some(DurationMinutes::new(10)),
+                        None,
+                        Some(DurationMinutes::new(20)),
+                    ),
+                    vec![
+                        ingredient("flour", Quantity::from_measure(100.0, Unit::Gram)),
+                        // A conflicting quantity must survive the round-trip unchanged.
+                        ingredient("flour", Quantity::from_measure(2.0, Unit::Tablespoon)),
+                    ],
+                    vec![RecipeImageId::new("image-1".to_string())],
+                    vec![RecipeStep::new(
+                        RecipeStepId::new("step-1".to_string()),
+                        Some("Mix".to_string()),
+                        "Stir.".to_string(),
+                        vec![RecipeImageId::new("image-2".to_string())],
+                    )],
+                ),
+            )],
+        )
+        .unwrap();
+
+        let json = serde_json::to_string(&content).unwrap();
+        let restored: RecipeContent = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(restored.title().as_str(), "Cake");
+        assert_eq!(
+            restored.description().map(RecipeDescription::as_str),
+            Some("Overall.")
+        );
+        assert_eq!(
+            restored
+                .servings()
+                .and_then(|servings| servings.as_portions()),
+            Some((12, Some("slices")))
+        );
+        assert_eq!(restored.category(), Some(RecipeCategory::Dessert));
+
+        let part = &restored.parts()[0];
+        assert_eq!(part.title().as_str(), "Sponge");
+        assert_eq!(
+            part.description().map(RecipeDescription::as_str),
+            Some("Light.")
+        );
+        assert_eq!(part.body().ingredients().len(), 2);
+        assert_eq!(
+            part.body().ingredients()[0].quantity(),
+            &Quantity::from_measure(100.0, Unit::Gram)
+        );
+        assert_eq!(
+            part.body().ingredients()[1].quantity(),
+            &Quantity::from_measure(2.0, Unit::Tablespoon)
+        );
+        assert_eq!(part.body().images()[0].as_str(), "image-1");
+        assert_eq!(part.body().steps()[0].images()[0].as_str(), "image-2");
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn serde_round_trips_revision_origin() {
+        let origin = RevisionOrigin::Restored {
+            revision_id: RecipeRevisionId::new("revision-1".to_string()),
+        };
+
+        let json = serde_json::to_string(&origin).unwrap();
+        let restored: RevisionOrigin = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(restored, origin);
     }
 }

@@ -1,0 +1,29 @@
+[
+  "created",
+  "imported",
+  {
+    "user_edit": {
+      "message": null
+    }
+  },
+  {
+    "user_edit": {
+      "message": "Reduced sugar"
+    }
+  },
+  {
+    "structure_converted": {
+      "to": "multipart"
+    }
+  },
+  {
+    "structure_converted": {
+      "to": "simple"
+    }
+  },
+  {
+    "restored": {
+      "revision_id": "revision-1"
+    }
+  }
+]

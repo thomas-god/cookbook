@@ -92,6 +92,20 @@ topcoat asset bundle
 cargo run
 ```
 
+### Persisted JSON fixtures
+
+Recipe content and revision origins are stored as versioned JSON. Their current wire format is
+frozen by golden fixtures in `crates/cookbook-domain/tests/fixtures/` and the tests in
+`crates/cookbook-domain/tests/content_v1.rs`:
+
+```sh
+cargo test -p cookbook-domain --features serde --test content_v1
+```
+
+The fixtures are written by hand, not generated from the domain types. A failing golden test means
+the persisted format changed. Do not update the fixture in place: add a new version, keep the old
+fixture decodable, and bump the content version.
+
 ### UI components
 
 We use Topcoat UI components that are vendored/installed directly into the application crate, so
