@@ -26,6 +26,21 @@ pub enum UserRole {
 }
 
 impl UserRole {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::User => "user",
+            Self::Admin => "admin",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "user" => Some(Self::User),
+            "admin" => Some(Self::Admin),
+            _ => None,
+        }
+    }
+
     pub fn is_admin(self) -> bool {
         matches!(self, Self::Admin)
     }
