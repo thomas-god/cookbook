@@ -3,4 +3,10 @@ fn main() {
         .input("styles.css")
         .render()
         .unwrap();
+
+    topcoat::icon::iconify::BuildConfig::new()
+        .cache_dir("icons")
+        .icon_set("si")
+        .stage()
+        .unwrap();
 }

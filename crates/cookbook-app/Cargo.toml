@@ -13,9 +13,9 @@ cookbook-vision.workspace = true
 form_urlencoded.workspace = true
 serde.workspace = true
 tokio.workspace = true
-topcoat = { version = "0.11", features = ["font-fontsource", "l10n-fluent", "multipart", "session", "tailwind", "ui"] }
+topcoat = { version = "0.11", features = ["font-fontsource", "icon", "icon-iconify", "l10n-fluent", "multipart", "session", "tailwind", "ui"] }
 tracing.workspace = true
 tracing-subscriber.workspace = true
 
 [build-dependencies]
-topcoat = { version = "0.11", default-features = false, features = ["tailwind"] }
+topcoat = { version = "0.11", default-features = false, features = ["tailwind", "icon-iconify"] }

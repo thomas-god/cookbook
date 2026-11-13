@@ -26,3 +26,5 @@ rustc-ice-*.txt
 # Local test images
 images
 
+# Topcoat Iconify icon sets
+icons
