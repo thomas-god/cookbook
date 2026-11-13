@@ -46,10 +46,7 @@ impl RecipeStore {
     }
 
     fn current_recipes(&self) -> anyhow::Result<Vec<RecipeWithContent>> {
-        self.recipes
-            .keys()
-            .map(|id| self.current(id))
-            .collect()
+        self.recipes.keys().map(|id| self.current(id)).collect()
     }
 }
 
@@ -250,102 +247,6 @@ fn seed_author() -> UserId {
 }
 
 impl RecipeRepository for InMemoryRecipeRepository {
-    async fn save_new_recipe(
-        &self,
-        recipe: Recipe,
-        revision: RecipeRevision,
-        source_documents: Vec<RecipeSourceDocument>,
-        images: Vec<RecipeImage>,
-    ) -> Result<(), SaveRecipeError> {
-        if revision.recipe_id() != recipe.id() {
-            return Err(SaveRecipeError::RecipeIdMismatch);
-        }
-
-        if let Some(image) = source_documents
-            .iter()
-            .find(|image| image.recipe_id() != recipe.id())
-        {
-            return Err(SaveRecipeError::Storage(anyhow!(
-                "source document `{}` does not belong to recipe `{}`",
-                image.id().as_str(),
-                recipe.id().as_str()
-            )));
-        }
-
-        validate_images(recipe.id(), &images)?;
-
-        let mut store = self
-            .store
-            .write()
-            .map_err(|_| SaveRecipeError::Storage(anyhow!("recipe store lock poisoned")))?;
-
-        if store.recipes.contains_key(recipe.id()) {
-            return Err(SaveRecipeError::Storage(anyhow!(
-                "recipe `{}` already exists",
-                recipe.id().as_str()
-            )));
-        }
-
-        let id = recipe.id().clone();
-        store.recipes.insert(id.clone(), recipe);
-        store.revisions.insert(id.clone(), vec![revision]);
-        store.source_documents.insert(id.clone(), source_documents);
-        store.images.insert(id, images);
-
-        Ok(())
-    }
-
-    async fn save_recipe_with_revision(
-        &self,
-        recipe: Recipe,
-        revision: RecipeRevision,
-        added_images: Vec<RecipeImage>,
-    ) -> Result<(), SaveRecipeError> {
-        if revision.recipe_id() != recipe.id() {
-            return Err(SaveRecipeError::RecipeIdMismatch);
-        }
-
-        validate_images(recipe.id(), &added_images)?;
-
-        let mut store = self
-            .store
-            .write()
-            .map_err(|_| SaveRecipeError::Storage(anyhow!("recipe store lock poisoned")))?;
-
-        let id = recipe.id().clone();
-
-        if let Some(stored) = store.recipes.get(&id) {
-            if stored.author() != recipe.author() {
-                return Err(SaveRecipeError::RecipeAuthorMismatch);
-            }
-
-            if added_images.iter().any(|image| {
-                store
-                    .images
-                    .get(&id)
-                    .is_some_and(|images| images.iter().any(|existing| existing.id() == image.id()))
-            }) {
-                return Err(SaveRecipeError::Storage(anyhow!(
-                    "a recipe image id already exists for recipe `{}`",
-                    recipe.id().as_str()
-                )));
-            }
-
-            store.revisions.entry(id.clone()).or_default().push(revision);
-            store
-                .images
-                .entry(id)
-                .or_default()
-                .extend(added_images);
-        } else {
-            store.revisions.insert(id.clone(), vec![revision]);
-            store.images.insert(id.clone(), added_images);
-            store.recipes.insert(id, recipe);
-        }
-
-        Ok(())
-    }
-
     async fn save_recipe(&self, recipe: Recipe) -> Result<(), SaveRecipeError> {
         let mut store = self
             .store
@@ -366,6 +267,41 @@ impl RecipeRepository for InMemoryRecipeRepository {
         Ok(())
     }
 
+    async fn save_recipe_revision(
+        &self,
+        recipe: Recipe,
+        revision: RecipeRevision,
+    ) -> Result<(), SaveRecipeError> {
+        if revision.recipe_id() != recipe.id() {
+            return Err(SaveRecipeError::RecipeIdMismatch);
+        }
+
+        let mut store = self
+            .store
+            .write()
+            .map_err(|_| SaveRecipeError::Storage(anyhow!("recipe store lock poisoned")))?;
+
+        let id = recipe.id().clone();
+
+        if let Some(stored) = store.recipes.get(&id) {
+            if stored.author() != recipe.author() {
+                return Err(SaveRecipeError::RecipeAuthorMismatch);
+            }
+
+            store
+                .revisions
+                .entry(id.clone())
+                .or_default()
+                .push(revision);
+            store.recipes.insert(id, recipe);
+        } else {
+            store.revisions.insert(id.clone(), vec![revision]);
+            store.recipes.insert(id, recipe);
+        }
+
+        Ok(())
+    }
+
     async fn get_recipe(&self, id: RecipeId) -> Result<Option<RecipeWithContent>, GetRecipeError> {
         let store = self
             .store
@@ -376,7 +312,10 @@ impl RecipeRepository for InMemoryRecipeRepository {
             return Ok(None);
         }
 
-        store.current(&id).map(Some).map_err(GetRecipeError::Storage)
+        store
+            .current(&id)
+            .map(Some)
+            .map_err(GetRecipeError::Storage)
     }
 
     async fn get_recipes(&self) -> Result<Vec<RecipeWithContent>, ListRecipesError> {
@@ -385,9 +324,7 @@ impl RecipeRepository for InMemoryRecipeRepository {
             .read()
             .map_err(|_| ListRecipesError::Storage(anyhow!("recipe store lock poisoned")))?;
 
-        store
-            .current_recipes()
-            .map_err(ListRecipesError::Storage)
+        store.current_recipes().map_err(ListRecipesError::Storage)
     }
 
     async fn search_recipes(
@@ -523,12 +460,15 @@ impl RecipeDocumentRepository for InMemoryRecipeRepository {
             .read()
             .map_err(|_| GetSourceDocumentError::Storage(anyhow!("recipe store lock poisoned")))?;
 
-        Ok(store.source_documents.get(&recipe_id).and_then(|documents| {
-            documents
-                .iter()
-                .find(|document| document.id() == &image_id)
-                .cloned()
-        }))
+        Ok(store
+            .source_documents
+            .get(&recipe_id)
+            .and_then(|documents| {
+                documents
+                    .iter()
+                    .find(|document| document.id() == &image_id)
+                    .cloned()
+            }))
     }
 
     async fn delete_source_document(
@@ -642,12 +582,10 @@ impl RecipeDocumentRepository for InMemoryRecipeRepository {
             .read()
             .map_err(|_| GetRecipeImageError::Storage(anyhow!("recipe store lock poisoned")))?;
 
-        Ok(store.images.get(&recipe_id).and_then(|images| {
-            images
-                .iter()
-                .find(|image| image.id() == &image_id)
-                .cloned()
-        }))
+        Ok(store
+            .images
+            .get(&recipe_id)
+            .and_then(|images| images.iter().find(|image| image.id() == &image_id).cloned()))
     }
 }
 
@@ -687,29 +625,6 @@ fn recipe_matches_pattern(recipe: &RecipeWithContent, pattern: &str) -> bool {
                     .description()
                     .is_some_and(|description| matches(description.as_str()))
         })
-}
-
-fn validate_images(recipe_id: &RecipeId, images: &[RecipeImage]) -> Result<(), SaveRecipeError> {
-    let mut ids = std::collections::HashSet::with_capacity(images.len());
-
-    for image in images {
-        if image.recipe_id() != recipe_id {
-            return Err(SaveRecipeError::Storage(anyhow!(
-                "image `{}` does not belong to recipe `{}`",
-                image.id().as_str(),
-                recipe_id.as_str()
-            )));
-        }
-
-        if !ids.insert(image.id()) {
-            return Err(SaveRecipeError::Storage(anyhow!(
-                "duplicate image id `{}`",
-                image.id().as_str()
-            )));
-        }
-    }
-
-    Ok(())
 }
 
 #[cfg(test)]
@@ -823,11 +738,7 @@ mod tests {
 
     async fn save(repository: &InMemoryRecipeRepository, current: RecipeWithContent) {
         repository
-            .save_recipe_with_revision(
-                current.recipe().clone(),
-                current.revision().clone(),
-                Vec::new(),
-            )
+            .save_recipe_revision(current.recipe().clone(), current.revision().clone())
             .await
             .unwrap();
     }
@@ -1190,11 +1101,11 @@ mod tests {
         let second = revision("revision-2", &recipe);
 
         repository
-            .save_recipe_with_revision(recipe.clone(), first, Vec::new())
+            .save_recipe_revision(recipe.clone(), first)
             .await
             .unwrap();
         repository
-            .save_recipe_with_revision(recipe, second, Vec::new())
+            .save_recipe_revision(recipe, second)
             .await
             .unwrap();
 
@@ -1226,9 +1137,7 @@ mod tests {
         let soup = recipe("soup");
         let revision = revision("salad-revision", &recipe("salad"));
 
-        let result = repository
-            .save_recipe_with_revision(soup, revision, Vec::new())
-            .await;
+        let result = repository.save_recipe_revision(soup, revision).await;
 
         assert!(matches!(result, Err(SaveRecipeError::RecipeIdMismatch)));
     }
@@ -1239,7 +1148,7 @@ mod tests {
         let soup = recipe("soup");
         let first_revision = revision("revision-1", &soup);
         repository
-            .save_recipe_with_revision(soup, first_revision, Vec::new())
+            .save_recipe_revision(soup, first_revision)
             .await
             .unwrap();
 
@@ -1250,7 +1159,7 @@ mod tests {
         let second_revision = revision("revision-2", &other_recipe);
 
         let result = repository
-            .save_recipe_with_revision(other_recipe, second_revision, Vec::new())
+            .save_recipe_revision(other_recipe, second_revision)
             .await;
 
         assert!(matches!(result, Err(SaveRecipeError::RecipeAuthorMismatch)));
@@ -1264,9 +1173,10 @@ mod tests {
         let image = source_document(&recipe, "image-1", b"front");
 
         repository
-            .save_new_recipe(recipe.clone(), revision, vec![image], Vec::new())
+            .save_recipe_revision(recipe.clone(), revision)
             .await
             .unwrap();
+        repository.add_source_documents(vec![image]).await.unwrap();
 
         let images = repository
             .get_source_documents(RecipeId::new("soup".to_string()))
@@ -1306,7 +1216,7 @@ mod tests {
         );
 
         repository
-            .save_new_recipe(recipe.clone(), revision, Vec::new(), Vec::new())
+            .save_recipe_revision(recipe.clone(), revision)
             .await
             .unwrap();
 
@@ -1321,27 +1231,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn rejects_a_new_recipe_image_for_another_recipe() {
-        let repository = InMemoryRecipeRepository::new();
-        let soup = recipe("soup");
-        let revision = revision("revision-1", &soup);
-        let salad = recipe("salad");
-        let image = source_document(&salad, "image-1", b"front");
-
-        let result = repository
-            .save_new_recipe(soup, revision, vec![image], Vec::new())
-            .await;
-
-        assert!(matches!(result, Err(SaveRecipeError::Storage(_))));
-    }
-
-    #[tokio::test]
     async fn adds_and_lists_source_documents() {
         let repository = InMemoryRecipeRepository::new();
         let recipe = recipe("soup");
         let revision = revision("revision-1", &recipe);
         repository
-            .save_new_recipe(recipe.clone(), revision, Vec::new(), Vec::new())
+            .save_recipe_revision(recipe.clone(), revision)
             .await
             .unwrap();
 
@@ -1369,12 +1264,11 @@ mod tests {
         let recipe = recipe("soup");
         let revision = revision("revision-1", &recipe);
         repository
-            .save_new_recipe(
-                recipe.clone(),
-                revision,
-                vec![source_document(&recipe, "image-1", b"front")],
-                Vec::new(),
-            )
+            .save_recipe_revision(recipe.clone(), revision)
+            .await
+            .unwrap();
+        repository
+            .add_source_documents(vec![source_document(&recipe, "image-1", b"front")])
             .await
             .unwrap();
 
@@ -1397,7 +1291,7 @@ mod tests {
         let recipe = recipe("soup");
         let revision = revision("revision-1", &recipe);
         repository
-            .save_new_recipe(recipe, revision, Vec::new(), Vec::new())
+            .save_recipe_revision(recipe, revision)
             .await
             .unwrap();
 
@@ -1418,12 +1312,11 @@ mod tests {
         let recipe = recipe("soup");
         let revision = revision("revision-1", &recipe);
         repository
-            .save_new_recipe(
-                recipe.clone(),
-                revision,
-                vec![source_document(&recipe, "image-1", b"front")],
-                Vec::new(),
-            )
+            .save_recipe_revision(recipe.clone(), revision)
+            .await
+            .unwrap();
+        repository
+            .add_source_documents(vec![source_document(&recipe, "image-1", b"front")])
             .await
             .unwrap();
 
@@ -1463,7 +1356,7 @@ mod tests {
         let recipe = recipe("soup");
         let revision = revision("revision-1", &recipe);
         repository
-            .save_new_recipe(recipe, revision, Vec::new(), Vec::new())
+            .save_recipe_revision(recipe, revision)
             .await
             .unwrap();
 
@@ -1495,7 +1388,7 @@ mod tests {
         let recipe = recipe("soup");
         let revision = revision("revision-1", &recipe);
         repository
-            .save_new_recipe(recipe.clone(), revision, Vec::new(), Vec::new())
+            .save_recipe_revision(recipe.clone(), revision)
             .await
             .unwrap();
 
@@ -1522,7 +1415,7 @@ mod tests {
         let recipe = recipe("soup");
         let first = revision("revision-1", &recipe);
         repository
-            .save_new_recipe(recipe.clone(), first, Vec::new(), Vec::new())
+            .save_recipe_revision(recipe.clone(), first)
             .await
             .unwrap();
 
@@ -1531,7 +1424,7 @@ mod tests {
 
         let second = revision("revision-2", &viewable);
         repository
-            .save_recipe_with_revision(viewable, second, Vec::new())
+            .save_recipe_revision(viewable, second)
             .await
             .unwrap();
 
@@ -1562,7 +1455,7 @@ mod tests {
         let recipe = recipe("soup");
         let revision = revision("revision-1", &recipe);
         repository
-            .save_new_recipe(recipe, revision, Vec::new(), Vec::new())
+            .save_recipe_revision(recipe, revision)
             .await
             .unwrap();
 
@@ -1575,35 +1468,6 @@ mod tests {
         let result = repository.save_recipe(other).await;
 
         assert!(matches!(result, Err(SaveRecipeError::RecipeAuthorMismatch)));
-    }
-
-    fn revision_with_step(id: &str, recipe: &Recipe) -> RecipeRevision {
-        RecipeRevision::new(
-            RecipeRevisionId::new(id.to_string()),
-            recipe.id().clone(),
-            RecipeContent::new_simple(
-                RecipeTitle::new("Soup".to_string()),
-                None,
-                None,
-                None,
-                RecipeBody::new(
-                    RecipeDurations::new(None, None, None),
-                    Vec::new(),
-                    Vec::new(),
-                    vec![RecipeStep::new(
-                        RecipeStepId::generate(),
-                        None,
-                        "Stir everything together.".to_string(),
-                        Vec::new(),
-                    )],
-                ),
-            )
-            .unwrap(),
-            recipe.author().clone(),
-            SystemTime::UNIX_EPOCH,
-            RevisionOrigin::Created,
-            RevisionVerification::Verified,
-        )
     }
 
     fn recipe_image(recipe: &Recipe, id: &str, bytes: &[u8]) -> RecipeImage {
@@ -1625,9 +1489,10 @@ mod tests {
         let image = recipe_image(&recipe, "image-1", b"finished");
 
         repository
-            .save_new_recipe(recipe.clone(), revision, Vec::new(), vec![image])
+            .save_recipe_revision(recipe.clone(), revision)
             .await
             .unwrap();
+        repository.add_recipe_images(vec![image]).await.unwrap();
 
         let images = repository
             .get_recipe_images(RecipeId::new("soup".to_string()))
@@ -1640,72 +1505,18 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn rejects_duplicate_image_ids() {
-        let repository = InMemoryRecipeRepository::new();
-        let recipe = recipe("soup");
-        let revision = revision("revision-1", &recipe);
-        let image = recipe_image(&recipe, "image-1", b"image");
-
-        let result = repository
-            .save_new_recipe(recipe, revision, Vec::new(), vec![image.clone(), image])
-            .await;
-
-        assert!(matches!(result, Err(SaveRecipeError::Storage(_))));
-    }
-
-    #[tokio::test]
-    async fn adds_recipe_images_with_a_revision() {
-        let repository = InMemoryRecipeRepository::new();
-        let recipe = recipe("soup");
-        let first = revision_with_step("revision-1", &recipe);
-        let content = first.content().clone();
-        let existing = recipe_image(&recipe, "image-existing", b"existing");
-        repository
-            .save_new_recipe(recipe.clone(), first, Vec::new(), vec![existing])
-            .await
-            .unwrap();
-
-        let added = recipe_image(&recipe, "image-added", b"added");
-        let second = RecipeRevision::new(
-            RecipeRevisionId::new("revision-2".to_string()),
-            recipe.id().clone(),
-            content,
-            recipe.author().clone(),
-            SystemTime::UNIX_EPOCH,
-            RevisionOrigin::Created,
-            RevisionVerification::Verified,
-        );
-        repository
-            .save_recipe_with_revision(recipe, second, vec![added])
-            .await
-            .unwrap();
-
-        let images = repository
-            .get_recipe_images(RecipeId::new("soup".to_string()))
-            .await
-            .unwrap();
-
-        assert_eq!(images.len(), 2);
-        assert_eq!(images[1].id().as_str(), "image-added");
-    }
-
-    #[tokio::test]
     async fn adds_recipe_images_to_an_existing_recipe() {
         let repository = InMemoryRecipeRepository::new();
         let recipe = recipe("soup");
         let revision = revision("revision-1", &recipe);
         repository
-            .save_new_recipe(
-                recipe.clone(),
-                revision,
-                Vec::new(),
-                vec![recipe_image(&recipe, "image-existing", b"existing")],
-            )
+            .save_recipe_revision(recipe.clone(), revision)
             .await
             .unwrap();
 
         repository
             .add_recipe_images(vec![
+                recipe_image(&recipe, "image-existing", b"existing"),
                 recipe_image(&recipe, "image-1", b"front"),
                 recipe_image(&recipe, "image-2", b"back"),
             ])
@@ -1750,10 +1561,7 @@ mod tests {
             .add_recipe_images(vec![recipe_image(&recipe, "image-1", b"front")])
             .await;
 
-        assert!(matches!(
-            result,
-            Err(AddRecipeImagesError::RecipeNotFound)
-        ));
+        assert!(matches!(result, Err(AddRecipeImagesError::RecipeNotFound)));
     }
 
     #[tokio::test]
@@ -1762,7 +1570,7 @@ mod tests {
         let soup = recipe("soup");
         let revision = revision("revision-1", &soup);
         repository
-            .save_new_recipe(soup.clone(), revision, Vec::new(), Vec::new())
+            .save_recipe_revision(soup.clone(), revision)
             .await
             .unwrap();
 
@@ -1784,7 +1592,7 @@ mod tests {
         let recipe = recipe("soup");
         let revision = revision("revision-1", &recipe);
         repository
-            .save_new_recipe(recipe.clone(), revision, Vec::new(), Vec::new())
+            .save_recipe_revision(recipe.clone(), revision)
             .await
             .unwrap();
 
@@ -1809,12 +1617,11 @@ mod tests {
         let recipe = recipe("soup");
         let revision = revision("revision-1", &recipe);
         repository
-            .save_new_recipe(
-                recipe.clone(),
-                revision,
-                Vec::new(),
-                vec![recipe_image(&recipe, "image-1", b"front")],
-            )
+            .save_recipe_revision(recipe.clone(), revision)
+            .await
+            .unwrap();
+        repository
+            .add_recipe_images(vec![recipe_image(&recipe, "image-1", b"front")])
             .await
             .unwrap();
 

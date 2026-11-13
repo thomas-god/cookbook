@@ -391,6 +391,7 @@ dependencies = [
  "derive_more",
  "mockall",
  "tokio",
+ "tracing",
  "uuid",
 ]
 

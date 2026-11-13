@@ -219,28 +219,15 @@ pub trait RecipeService: Clone + Send + Sync + 'static {
 
 /// Outbound (driven) port for recipe persistence.
 pub trait RecipeRepository: Clone + Send + Sync + 'static {
-    /// Saves a new recipe with its first revision, source documents, and
-    /// presentation images atomically.
-    fn save_new_recipe(
-        &self,
-        recipe: Recipe,
-        revision: RecipeRevision,
-        source_documents: Vec<RecipeSourceDocument>,
-        images: Vec<RecipeImage>,
-    ) -> impl Future<Output = Result<(), SaveRecipeError>> + Send;
-
-    /// Saves the current recipe and appends its revision atomically, together
-    /// with presentation image additions.
-    fn save_recipe_with_revision(
-        &self,
-        recipe: Recipe,
-        revision: RecipeRevision,
-        added_images: Vec<RecipeImage>,
-    ) -> impl Future<Output = Result<(), SaveRecipeError>> + Send;
-
     fn save_recipe(
         &self,
         recipe: Recipe,
+    ) -> impl Future<Output = Result<(), SaveRecipeError>> + Send;
+
+    fn save_recipe_revision(
+        &self,
+        recipe: Recipe,
+        revision: RecipeRevision,
     ) -> impl Future<Output = Result<(), SaveRecipeError>> + Send;
 
     fn get_recipe(
@@ -821,22 +808,16 @@ mockall::mock! {
     }
 
     impl RecipeRepository for RecipeRepository {
-        async fn save_new_recipe(
+        async fn save_recipe(
+            &self,
+            recipe: Recipe,
+        ) -> Result<(), SaveRecipeError>;
+
+        async fn save_recipe_revision(
             &self,
             recipe: Recipe,
             revision: RecipeRevision,
-            source_documents: Vec<RecipeSourceDocument>,
-            images: Vec<RecipeImage>,
         ) -> Result<(), SaveRecipeError>;
-
-        async fn save_recipe_with_revision(
-            &self,
-            recipe: Recipe,
-            revision: RecipeRevision,
-            added_images: Vec<RecipeImage>,
-        ) -> Result<(), SaveRecipeError>;
-
-        async fn save_recipe(&self, recipe: Recipe) -> Result<(), SaveRecipeError>;
 
         async fn get_recipe(
             &self,

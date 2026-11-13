@@ -87,12 +87,26 @@ where
         let images = build_recipe_images(recipe.id(), &author, images, now);
 
         self.recipe_repository
-            .save_new_recipe(recipe, revision, source_documents, images)
+            .save_recipe_revision(recipe, revision)
             .await
             .map_err(|error| match error {
                 SaveRecipeError::InvalidImageReference => CreateRecipeError::InvalidImageReference,
                 error => CreateRecipeError::Storage(error.into()),
             })?;
+
+        if let Err(err) = self
+            .document_repository
+            .add_source_documents(source_documents)
+            .await
+        {
+            tracing::error!(
+                "Unable to save source documents for recipe {:?}: {err}",
+                current.id()
+            );
+        }
+        if let Err(err) = self.document_repository.add_recipe_images(images).await {
+            tracing::error!("Unable to save images for recipe {:?}: {err}", current.id());
+        }
 
         Ok(current)
     }
@@ -198,7 +212,7 @@ where
         let added_images = build_recipe_images(recipe.id(), &editor, new_images, self.clock.now());
 
         self.recipe_repository
-            .save_recipe_with_revision(recipe, revision, added_images)
+            .save_recipe_revision(recipe, revision)
             .await
             .map_err(|error| match error {
                 SaveRecipeError::RecipeIdMismatch | SaveRecipeError::RecipeAuthorMismatch => {
@@ -208,6 +222,14 @@ where
                 SaveRecipeError::InvalidImageReference => UpdateRecipeError::InvalidImageReference,
                 SaveRecipeError::Storage(reason) => UpdateRecipeError::Storage(reason),
             })?;
+
+        if let Err(err) = self
+            .document_repository
+            .add_recipe_images(added_images)
+            .await
+        {
+            tracing::error!("Unable to save images for recipe {:?}: {err}", updated.id());
+        }
 
         Ok(updated)
     }
@@ -251,7 +273,7 @@ where
             .map_err(|error| UpdateRecipeError::Storage(error.into()))?;
 
         self.recipe_repository
-            .save_recipe_with_revision(recipe, revision, Vec::new())
+            .save_recipe_revision(recipe, revision)
             .await
             .map_err(|error| match error {
                 SaveRecipeError::RecipeIdMismatch | SaveRecipeError::RecipeAuthorMismatch => {
@@ -311,7 +333,7 @@ where
             .map_err(|error| RestoreRecipeRevisionError::Storage(error.into()))?;
 
         self.recipe_repository
-            .save_recipe_with_revision(recipe, revision, Vec::new())
+            .save_recipe_revision(recipe, revision)
             .await
             .map_err(|error| match error {
                 SaveRecipeError::RecipeIdMismatch | SaveRecipeError::RecipeAuthorMismatch => {
@@ -674,8 +696,8 @@ mod tests {
         RecipeScope, RecipeStep, RecipeStepId, RecipeTitle, RevisionMessage,
     };
     use crate::recipe::ports::{
-        MockRecipeDocumentRepository, MockRecipeRepository, RecipeSearchCriteria, SaveRecipeError,
-        SearchRecipesQuery, UpdateRecipeRequest,
+        AddRecipeImagesError, MockRecipeDocumentRepository, MockRecipeRepository,
+        RecipeSearchCriteria, SaveRecipeError, SearchRecipesQuery, UpdateRecipeRequest,
     };
     use crate::user::models::UserId;
 
@@ -811,10 +833,18 @@ mod tests {
     async fn create_recipe_saves_and_returns_the_recipe() {
         let mut repository = MockRecipeRepository::new();
         repository
-            .expect_save_new_recipe()
+            .expect_save_recipe_revision()
             .times(1)
-            .returning(|_, _, _, _| Ok(()));
-        let documents = MockRecipeDocumentRepository::new();
+            .returning(|_, _| Ok(()));
+        let mut documents = MockRecipeDocumentRepository::new();
+        documents
+            .expect_add_source_documents()
+            .times(1)
+            .returning(|_| Ok(()));
+        documents
+            .expect_add_recipe_images()
+            .times(1)
+            .returning(|_| Ok(()));
 
         let service = RecipeServiceImpl::new(repository, documents, FixedClock::new());
 
@@ -831,23 +861,27 @@ mod tests {
         let edited_at = FixedClock::new().0;
         let mut repository = MockRecipeRepository::new();
         repository
-            .expect_save_new_recipe()
+            .expect_save_recipe_revision()
             .times(1)
-            .withf(
-                move |recipe: &Recipe,
-                      revision: &RecipeRevision,
-                      source_documents: &Vec<RecipeSourceDocument>,
-                      _: &Vec<RecipeImage>| {
-                    revision.recipe_id() == recipe.id()
-                        && revision.content().title().as_str() == "Soup"
-                        && revision.editor() == recipe.author()
-                        && revision.edited_at() == edited_at
-                        && revision.origin() == &RevisionOrigin::Created
-                        && source_documents.is_empty()
-                },
-            )
-            .returning(|_, _, _, _| Ok(()));
-        let documents = MockRecipeDocumentRepository::new();
+            .withf(move |recipe: &Recipe, revision: &RecipeRevision| {
+                revision.recipe_id() == recipe.id()
+                    && revision.content().title().as_str() == "Soup"
+                    && revision.editor() == recipe.author()
+                    && revision.edited_at() == edited_at
+                    && revision.origin() == &RevisionOrigin::Created
+            })
+            .returning(|_, _| Ok(()));
+        let mut documents = MockRecipeDocumentRepository::new();
+        documents
+            .expect_add_recipe_images()
+            .times(1)
+            .withf(move |images: &Vec<RecipeImage>| images.is_empty())
+            .returning(|_| Ok(()));
+        documents
+            .expect_add_source_documents()
+            .times(1)
+            .withf(move |source_documents: &Vec<RecipeSourceDocument>| source_documents.is_empty())
+            .returning(|_| Ok(()));
 
         let service = RecipeServiceImpl::new(repository, documents, FixedClock::new());
 
@@ -864,19 +898,24 @@ mod tests {
     async fn create_imported_recipe_records_an_imported_needs_review_revision() {
         let mut repository = MockRecipeRepository::new();
         repository
-            .expect_save_new_recipe()
+            .expect_save_recipe_revision()
             .times(1)
-            .withf(
-                |_: &Recipe,
-                 revision: &RecipeRevision,
-                 _: &Vec<RecipeSourceDocument>,
-                 _: &Vec<RecipeImage>| {
-                    revision.verification() == RevisionVerification::NeedsReview
-                        && revision.origin() == &RevisionOrigin::Imported
-                },
-            )
-            .returning(|_, _, _, _| Ok(()));
-        let documents = MockRecipeDocumentRepository::new();
+            .withf(|_: &Recipe, revision: &RecipeRevision| {
+                revision.verification() == RevisionVerification::NeedsReview
+                    && revision.origin() == &RevisionOrigin::Imported
+            })
+            .returning(|_, _| Ok(()));
+        let mut documents = MockRecipeDocumentRepository::new();
+        documents
+            .expect_add_recipe_images()
+            .times(1)
+            .withf(move |images: &Vec<RecipeImage>| images.is_empty())
+            .returning(|_| Ok(()));
+        documents
+            .expect_add_source_documents()
+            .times(1)
+            .withf(move |source_documents: &Vec<RecipeSourceDocument>| source_documents.is_empty())
+            .returning(|_| Ok(()));
 
         let service = RecipeServiceImpl::new(repository, documents, FixedClock::new());
         let mut request = create_request();
@@ -906,10 +945,18 @@ mod tests {
     async fn create_recipe_generates_a_unique_id_for_each_recipe() {
         let mut repository = MockRecipeRepository::new();
         repository
-            .expect_save_new_recipe()
+            .expect_save_recipe_revision()
             .times(2)
-            .returning(|_, _, _, _| Ok(()));
-        let documents = MockRecipeDocumentRepository::new();
+            .returning(|_, _| Ok(()));
+        let mut documents = MockRecipeDocumentRepository::new();
+        documents
+            .expect_add_source_documents()
+            .times(2)
+            .returning(|_| Ok(()));
+        documents
+            .expect_add_recipe_images()
+            .times(2)
+            .returning(|_| Ok(()));
 
         let service = RecipeServiceImpl::new(repository, documents, FixedClock::new());
 
@@ -929,8 +976,8 @@ mod tests {
     async fn create_recipe_maps_save_failures_to_storage_errors() {
         let mut repository = MockRecipeRepository::new();
         repository
-            .expect_save_new_recipe()
-            .returning(|_, _, _, _| Err(SaveRecipeError::Storage(anyhow!("store unavailable"))));
+            .expect_save_recipe_revision()
+            .returning(|_, _| Err(SaveRecipeError::Storage(anyhow!("store unavailable"))));
         let documents = MockRecipeDocumentRepository::new();
 
         let service = RecipeServiceImpl::new(repository, documents, FixedClock::new());
@@ -941,28 +988,79 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn create_recipe_succeeds_when_source_document_save_fails() {
+        let mut repository = MockRecipeRepository::new();
+        repository
+            .expect_save_recipe_revision()
+            .times(1)
+            .returning(|_, _| Ok(()));
+        let mut documents = MockRecipeDocumentRepository::new();
+        documents
+            .expect_add_source_documents()
+            .times(1)
+            .returning(|_| Err(AddSourceDocumentsError::Storage(anyhow!("write failed"))));
+        documents
+            .expect_add_recipe_images()
+            .times(1)
+            .returning(|_| Ok(()));
+
+        let service = RecipeServiceImpl::new(repository, documents, FixedClock::new());
+
+        let result = service.create_verified_recipe(create_request()).await;
+
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn create_recipe_succeeds_when_image_save_fails() {
+        let mut repository = MockRecipeRepository::new();
+        repository
+            .expect_save_recipe_revision()
+            .times(1)
+            .returning(|_, _| Ok(()));
+        let mut documents = MockRecipeDocumentRepository::new();
+        documents
+            .expect_add_source_documents()
+            .times(1)
+            .returning(|_| Ok(()));
+        documents
+            .expect_add_recipe_images()
+            .times(1)
+            .returning(|_| Err(AddRecipeImagesError::Storage(anyhow!("write failed"))));
+
+        let service = RecipeServiceImpl::new(repository, documents, FixedClock::new());
+
+        let result = service.create_verified_recipe(create_request()).await;
+
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
     async fn create_recipe_attaches_source_documents() {
         let added_at = FixedClock::new().0;
         let mut repository = MockRecipeRepository::new();
         repository
-            .expect_save_new_recipe()
+            .expect_save_recipe_revision()
             .times(1)
-            .withf(
-                move |recipe: &Recipe,
-                      _: &RecipeRevision,
-                      images: &Vec<RecipeSourceDocument>,
-                      _: &Vec<RecipeImage>| {
-                    images.len() == 1
-                        && images[0].recipe_id() == recipe.id()
-                        && images[0].content_type() == "image/jpeg"
-                        && images[0].original_name() == Some("front.jpg")
-                        && images[0].bytes() == b"front"
-                        && images[0].added_by() == recipe.author()
-                        && images[0].added_at() == added_at
-                },
-            )
-            .returning(|_, _, _, _| Ok(()));
-        let documents = MockRecipeDocumentRepository::new();
+            .returning(|_, _| Ok(()));
+        let mut documents = MockRecipeDocumentRepository::new();
+
+        documents
+            .expect_add_source_documents()
+            .times(1)
+            .withf(move |documents: &Vec<RecipeSourceDocument>| {
+                documents.len() == 1
+                    && documents[0].content_type() == "image/jpeg"
+                    && documents[0].original_name() == Some("front.jpg")
+                    && documents[0].bytes() == b"front"
+                    && documents[0].added_by() == &UserId::new("user-1".to_string())
+                    && documents[0].added_at() == added_at
+            })
+            .returning(|_| Ok(()));
+        documents
+            .expect_add_recipe_images()
+            .times(1)
+            .returning(|_| Ok(()));
 
         let service = RecipeServiceImpl::new(repository, documents, FixedClock::new());
         let mut request = create_request();
@@ -1164,27 +1262,29 @@ mod tests {
             .expect_get_recipe_images()
             .times(1)
             .returning(|_| Ok(Vec::new()));
+        documents
+            .expect_add_recipe_images()
+            .times(1)
+            .returning(|_| Ok(()));
         let expected_id = current.id().clone();
         repository
-            .expect_save_recipe_with_revision()
+            .expect_save_recipe_revision()
             .times(1)
-            .withf(
-                move |recipe: &Recipe, revision: &RecipeRevision, _: &Vec<RecipeImage>| {
-                    recipe.id() == &expected_id
-                        && recipe.author().as_str() == "user-1"
-                        && revision.recipe_id() == &expected_id
-                        && revision.content().title().as_str() == "Updated Soup"
-                        && revision.editor().as_str() == "editor-2"
-                        && revision.edited_at() == edited_at
-                        && matches!(
-                            revision.origin(),
-                            RevisionOrigin::UserEdit { message: Some(message) }
-                                if message.as_str() == "Changed the title"
-                        )
-                        && revision.verification() == RevisionVerification::Verified
-                },
-            )
-            .returning(|_, _, _| Ok(()));
+            .withf(move |recipe: &Recipe, revision: &RecipeRevision| {
+                recipe.id() == &expected_id
+                    && recipe.author().as_str() == "user-1"
+                    && revision.recipe_id() == &expected_id
+                    && revision.content().title().as_str() == "Updated Soup"
+                    && revision.editor().as_str() == "editor-2"
+                    && revision.edited_at() == edited_at
+                    && matches!(
+                        revision.origin(),
+                        RevisionOrigin::UserEdit { message: Some(message) }
+                            if message.as_str() == "Changed the title"
+                    )
+                    && revision.verification() == RevisionVerification::Verified
+            })
+            .returning(|_, _| Ok(()));
 
         let service = RecipeServiceImpl::new(repository, documents, FixedClock::new());
 
@@ -1217,21 +1317,18 @@ mod tests {
             move |_| Ok(Some(current.clone()))
         });
         repository
-            .expect_save_recipe_with_revision()
+            .expect_save_recipe_revision()
             .times(1)
-            .withf(
-                move |recipe: &Recipe, revision: &RecipeRevision, images: &Vec<RecipeImage>| {
-                    recipe.id() == &expected_id
-                        && revision.origin()
-                            == &RevisionOrigin::StructureConverted {
-                                to: RecipeStructureKind::Multipart,
-                            }
-                        && revision.content().is_multipart()
-                        && revision.verification() == RevisionVerification::Verified
-                        && images.is_empty()
-                },
-            )
-            .returning(|_, _, _| Ok(()));
+            .withf(move |recipe: &Recipe, revision: &RecipeRevision| {
+                recipe.id() == &expected_id
+                    && revision.origin()
+                        == &RevisionOrigin::StructureConverted {
+                            to: RecipeStructureKind::Multipart,
+                        }
+                    && revision.content().is_multipart()
+                    && revision.verification() == RevisionVerification::Verified
+            })
+            .returning(|_, _| Ok(()));
         let documents = MockRecipeDocumentRepository::new();
 
         let service = RecipeServiceImpl::new(repository, documents, FixedClock::new());
@@ -1276,21 +1373,19 @@ mod tests {
             .times(1)
             .returning(move |_| Ok(revisions.clone()));
         repository
-            .expect_save_recipe_with_revision()
+            .expect_save_recipe_revision()
             .times(1)
-            .withf(
-                move |recipe: &Recipe, revision: &RecipeRevision, images: &Vec<RecipeImage>| {
-                    recipe.id() == &expected_id
-                        && revision.content().title().as_str() == "Old Soup"
-                        && revision.origin()
-                            == &RevisionOrigin::Restored {
-                                revision_id: expected_source_id.clone(),
-                            }
-                        && revision.verification() == RevisionVerification::NeedsReview
-                        && images.is_empty()
-                },
-            )
-            .returning(|_, _, _| Ok(()));
+            .withf(move |recipe: &Recipe, revision: &RecipeRevision| {
+                recipe.id() == &expected_id
+                    && revision.content().title().as_str() == "Old Soup"
+                    && revision.origin()
+                        == &RevisionOrigin::Restored {
+                            revision_id: expected_source_id.clone(),
+                        }
+                    && revision.verification() == RevisionVerification::NeedsReview
+            })
+            .returning(|_, _| Ok(()));
+
         let documents = MockRecipeDocumentRepository::new();
 
         let service = RecipeServiceImpl::new(repository, documents, FixedClock::new());
@@ -1404,9 +1499,9 @@ mod tests {
             .times(1)
             .returning(move |_| Ok(revisions.clone()));
         repository
-            .expect_save_recipe_with_revision()
+            .expect_save_recipe_revision()
             .times(1)
-            .returning(|_, _, _| Err(SaveRecipeError::Storage(anyhow!("write failed"))));
+            .returning(|_, _| Err(SaveRecipeError::Storage(anyhow!("write failed"))));
         let documents = MockRecipeDocumentRepository::new();
 
         let service = RecipeServiceImpl::new(repository, documents, FixedClock::new());
@@ -1451,15 +1546,17 @@ mod tests {
             .expect_get_recipe_images()
             .times(1)
             .returning(|_| Ok(Vec::new()));
-        repository
-            .expect_save_recipe_with_revision()
+        documents
+            .expect_add_recipe_images()
             .times(1)
-            .withf(
-                |_: &Recipe, revision: &RecipeRevision, _: &Vec<RecipeImage>| {
-                    revision.verification() == RevisionVerification::Verified
-                },
-            )
-            .returning(|_, _, _| Ok(()));
+            .returning(|_| Ok(()));
+        repository
+            .expect_save_recipe_revision()
+            .times(1)
+            .withf(|_: &Recipe, revision: &RecipeRevision| {
+                revision.verification() == RevisionVerification::Verified
+            })
+            .returning(|_, _| Ok(()));
 
         let service = RecipeServiceImpl::new(repository, documents, FixedClock::new());
 
@@ -1523,8 +1620,8 @@ mod tests {
             .times(1)
             .returning(|_| Ok(Vec::new()));
         repository
-            .expect_save_recipe_with_revision()
-            .returning(|_, _, _| Err(SaveRecipeError::RecipeAuthorMismatch));
+            .expect_save_recipe_revision()
+            .returning(|_, _| Err(SaveRecipeError::RecipeAuthorMismatch));
 
         let service = RecipeServiceImpl::new(repository, documents, FixedClock::new());
 
@@ -1608,8 +1705,8 @@ mod tests {
             .times(1)
             .returning(|_| Ok(Vec::new()));
         repository
-            .expect_save_recipe_with_revision()
-            .returning(|_, _, _| Err(SaveRecipeError::Storage(anyhow!("store unavailable"))));
+            .expect_save_recipe_revision()
+            .returning(|_, _| Err(SaveRecipeError::Storage(anyhow!("store unavailable"))));
 
         let service = RecipeServiceImpl::new(repository, documents, FixedClock::new());
 
@@ -1625,6 +1722,46 @@ mod tests {
             .await;
 
         assert!(matches!(result, Err(UpdateRecipeError::Storage(_))));
+    }
+
+    #[tokio::test]
+    async fn update_recipe_succeeds_when_image_save_fails() {
+        let current = current_recipe("soup", "Soup");
+        let latest_revision = current.revision().id().clone();
+
+        let mut repository = MockRecipeRepository::new();
+        repository.expect_get_recipe().times(1).returning({
+            let current = current.clone();
+            move |_| Ok(Some(current.clone()))
+        });
+        repository
+            .expect_save_recipe_revision()
+            .times(1)
+            .returning(|_, _| Ok(()));
+        let mut documents = MockRecipeDocumentRepository::new();
+        documents
+            .expect_get_recipe_images()
+            .times(1)
+            .returning(|_| Ok(Vec::new()));
+        documents
+            .expect_add_recipe_images()
+            .times(1)
+            .returning(|_| Err(AddRecipeImagesError::Storage(anyhow!("write failed"))));
+
+        let service = RecipeServiceImpl::new(repository, documents, FixedClock::new());
+
+        let result = service
+            .update_recipe(UpdateRecipeRequest {
+                id: current.id().clone(),
+                content: content("Updated Soup"),
+                editor: UserId::new("editor-2".to_string()),
+                latest_revision,
+                message: None,
+                new_images: Vec::new(),
+            })
+            .await;
+
+        assert!(result.is_ok());
     }
 
     #[tokio::test]
@@ -2129,23 +2266,25 @@ mod tests {
         let added_at = FixedClock::new().0;
         let mut repository = MockRecipeRepository::new();
         repository
-            .expect_save_new_recipe()
+            .expect_save_recipe_revision()
             .times(1)
-            .withf(
-                move |recipe: &Recipe,
-                      _: &RecipeRevision,
-                      _: &Vec<RecipeSourceDocument>,
-                      images: &Vec<RecipeImage>| {
-                    images.len() == 1
-                        && images[0].id().as_str() == "image-1"
-                        && images[0].recipe_id() == recipe.id()
-                        && images[0].bytes() == b"image"
-                        && images[0].added_by() == recipe.author()
-                        && images[0].added_at() == added_at
-                },
-            )
-            .returning(|_, _, _, _| Ok(()));
-        let documents = MockRecipeDocumentRepository::new();
+            .returning(|_, _| Ok(()));
+        let mut documents = MockRecipeDocumentRepository::new();
+        documents
+            .expect_add_source_documents()
+            .times(1)
+            .returning(|_| Ok(()));
+        documents
+            .expect_add_recipe_images()
+            .times(1)
+            .withf(move |images: &Vec<RecipeImage>| {
+                images.len() == 1
+                    && images[0].id().as_str() == "image-1"
+                    && images[0].bytes() == b"image"
+                    && images[0].added_by() == &UserId::new("user-1".to_string())
+                    && images[0].added_at() == added_at
+            })
+            .returning(|_| Ok(()));
 
         let service = RecipeServiceImpl::new(repository, documents, FixedClock::new());
         let mut request = create_request();
@@ -2199,10 +2338,18 @@ mod tests {
     async fn create_recipe_accepts_images_referenced_by_multipart_parts() {
         let mut repository = MockRecipeRepository::new();
         repository
-            .expect_save_new_recipe()
+            .expect_save_recipe_revision()
             .times(1)
-            .returning(|_, _, _, _| Ok(()));
-        let documents = MockRecipeDocumentRepository::new();
+            .returning(|_, _| Ok(()));
+        let mut documents = MockRecipeDocumentRepository::new();
+        documents
+            .expect_add_source_documents()
+            .times(1)
+            .returning(|_| Ok(()));
+        documents
+            .expect_add_recipe_images()
+            .times(1)
+            .returning(|_| Ok(()));
         let service = RecipeServiceImpl::new(repository, documents, FixedClock::new());
         let mut request = create_request();
         request.images = vec![new_recipe_image("part-image", b"image")];
@@ -2255,15 +2402,17 @@ mod tests {
         documents
             .expect_get_recipe_images()
             .returning(move |_| Ok(vec![image_metadata("kept")]));
-        repository
-            .expect_save_recipe_with_revision()
+        documents
+            .expect_add_recipe_images()
             .times(1)
-            .withf(
-                move |_: &Recipe, _: &RecipeRevision, added: &Vec<RecipeImage>| {
-                    added.len() == 1 && added[0].id().as_str() == "step-image"
-                },
-            )
-            .returning(|_, _, _| Ok(()));
+            .withf(move |added: &Vec<RecipeImage>| {
+                added.len() == 1 && added[0].id().as_str() == "step-image"
+            })
+            .returning(|_| Ok(()));
+        repository
+            .expect_save_recipe_revision()
+            .times(1)
+            .returning(|_, _| Ok(()));
 
         let service = RecipeServiceImpl::new(repository, documents, FixedClock::new());
         let content = RecipeContent::new_simple(
