@@ -22,7 +22,7 @@ pub async fn recipe_scope_form(
     scope: RecipeScope,
 ) -> Result<impl View> {
     let scope_id = element_id(cx);
-    let action = format!("/recipes/{recipe_id}/scope");
+    let action = format!("/recipe/{recipe_id}/scope");
 
     let options = [
         (

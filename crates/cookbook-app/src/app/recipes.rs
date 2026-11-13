@@ -384,7 +384,7 @@ path_param!(revision_id);
 path_param!(pub source_document_id);
 path_param!(pub image_id);
 
-#[page("./{recipe_id}")]
+#[page("/recipe/{recipe_id}")]
 pub async fn recipe_detail(cx: &Cx) -> Result<impl View> {
     let user = auth::require_user(cx)?;
 
@@ -537,7 +537,7 @@ pub async fn recipe_detail(cx: &Cx) -> Result<impl View> {
     })
 }
 
-#[page("./{recipe_id}/cook")]
+#[page("/recipe/{recipe_id}/cook")]
 pub async fn cook_recipe(cx: &Cx) -> Result<impl View> {
     let user = auth::require_user(cx)?;
     let recipe_id = path_param::<RecipeId>(cx).to_string();
@@ -575,7 +575,7 @@ fn servings_label(cx: &Cx, servings: &Servings) -> String {
     }
 }
 
-#[page("./{recipe_id}/edit")]
+#[page("/recipe/{recipe_id}/edit")]
 pub async fn edit_recipe(cx: &Cx) -> Result<impl View> {
     let user = auth::require_user(cx)?;
 
@@ -668,7 +668,7 @@ pub async fn edit_recipe(cx: &Cx) -> Result<impl View> {
     })
 }
 
-#[route(POST "./{recipe_id}/edit")]
+#[route(POST "/recipe/{recipe_id}/edit")]
 pub async fn update_recipe(cx: &Cx, mut multipart: Multipart) -> Result<SeeOther> {
     let user = auth::require_user(cx)?;
     let recipe_id = path_param::<RecipeId>(cx).to_string();
@@ -696,7 +696,7 @@ pub async fn update_recipe(cx: &Cx, mut multipart: Multipart) -> Result<SeeOther
     }
 }
 
-#[route(POST "./{recipe_id}/convert-to-multipart")]
+#[route(POST "/recipe/{recipe_id}/convert-to-multipart")]
 pub async fn convert_recipe_to_multipart(
     cx: &Cx,
     Form(form): Form<Vec<(String, String)>>,
@@ -704,7 +704,7 @@ pub async fn convert_recipe_to_multipart(
     convert_recipe_type(cx, form, true).await
 }
 
-#[route(POST "./{recipe_id}/convert-to-simple")]
+#[route(POST "/recipe/{recipe_id}/convert-to-simple")]
 pub async fn convert_recipe_to_simple(
     cx: &Cx,
     Form(form): Form<Vec<(String, String)>>,
@@ -781,7 +781,7 @@ fn parse_latest_revision_form(pairs: Vec<(String, String)>) -> Result<RecipeRevi
     Ok(RecipeRevisionId::new(latest_revision))
 }
 
-#[route(POST "./{recipe_id}/history/{revision_id}/restore")]
+#[route(POST "/recipe/{recipe_id}/history/{revision_id}/restore")]
 pub async fn restore_recipe_revision(
     cx: &Cx,
     Form(form): Form<Vec<(String, String)>>,
@@ -813,7 +813,7 @@ pub async fn restore_recipe_revision(
     }
 }
 
-#[route(POST "./{recipe_id}/scope")]
+#[route(POST "/recipe/{recipe_id}/scope")]
 pub async fn update_recipe_scope(
     cx: &Cx,
     Form(form): Form<Vec<(String, String)>>,
@@ -840,7 +840,7 @@ pub async fn update_recipe_scope(
     }
 }
 
-#[route(GET "./{recipe_id}/source-documents/{source_document_id}")]
+#[route(GET "/recipe/{recipe_id}/source-documents/{source_document_id}")]
 pub async fn source_document(cx: &Cx) -> Result<Response> {
     let user = auth::require_user(cx)?;
 
@@ -889,7 +889,7 @@ fn inline_file_name(original_name: Option<&str>) -> String {
     format!("inline; filename=\"{sanitized}\"")
 }
 
-#[route(GET "./{recipe_id}/images/{image_id}")]
+#[route(GET "/recipe/{recipe_id}/images/{image_id}")]
 pub async fn recipe_image(cx: &Cx) -> Result<Response> {
     let user = auth::require_user(cx)?;
 
@@ -912,7 +912,7 @@ pub async fn recipe_image(cx: &Cx) -> Result<Response> {
         .body(Body::from(image.bytes().to_vec()))?)
 }
 
-#[route(POST "./{recipe_id}/source-documents")]
+#[route(POST "/recipe/{recipe_id}/source-documents")]
 pub async fn upload_source_documents(cx: &Cx, mut multipart: Multipart) -> Result<SeeOther> {
     let user = auth::require_user(cx)?;
     let recipe_id = path_param::<RecipeId>(cx).to_string();
@@ -960,7 +960,7 @@ pub async fn upload_source_documents(cx: &Cx, mut multipart: Multipart) -> Resul
 }
 
 // Not DELETE since its driven by an HTTP form that can only use POST
-#[route(POST "./{recipe_id}/source-documents/{source_document_id}/delete")]
+#[route(POST "/recipe/{recipe_id}/source-documents/{source_document_id}/delete")]
 pub async fn delete_source_document(cx: &Cx) -> Result<SeeOther> {
     let user = auth::require_user(cx)?;
 
@@ -1027,7 +1027,7 @@ fn revision_origin_label(cx: &Cx, origin: &RevisionOrigin, revisions: &[RecipeRe
     }
 }
 
-#[page("./{recipe_id}/history")]
+#[page("/recipe/{recipe_id}/history")]
 pub async fn recipe_history(cx: &Cx) -> Result<impl View> {
     let user = auth::require_user(cx)?;
 
@@ -1124,7 +1124,7 @@ pub async fn recipe_history(cx: &Cx) -> Result<impl View> {
     })
 }
 
-#[page("./{recipe_id}/history/{revision_id}")]
+#[page("/recipe/{recipe_id}/history/{revision_id}")]
 pub async fn recipe_revision(cx: &Cx) -> Result<impl View> {
     let user = auth::require_user(cx)?;
 

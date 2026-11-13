@@ -53,7 +53,7 @@ impl RecipeFormMode {
             Self::New { multipart: false } => "/recipe/new".to_string(),
             Self::New { multipart: true } => "/recipe/new/multipart".to_string(),
             Self::Edit { recipe_id, .. } => {
-                format!("/recipes/{}/edit", recipe_id.as_str())
+                format!("/recipe/{}/edit", recipe_id.as_str())
             }
         }
     }
@@ -231,6 +231,6 @@ mod tests {
             needs_review: false,
         };
 
-        assert_eq!(edit.action(), "/recipes/soup/edit");
+        assert_eq!(edit.action(), "/recipe/soup/edit");
     }
 }
