@@ -29,10 +29,53 @@ fn decode_v1(json: &str) -> anyhow::Result<RecipeContent> {
     serde_json::from_str(json).context("failed to decode v1 recipe content")
 }
 
+/// Builds the lowercased text used by substring search.
+///
+/// Fields are separated by a unit separator so a pattern cannot match across
+/// two unrelated fields.
+pub fn search_text(content: &RecipeContent) -> String {
+    let mut text = String::new();
+    let mut push = |value: &str| {
+        if !text.is_empty() {
+            text.push('\u{1f}');
+        }
+        text.push_str(&value.to_lowercase());
+    };
+
+    push(content.title().as_str());
+
+    if let Some(description) = content.description() {
+        push(description.as_str());
+    }
+
+    for body in content.bodies() {
+        for ingredient in body.ingredients() {
+            push(ingredient.name().as_str());
+        }
+
+        for step in body.steps() {
+            if let Some(title) = step.title() {
+                push(title);
+            }
+            push(step.instruction());
+        }
+    }
+
+    for part in content.parts() {
+        push(part.title().as_str());
+        if let Some(description) = part.description() {
+            push(description.as_str());
+        }
+    }
+
+    text
+}
+
 #[cfg(test)]
 mod tests {
     use cookbook_domain::recipe::models::{
-        RecipeBody, RecipeContent, RecipeDurations, RecipeTitle,
+        Ingredient, IngredientName, Quantity, RecipeBody, RecipeCategory, RecipeContent,
+        RecipeDescription, RecipeDurations, RecipeStep, RecipeStepId, RecipeTitle,
     };
 
     use super::*;
@@ -102,5 +145,38 @@ mod tests {
                 .to_string()
                 .contains("failed to decode v1 recipe content")
         );
+    }
+
+    #[test]
+    fn search_text_contains_all_searchable_fields_lowercased() {
+        let content = RecipeContent::new_simple(
+            RecipeTitle::new("Tomato Soup".to_string()),
+            Some(RecipeDescription::new("A Comforting Soup.".to_string())),
+            None,
+            Some(RecipeCategory::Main),
+            RecipeBody::new(
+                RecipeDurations::new(None, None, None),
+                vec![Ingredient::new(
+                    IngredientName::new("Basil".to_string()),
+                    Quantity::from_text("a handful"),
+                )],
+                Vec::new(),
+                vec![RecipeStep::new(
+                    RecipeStepId::new("step-1".to_string()),
+                    Some("Simmer".to_string()),
+                    "Cook gently.".to_string(),
+                    Vec::new(),
+                )],
+            ),
+        )
+        .unwrap();
+
+        let text = search_text(&content);
+
+        assert!(text.contains("tomato soup"));
+        assert!(text.contains("a comforting soup."));
+        assert!(text.contains("basil"));
+        assert!(text.contains("simmer"));
+        assert!(text.contains("cook gently."));
     }
 }
