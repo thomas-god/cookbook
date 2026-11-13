@@ -3,10 +3,11 @@ use std::time::Instant;
 use cookbook_domain::recipe::service::RecipeServiceImpl;
 use cookbook_infra::{
     auth::{
-        Argon2PasswordHasher, AuthServiceImpl, InMemorySessionRepository, InMemoryUserRepository,
-        RandomSessionTokenGenerator, SystemClock,
+        Argon2PasswordHasher, AuthServiceImpl, RandomSessionTokenGenerator,
+        SqliteSessionRepository, SqliteUserRepository, SystemClock,
     },
-    recipe::InMemoryRecipeRepository,
+    recipe::{FileRecipeDocumentRepository, FileStore, SqliteRecipeRepository},
+    storage::SqliteDatabase,
 };
 use topcoat::{
     Result,
@@ -42,16 +43,17 @@ use crate::{
         base::button::{ButtonSize, ButtonVariant, button},
         misc::locale_select::locale_select,
     },
+    storage::DataConfig,
     t,
 };
 
 pub(crate) type AppRecipeService =
-    RecipeServiceImpl<InMemoryRecipeRepository, InMemoryRecipeRepository, SystemClock>;
-pub(crate) type AppUserRepository = InMemoryUserRepository;
+    RecipeServiceImpl<SqliteRecipeRepository, FileRecipeDocumentRepository, SystemClock>;
+pub(crate) type AppUserRepository = SqliteUserRepository;
 pub(crate) type AppAuthService = AuthServiceImpl<
-    InMemoryUserRepository,
+    SqliteUserRepository,
     Argon2PasswordHasher,
-    InMemorySessionRepository,
+    SqliteSessionRepository,
     SystemClock,
     RandomSessionTokenGenerator,
 >;
@@ -60,16 +62,27 @@ const GEIST: topcoat::font::Font = fontsource_font!(GEIST);
 const APP_JS: topcoat::asset::Asset = topcoat::asset::asset!("assets/app.js");
 
 pub async fn router() -> topcoat::router::Router {
-    let repository = InMemoryRecipeRepository::seeded();
+    let data_config = DataConfig::from_env().expect("invalid data configuration");
+    data_config
+        .ensure_directory()
+        .expect("failed to create the data directory");
+
+    let database = SqliteDatabase::open(data_config.database_path())
+        .await
+        .expect("failed to open the SQLite database");
+    let files = FileStore::new(data_config.data_dir().to_path_buf());
+    let recipe_repository = SqliteRecipeRepository::new(database.pool().clone());
+    let document_repository = FileRecipeDocumentRepository::new(database.pool().clone(), files);
     let recipe_service =
-        AppRecipeService::new(repository.clone(), repository.clone(), SystemClock::new());
+        AppRecipeService::new(recipe_repository, document_repository, SystemClock::new());
+
     let auth_config = auth::AuthConfig::from_env().expect("invalid authentication configuration");
     let vision_config = vision::VisionConfig::from_env().expect("invalid vision configuration");
-    let user_repository = AppUserRepository::new();
+    let user_repository = AppUserRepository::new(database.pool().clone());
     let auth_service = AppAuthService::new(
         user_repository.clone(),
         Argon2PasswordHasher::new(),
-        InMemorySessionRepository::new(),
+        SqliteSessionRepository::new(database.pool().clone()),
         SystemClock::new(),
         RandomSessionTokenGenerator::new(),
         SESSION_POLICY,
