@@ -14,36 +14,43 @@ use cookbook_domain::recipe::models::{
     RecipeWithContent, RevisionOrigin, RevisionVerification, Servings, Unit,
 };
 use cookbook_domain::recipe::ports::{
-    AddSourceDocumentsError, DeleteSourceDocumentError, GetRecipeError, GetRecipeImageError,
-    GetSourceDocumentError, ListRecipeImagesError, ListRecipeRevisionsError, ListRecipesError,
-    ListSourceDocumentsError, RecipeRepository, RecipeSearchCriteria, RecipeSort, SaveRecipeError,
-    SearchRecipesError, SortDirection,
+    AddRecipeImagesError, AddSourceDocumentsError, DeleteSourceDocumentError, GetRecipeError,
+    GetRecipeImageError, GetSourceDocumentError, ListRecipeImagesError, ListRecipeRevisionsError,
+    ListRecipesError, ListSourceDocumentsError, RecipeDocumentRepository, RecipeRepository,
+    RecipeSearchCriteria, RecipeSort, SaveRecipeError, SearchRecipesError, SortDirection,
 };
 use cookbook_domain::user::models::UserId;
 
-#[derive(Debug, Clone)]
-struct RecipeRecord {
-    recipe: Recipe,
-    revisions: Vec<RecipeRevision>,
-    source_documents: Vec<RecipeSourceDocument>,
-    images: Vec<RecipeImage>,
+#[derive(Debug, Clone, Default)]
+struct RecipeStore {
+    recipes: HashMap<RecipeId, Recipe>,
+    revisions: HashMap<RecipeId, Vec<RecipeRevision>>,
+    source_documents: HashMap<RecipeId, Vec<RecipeSourceDocument>>,
+    images: HashMap<RecipeId, Vec<RecipeImage>>,
 }
 
-impl RecipeRecord {
-    fn current(&self) -> anyhow::Result<RecipeWithContent> {
+impl RecipeStore {
+    fn current(&self, id: &RecipeId) -> anyhow::Result<RecipeWithContent> {
+        let recipe = self
+            .recipes
+            .get(id)
+            .ok_or_else(|| anyhow!("recipe not found"))?;
         let revision = self
             .revisions
-            .last()
+            .get(id)
+            .and_then(|revisions| revisions.last())
             .cloned()
             .ok_or_else(|| anyhow!("recipe has no revisions"))?;
 
-        Ok(RecipeWithContent::new(self.recipe.clone(), revision)?)
+        Ok(RecipeWithContent::new(recipe.clone(), revision)?)
     }
-}
 
-#[derive(Debug, Clone, Default)]
-struct RecipeStore {
-    recipes: HashMap<RecipeId, RecipeRecord>,
+    fn current_recipes(&self) -> anyhow::Result<Vec<RecipeWithContent>> {
+        self.recipes
+            .keys()
+            .map(|id| self.current(id))
+            .collect()
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -65,15 +72,9 @@ impl InMemoryRecipeRepository {
         let mut store = RecipeStore::default();
 
         for current in recipes {
-            store.recipes.insert(
-                current.id().clone(),
-                RecipeRecord {
-                    recipe: current.recipe().clone(),
-                    revisions: vec![current.revision().clone()],
-                    source_documents: Vec::new(),
-                    images: Vec::new(),
-                },
-            );
+            let id = current.id().clone();
+            store.recipes.insert(id.clone(), current.recipe().clone());
+            store.revisions.insert(id, vec![current.revision().clone()]);
         }
 
         Self {
@@ -285,15 +286,11 @@ impl RecipeRepository for InMemoryRecipeRepository {
             )));
         }
 
-        store.recipes.insert(
-            recipe.id().clone(),
-            RecipeRecord {
-                recipe,
-                revisions: vec![revision],
-                source_documents,
-                images,
-            },
-        );
+        let id = recipe.id().clone();
+        store.recipes.insert(id.clone(), recipe);
+        store.revisions.insert(id.clone(), vec![revision]);
+        store.source_documents.insert(id.clone(), source_documents);
+        store.images.insert(id, images);
 
         Ok(())
     }
@@ -315,16 +312,18 @@ impl RecipeRepository for InMemoryRecipeRepository {
             .write()
             .map_err(|_| SaveRecipeError::Storage(anyhow!("recipe store lock poisoned")))?;
 
-        if let Some(record) = store.recipes.get_mut(recipe.id()) {
-            if record.recipe.author() != recipe.author() {
+        let id = recipe.id().clone();
+
+        if let Some(stored) = store.recipes.get(&id) {
+            if stored.author() != recipe.author() {
                 return Err(SaveRecipeError::RecipeAuthorMismatch);
             }
 
             if added_images.iter().any(|image| {
-                record
+                store
                     .images
-                    .iter()
-                    .any(|existing| existing.id() == image.id())
+                    .get(&id)
+                    .is_some_and(|images| images.iter().any(|existing| existing.id() == image.id()))
             }) {
                 return Err(SaveRecipeError::Storage(anyhow!(
                     "a recipe image id already exists for recipe `{}`",
@@ -332,18 +331,16 @@ impl RecipeRepository for InMemoryRecipeRepository {
                 )));
             }
 
-            record.revisions.push(revision);
-            record.images.extend(added_images);
+            store.revisions.entry(id.clone()).or_default().push(revision);
+            store
+                .images
+                .entry(id)
+                .or_default()
+                .extend(added_images);
         } else {
-            store.recipes.insert(
-                recipe.id().clone(),
-                RecipeRecord {
-                    recipe,
-                    revisions: vec![revision],
-                    source_documents: Vec::new(),
-                    images: added_images,
-                },
-            );
+            store.revisions.insert(id.clone(), vec![revision]);
+            store.images.insert(id.clone(), added_images);
+            store.recipes.insert(id, recipe);
         }
 
         Ok(())
@@ -355,16 +352,16 @@ impl RecipeRepository for InMemoryRecipeRepository {
             .write()
             .map_err(|_| SaveRecipeError::Storage(anyhow!("recipe store lock poisoned")))?;
 
-        let record = store
+        let stored = store
             .recipes
             .get_mut(recipe.id())
             .ok_or(SaveRecipeError::RecipeNotFound)?;
 
-        if record.recipe.author() != recipe.author() {
+        if stored.author() != recipe.author() {
             return Err(SaveRecipeError::RecipeAuthorMismatch);
         }
 
-        record.recipe = record.recipe.clone().update_scope(recipe.scope());
+        *stored = stored.clone().update_scope(recipe.scope());
 
         Ok(())
     }
@@ -375,12 +372,11 @@ impl RecipeRepository for InMemoryRecipeRepository {
             .read()
             .map_err(|_| GetRecipeError::Storage(anyhow!("recipe store lock poisoned")))?;
 
-        store
-            .recipes
-            .get(&id)
-            .map(RecipeRecord::current)
-            .transpose()
-            .map_err(GetRecipeError::Storage)
+        if !store.recipes.contains_key(&id) {
+            return Ok(None);
+        }
+
+        store.current(&id).map(Some).map_err(GetRecipeError::Storage)
     }
 
     async fn get_recipes(&self) -> Result<Vec<RecipeWithContent>, ListRecipesError> {
@@ -390,10 +386,7 @@ impl RecipeRepository for InMemoryRecipeRepository {
             .map_err(|_| ListRecipesError::Storage(anyhow!("recipe store lock poisoned")))?;
 
         store
-            .recipes
-            .values()
-            .map(RecipeRecord::current)
-            .collect::<anyhow::Result<Vec<_>>>()
+            .current_recipes()
             .map_err(ListRecipesError::Storage)
     }
 
@@ -407,10 +400,7 @@ impl RecipeRepository for InMemoryRecipeRepository {
             .map_err(|_| SearchRecipesError::Storage(anyhow!("recipe store lock poisoned")))?;
 
         let mut recipes = store
-            .recipes
-            .values()
-            .map(RecipeRecord::current)
-            .collect::<anyhow::Result<Vec<_>>>()
+            .current_recipes()
             .map_err(SearchRecipesError::Storage)?;
 
         let pattern = criteria
@@ -463,13 +453,11 @@ impl RecipeRepository for InMemoryRecipeRepository {
             ListRecipeRevisionsError::Storage(anyhow!("recipe store lock poisoned"))
         })?;
 
-        Ok(store
-            .recipes
-            .get(&id)
-            .map(|record| record.revisions.clone())
-            .unwrap_or_default())
+        Ok(store.revisions.get(&id).cloned().unwrap_or_default())
     }
+}
 
+impl RecipeDocumentRepository for InMemoryRecipeRepository {
     async fn add_source_documents(
         &self,
         images: Vec<RecipeSourceDocument>,
@@ -484,10 +472,9 @@ impl RecipeRepository for InMemoryRecipeRepository {
             .map_err(|_| AddSourceDocumentsError::Storage(anyhow!("recipe store lock poisoned")))?;
 
         let recipe_id = images[0].recipe_id().clone();
-        let recipe = store
-            .recipes
-            .get_mut(&recipe_id)
-            .ok_or(AddSourceDocumentsError::RecipeNotFound)?;
+        if !store.recipes.contains_key(&recipe_id) {
+            return Err(AddSourceDocumentsError::RecipeNotFound);
+        }
 
         if let Some(image) = images.iter().find(|image| image.recipe_id() != &recipe_id) {
             return Err(AddSourceDocumentsError::Storage(anyhow!(
@@ -497,7 +484,11 @@ impl RecipeRepository for InMemoryRecipeRepository {
             )));
         }
 
-        recipe.source_documents.extend(images);
+        store
+            .source_documents
+            .entry(recipe_id)
+            .or_default()
+            .extend(images);
 
         Ok(())
     }
@@ -511,11 +502,10 @@ impl RecipeRepository for InMemoryRecipeRepository {
         })?;
 
         Ok(store
-            .recipes
+            .source_documents
             .get(&recipe_id)
-            .map(|record| {
-                record
-                    .source_documents
+            .map(|documents| {
+                documents
                     .iter()
                     .map(RecipeSourceDocument::summary)
                     .collect()
@@ -533,11 +523,10 @@ impl RecipeRepository for InMemoryRecipeRepository {
             .read()
             .map_err(|_| GetSourceDocumentError::Storage(anyhow!("recipe store lock poisoned")))?;
 
-        Ok(store.recipes.get(&recipe_id).and_then(|record| {
-            record
-                .source_documents
+        Ok(store.source_documents.get(&recipe_id).and_then(|documents| {
+            documents
                 .iter()
-                .find(|image| image.id() == &image_id)
+                .find(|document| document.id() == &image_id)
                 .cloned()
         }))
     }
@@ -551,17 +540,73 @@ impl RecipeRepository for InMemoryRecipeRepository {
             DeleteSourceDocumentError::Storage(anyhow!("recipe store lock poisoned"))
         })?;
 
-        let recipe = store
-            .recipes
+        if !store.recipes.contains_key(&recipe_id) {
+            return Err(DeleteSourceDocumentError::NotFound);
+        }
+
+        let documents = store
+            .source_documents
             .get_mut(&recipe_id)
             .ok_or(DeleteSourceDocumentError::NotFound)?;
-        let index = recipe
-            .source_documents
+        let index = documents
             .iter()
-            .position(|image| image.id() == &image_id)
+            .position(|document| document.id() == &image_id)
             .ok_or(DeleteSourceDocumentError::NotFound)?;
 
-        recipe.source_documents.remove(index);
+        documents.remove(index);
+
+        Ok(())
+    }
+
+    async fn add_recipe_images(
+        &self,
+        images: Vec<RecipeImage>,
+    ) -> Result<(), AddRecipeImagesError> {
+        if images.is_empty() {
+            return Ok(());
+        }
+
+        let recipe_id = images[0].recipe_id().clone();
+
+        let mut store = self
+            .store
+            .write()
+            .map_err(|_| AddRecipeImagesError::Storage(anyhow!("recipe store lock poisoned")))?;
+
+        if !store.recipes.contains_key(&recipe_id) {
+            return Err(AddRecipeImagesError::RecipeNotFound);
+        }
+
+        if let Some(image) = images.iter().find(|image| image.recipe_id() != &recipe_id) {
+            return Err(AddRecipeImagesError::Storage(anyhow!(
+                "images belong to different recipes: `{}` and `{}`",
+                recipe_id.as_str(),
+                image.recipe_id().as_str()
+            )));
+        }
+
+        let mut ids = std::collections::HashSet::with_capacity(images.len());
+        for image in &images {
+            if !ids.insert(image.id()) {
+                return Err(AddRecipeImagesError::Storage(anyhow!(
+                    "duplicate image id `{}`",
+                    image.id().as_str()
+                )));
+            }
+        }
+
+        let stored = store.images.entry(recipe_id).or_default();
+        if images
+            .iter()
+            .any(|image| stored.iter().any(|existing| existing.id() == image.id()))
+        {
+            return Err(AddRecipeImagesError::Storage(anyhow!(
+                "a recipe image id already exists for recipe `{}`",
+                images[0].recipe_id().as_str()
+            )));
+        }
+
+        stored.extend(images);
 
         Ok(())
     }
@@ -576,11 +621,10 @@ impl RecipeRepository for InMemoryRecipeRepository {
             .map_err(|_| ListRecipeImagesError::Storage(anyhow!("recipe store lock poisoned")))?;
 
         Ok(store
-            .recipes
+            .images
             .get(&recipe_id)
-            .map(|record| {
-                record
-                    .images
+            .map(|images| {
+                images
                     .iter()
                     .map(|image| image.metadata().clone())
                     .collect()
@@ -598,9 +642,8 @@ impl RecipeRepository for InMemoryRecipeRepository {
             .read()
             .map_err(|_| GetRecipeImageError::Storage(anyhow!("recipe store lock poisoned")))?;
 
-        Ok(store.recipes.get(&recipe_id).and_then(|record| {
-            record
-                .images
+        Ok(store.images.get(&recipe_id).and_then(|images| {
+            images
                 .iter()
                 .find(|image| image.id() == &image_id)
                 .cloned()
@@ -1644,5 +1687,149 @@ mod tests {
 
         assert_eq!(images.len(), 2);
         assert_eq!(images[1].id().as_str(), "image-added");
+    }
+
+    #[tokio::test]
+    async fn adds_recipe_images_to_an_existing_recipe() {
+        let repository = InMemoryRecipeRepository::new();
+        let recipe = recipe("soup");
+        let revision = revision("revision-1", &recipe);
+        repository
+            .save_new_recipe(
+                recipe.clone(),
+                revision,
+                Vec::new(),
+                vec![recipe_image(&recipe, "image-existing", b"existing")],
+            )
+            .await
+            .unwrap();
+
+        repository
+            .add_recipe_images(vec![
+                recipe_image(&recipe, "image-1", b"front"),
+                recipe_image(&recipe, "image-2", b"back"),
+            ])
+            .await
+            .unwrap();
+
+        let images = repository
+            .get_recipe_images(RecipeId::new("soup".to_string()))
+            .await
+            .unwrap();
+
+        assert_eq!(images.len(), 3);
+        assert_eq!(images[0].id().as_str(), "image-existing");
+        assert_eq!(images[1].id().as_str(), "image-1");
+        assert_eq!(images[2].id().as_str(), "image-2");
+
+        let image = repository
+            .get_recipe_image(
+                RecipeId::new("soup".to_string()),
+                RecipeImageId::new("image-2".to_string()),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(image.bytes(), b"back");
+    }
+
+    #[tokio::test]
+    async fn adding_no_recipe_images_is_a_no_op() {
+        let repository = InMemoryRecipeRepository::new();
+
+        repository.add_recipe_images(Vec::new()).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn rejects_recipe_images_for_an_unknown_recipe() {
+        let repository = InMemoryRecipeRepository::new();
+        let recipe = recipe("soup");
+
+        let result = repository
+            .add_recipe_images(vec![recipe_image(&recipe, "image-1", b"front")])
+            .await;
+
+        assert!(matches!(
+            result,
+            Err(AddRecipeImagesError::RecipeNotFound)
+        ));
+    }
+
+    #[tokio::test]
+    async fn rejects_added_recipe_images_for_another_recipe() {
+        let repository = InMemoryRecipeRepository::new();
+        let soup = recipe("soup");
+        let revision = revision("revision-1", &soup);
+        repository
+            .save_new_recipe(soup.clone(), revision, Vec::new(), Vec::new())
+            .await
+            .unwrap();
+
+        let salad = recipe("salad");
+
+        let result = repository
+            .add_recipe_images(vec![
+                recipe_image(&soup, "image-1", b"front"),
+                recipe_image(&salad, "image-2", b"side"),
+            ])
+            .await;
+
+        assert!(matches!(result, Err(AddRecipeImagesError::Storage(_))));
+    }
+
+    #[tokio::test]
+    async fn rejects_duplicate_ids_in_added_recipe_images() {
+        let repository = InMemoryRecipeRepository::new();
+        let recipe = recipe("soup");
+        let revision = revision("revision-1", &recipe);
+        repository
+            .save_new_recipe(recipe.clone(), revision, Vec::new(), Vec::new())
+            .await
+            .unwrap();
+
+        let image = recipe_image(&recipe, "image-1", b"front");
+        let result = repository
+            .add_recipe_images(vec![image.clone(), image])
+            .await;
+
+        assert!(matches!(result, Err(AddRecipeImagesError::Storage(_))));
+
+        let images = repository
+            .get_recipe_images(RecipeId::new("soup".to_string()))
+            .await
+            .unwrap();
+
+        assert!(images.is_empty());
+    }
+
+    #[tokio::test]
+    async fn rejects_added_recipe_images_that_already_exist() {
+        let repository = InMemoryRecipeRepository::new();
+        let recipe = recipe("soup");
+        let revision = revision("revision-1", &recipe);
+        repository
+            .save_new_recipe(
+                recipe.clone(),
+                revision,
+                Vec::new(),
+                vec![recipe_image(&recipe, "image-1", b"front")],
+            )
+            .await
+            .unwrap();
+
+        let result = repository
+            .add_recipe_images(vec![recipe_image(&recipe, "image-1", b"back")])
+            .await;
+
+        assert!(matches!(result, Err(AddRecipeImagesError::Storage(_))));
+
+        let images = repository
+            .get_recipe_images(RecipeId::new("soup".to_string()))
+            .await
+            .unwrap();
+
+        assert_eq!(images.len(), 1);
+        assert_eq!(images[0].id().as_str(), "image-1");
     }
 }

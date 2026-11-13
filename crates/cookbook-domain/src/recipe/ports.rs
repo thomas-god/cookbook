@@ -261,10 +261,13 @@ pub trait RecipeRepository: Clone + Send + Sync + 'static {
         &self,
         id: RecipeId,
     ) -> impl Future<Output = Result<Vec<RecipeRevision>, ListRecipeRevisionsError>> + Send;
+}
 
+/// Outbound (driven) port for recipe documents (images, source) persistence.
+pub trait RecipeDocumentRepository: Clone + Send + Sync + 'static {
     fn add_source_documents(
         &self,
-        images: Vec<RecipeSourceDocument>,
+        documents: Vec<RecipeSourceDocument>,
     ) -> impl Future<Output = Result<(), AddSourceDocumentsError>> + Send;
 
     fn get_source_documents(
@@ -275,14 +278,19 @@ pub trait RecipeRepository: Clone + Send + Sync + 'static {
     fn get_source_document(
         &self,
         recipe_id: RecipeId,
-        image_id: RecipeSourceDocumentId,
+        document_id: RecipeSourceDocumentId,
     ) -> impl Future<Output = Result<Option<RecipeSourceDocument>, GetSourceDocumentError>> + Send;
 
     fn delete_source_document(
         &self,
         recipe_id: RecipeId,
-        image_id: RecipeSourceDocumentId,
+        document_id: RecipeSourceDocumentId,
     ) -> impl Future<Output = Result<(), DeleteSourceDocumentError>> + Send;
+
+    fn add_recipe_images(
+        &self,
+        images: Vec<RecipeImage>,
+    ) -> impl Future<Output = Result<(), AddRecipeImagesError>> + Send;
 
     fn get_recipe_images(
         &self,
@@ -639,6 +647,23 @@ impl fmt::Display for AddSourceDocumentsError {
 impl std::error::Error for AddSourceDocumentsError {}
 
 #[derive(Debug)]
+pub enum AddRecipeImagesError {
+    RecipeNotFound,
+    Storage(anyhow::Error),
+}
+
+impl fmt::Display for AddRecipeImagesError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::RecipeNotFound => f.write_str("recipe not found"),
+            Self::Storage(reason) => write!(f, "failed to store recipe images: {reason}"),
+        }
+    }
+}
+
+impl std::error::Error for AddRecipeImagesError {}
+
+#[derive(Debug)]
 pub enum ListSourceDocumentsError {
     Storage(anyhow::Error),
 }
@@ -830,37 +855,56 @@ mockall::mock! {
             id: RecipeId,
         ) -> Result<Vec<RecipeRevision>, ListRecipeRevisionsError>;
 
+
+    }
+}
+
+#[cfg(test)]
+mockall::mock! {
+
+    pub RecipeDocumentRepository {}
+
+    impl Clone for RecipeDocumentRepository {
+        fn clone(&self) -> Self;
+    }
+
+    impl RecipeDocumentRepository for RecipeDocumentRepository {
         async fn add_source_documents(
-            &self,
-            images: Vec<RecipeSourceDocument>,
-        ) -> Result<(), AddSourceDocumentsError>;
+                &self,
+                images: Vec<RecipeSourceDocument>,
+            ) -> Result<(), AddSourceDocumentsError>;
 
-        async fn get_source_documents(
-            &self,
-            recipe_id: RecipeId,
-        ) -> Result<Vec<RecipeSourceDocumentSummary>, ListSourceDocumentsError>;
+            async fn get_source_documents(
+                &self,
+                recipe_id: RecipeId,
+            ) -> Result<Vec<RecipeSourceDocumentSummary>, ListSourceDocumentsError>;
 
-        async fn get_source_document(
-            &self,
-            recipe_id: RecipeId,
-            image_id: RecipeSourceDocumentId,
-        ) -> Result<Option<RecipeSourceDocument>, GetSourceDocumentError>;
+            async fn get_source_document(
+                &self,
+                recipe_id: RecipeId,
+                image_id: RecipeSourceDocumentId,
+            ) -> Result<Option<RecipeSourceDocument>, GetSourceDocumentError>;
 
-        async fn delete_source_document(
-            &self,
-            recipe_id: RecipeId,
-            image_id: RecipeSourceDocumentId,
-        ) -> Result<(), DeleteSourceDocumentError>;
+            async fn delete_source_document(
+                &self,
+                recipe_id: RecipeId,
+                image_id: RecipeSourceDocumentId,
+            ) -> Result<(), DeleteSourceDocumentError>;
 
-        async fn get_recipe_images(
-            &self,
-            recipe_id: RecipeId,
-        ) -> Result<Vec<RecipeImageMetadata>, ListRecipeImagesError>;
+            async fn add_recipe_images(
+                &self,
+                images: Vec<RecipeImage>,
+            ) -> Result<(), AddRecipeImagesError>;
 
-        async fn get_recipe_image(
-            &self,
-            recipe_id: RecipeId,
-            image_id: RecipeImageId,
-        ) -> Result<Option<RecipeImage>, GetRecipeImageError>;
+            async fn get_recipe_images(
+                &self,
+                recipe_id: RecipeId,
+            ) -> Result<Vec<RecipeImageMetadata>, ListRecipeImagesError>;
+
+            async fn get_recipe_image(
+                &self,
+                recipe_id: RecipeId,
+                image_id: RecipeImageId,
+            ) -> Result<Option<RecipeImage>, GetRecipeImageError>;
     }
 }
