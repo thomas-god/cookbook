@@ -212,7 +212,7 @@ fn prune_old_backups(output_dir: &Path, keep: usize) -> usize {
         }
     };
 
-    let mut backups: Vec<(String, PathBuf)> = entries
+    let mut backups: Vec<(std::time::SystemTime, String, PathBuf)> = entries
         .filter_map(|entry| entry.ok())
         .filter_map(|entry| {
             let file_name = entry.file_name();
@@ -223,17 +223,27 @@ fn prune_old_backups(output_dir: &Path, keep: usize) -> usize {
             }
 
             let path = entry.path();
-            path.is_file().then(|| (file_name.to_string(), path))
+            if !path.is_file() {
+                return None;
+            }
+
+            // Modification time orders backups taken within the same second,
+            // where the collision suffix does not sort chronologically.
+            let modified = entry
+                .metadata()
+                .and_then(|metadata| metadata.modified())
+                .unwrap_or(std::time::UNIX_EPOCH);
+
+            Some((modified, file_name.to_string(), path))
         })
         .collect();
 
-    // Timestamped names sort chronologically, including collision suffixes.
-    backups.sort_by(|left, right| left.0.cmp(&right.0));
+    backups.sort_by(|left, right| left.0.cmp(&right.0).then_with(|| left.1.cmp(&right.1)));
 
     let excess = backups.len().saturating_sub(keep);
     let mut removed = 0;
 
-    for (file_name, path) in backups.into_iter().take(excess) {
+    for (_, file_name, path) in backups.into_iter().take(excess) {
         match fs::remove_file(&path) {
             Ok(()) => {
                 tracing::info!(backup = %file_name, "removed old backup");
