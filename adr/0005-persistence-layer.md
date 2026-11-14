@@ -101,6 +101,20 @@ volume.
 
 The in-memory adapters remain available for tests. Production startup never seeds sample data.
 
+### Online backups
+
+The server schedules an in-process backup using a five-field cron expression, evaluated in UTC
+(default daily at 03:00). `VACUUM INTO` writes a consistent, compacted snapshot to a temporary file,
+which is verified with `PRAGMA quick_check` and atomically renamed into place. Fourteen backups are
+retained by default. The application keeps running during the backup, and the snapshot contains only
+committed data.
+
+A separate `cookbook-backup` binary provides the same operation for manual backups or an external
+scheduler.
+
+Backups cover the database only. Asset bytes under `recipes/` must be backed up separately;
+restoring only the database restores metadata but not images or source documents.
+
 ### Development seeding
 
 A separate `seed_dev` binary inserts a dev user and the sample recipes. It is idempotent, skips
@@ -113,14 +127,15 @@ existing rows, and is never called by the server. The dev user is `dev@example.c
 
 - Revision history and asset bytes have clear, separate homes.
 - WAL allows concurrent reads and reads during writes.
+- Online `VACUUM INTO` backups are consistent without stopping the application.
 - The schema does not duplicate domain validation rules.
 - Content format changes are explicit and versioned.
-- Backups are a single directory copy when the app is stopped.
 
 ### Tradeoffs
 
 - SQLite has a single writer; write-heavy workloads will serialize.
 - The database and `recipes/` directory must be backed up together.
+- Automatic backups cover the database but not asset bytes.
 - JSON snapshots are coupled to the serde representation of `RecipeContent`.
 - Derived search columns must be rebuilt if search semantics change.
 - Orphan files are possible after a crash between file write and metadata insert.
@@ -129,5 +144,6 @@ existing rows, and is never called by the server. The dev user is `dev@example.c
 ### When to revisit
 
 - Add a cleanup command for orphan files.
+- Add asset bytes to the automatic backup if a single backup artifact is required.
 - Add FTS5 or another search index if substring search over `search_text` becomes too slow.
 - Add a content migration when the v1 JSON shape needs a breaking change.

@@ -16,9 +16,10 @@ RUN --mount=type=cache,target=/app/target \
     --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
     cargo build --release -p cookbook-app \
+    && cargo build --release -p cookbook-infra --bin cookbook-backup \
     && topcoat asset bundle --release \
     && mkdir -p /app/dist \
-    && cp target/release/cookbook-app /app/dist/ \
+    && cp target/release/cookbook-app target/release/cookbook-backup /app/dist/ \
     && cp -r target/release/assets /app/dist/assets
 
 FROM debian:bookworm-slim AS runtime
@@ -30,6 +31,7 @@ RUN apt-get update \
 WORKDIR /app
 
 COPY --from=builder /app/dist/cookbook-app /app/cookbook-app
+COPY --from=builder /app/dist/cookbook-backup /app/cookbook-backup
 COPY --from=builder /app/dist/assets /app/assets
 
 RUN mkdir -p /data && chown 10001:10001 /data

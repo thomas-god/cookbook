@@ -53,6 +53,51 @@ replacements:
 docker run -v cookbook-data:/data -p 3000:3000 ghcr.io/thomas-god/cookbook
 ```
 
+## Backups
+
+Automatic backups are enabled by default. The backup process creates a consistent, compacted SQLite
+snapshot in `$COOKBOOK_DATA_DIR/backups` using `VACUUM INTO`. The application does not need to be
+stopped: WAL mode lets the snapshot run while reads and writes continue, and only committed data is
+included. Backups are scheduled via an in-process cron-like scheduler.
+
+| Variable                   | Default              | Meaning                           |
+| -------------------------- | -------------------- | --------------------------------- |
+| `COOKBOOK_BACKUP_ENABLED`  | `true`               | Enable automatic backups          |
+| `COOKBOOK_BACKUP_SCHEDULE` | `0 3 * * *`          | Five-field cron expression in UTC |
+| `COOKBOOK_BACKUP_DIR`      | `<data_dir>/backups` | Backup output directory           |
+| `COOKBOOK_BACKUP_KEEP`     | `14`                 | Number of backups to retain       |
+
+Backup files are named `cookbook-YYYYMMDDTHHMMSSZ.sqlite3` and are verified with
+`PRAGMA quick_check`.
+
+The default location is inside the data volume. For protection against losing that volume, mount a
+separate volume and point `COOKBOOK_BACKUP_DIR` at it.
+
+You can create a manual backup at any time using the in-container CLI:
+
+```sh
+docker exec cookbook /app/cookbook-backup
+docker exec cookbook /app/cookbook-backup --output-dir /backups --keep 30
+
+# outside Docker
+cargo run -p cookbook-infra --bin cookbook-backup -- --data-dir ./data
+```
+
+Backups contain only the database. Image and source-document bytes under `recipes/` must be backed
+up separately, for example with a filesystem snapshot, `restic`, or `rsync`. Restoring the database
+alone restores metadata but not the asset files.
+
+To restore a backup, stop the app, remove the live database and its WAL companions, copy the backup
+into place, and start the app:
+
+```sh
+docker stop cookbook
+docker run --rm -v cookbook-data:/data -v cookbook-backups:/backups debian:bookworm-slim \
+  sh -c 'rm -f /data/cookbook.sqlite3 /data/cookbook.sqlite3-wal /data/cookbook.sqlite3-shm && \
+         cp /backups/cookbook-YYYYMMDDTHHMMSSZ.sqlite3 /data/cookbook.sqlite3'
+docker start cookbook
+```
+
 ## Vision recipe import
 
 Recipes can be imported from photos or a PDF of an existing recipe using a vision-language model
