@@ -187,6 +187,35 @@ unit_teaspoon = Cuillère à café
 unit_tablespoon = Cuillère à soupe
 unit_other = Autre
 
+quantity_unit_gram = { $count ->
+    [one] g
+   *[other] g
+}
+quantity_unit_kilogram = { $count ->
+    [one] kg
+   *[other] kg
+}
+quantity_unit_millilitre = { $count ->
+    [one] mL
+   *[other] mL
+}
+quantity_unit_centilitre = { $count ->
+    [one] cL
+   *[other] cL
+}
+quantity_unit_litre = { $count ->
+    [one] L
+   *[other] L
+}
+quantity_unit_teaspoon = { $count ->
+    [one] Cuillère à café
+   *[other] Cuillères à café
+}
+quantity_unit_tablespoon = { $count ->
+    [one] Cuillère à soupe
+   *[other] Cuillères à soupe
+}
+
 form_steps = Étapes
 form_add_step = Ajouter une étape
 form_insert_step_below = Ajouter une étape

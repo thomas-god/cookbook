@@ -21,40 +21,48 @@ struct StepImageView {
     alt: String,
 }
 
-/// A language-neutral optional plural marker. We do not guess actual plural
-/// forms, so any amount other than exactly one gets the same `(s)` suffix.
-const OPTIONAL_PLURAL_SUFFIX: &str = "(s)";
-
-fn unit_label(cx: &Cx, unit: &Unit) -> String {
+/// Localizes the unit label for a measured amount. Fluent selects the singular
+/// or plural form from the locale's own plural rules.
+fn unit_label(cx: &Cx, unit: &Unit, value: f32) -> String {
     match unit {
-        // Metric units are displayed with their symbol and never take a plural.
-        Unit::Gram => "g".to_string(),
-        Unit::Kilogram => "kg".to_string(),
-        Unit::MilliLitre => "mL".to_string(),
-        Unit::CentiLitre => "cL".to_string(),
-        Unit::Litre => "L".to_string(),
-        Unit::Piece => "".to_string(),
-        // Word-like units are localized and can carry the optional plural marker.
-        Unit::Teaspoon => t!(unit_teaspoon).resolve(cx).into_owned(),
-        Unit::Tablespoon => t!(unit_tablespoon).resolve(cx).into_owned(),
+        Unit::Gram => t!(quantity_unit_gram, count = value)
+            .resolve(cx)
+            .into_owned(),
+        Unit::Kilogram => t!(quantity_unit_kilogram, count = value)
+            .resolve(cx)
+            .into_owned(),
+        Unit::MilliLitre => t!(quantity_unit_millilitre, count = value)
+            .resolve(cx)
+            .into_owned(),
+        Unit::CentiLitre => t!(quantity_unit_centilitre, count = value)
+            .resolve(cx)
+            .into_owned(),
+        Unit::Litre => t!(quantity_unit_litre, count = value)
+            .resolve(cx)
+            .into_owned(),
+        // Pieces have no unit label; the ingredient name carries the noun.
+        Unit::Piece => String::new(),
+        Unit::Teaspoon => t!(quantity_unit_teaspoon, count = value)
+            .resolve(cx)
+            .into_owned(),
+        Unit::Tablespoon => t!(quantity_unit_tablespoon, count = value)
+            .resolve(cx)
+            .into_owned(),
+        // Free-text custom units are shown exactly as entered.
         Unit::Other(label) => label.clone(),
     }
-}
-
-fn unit_takes_optional_plural(unit: &Unit) -> bool {
-    matches!(unit, Unit::Teaspoon | Unit::Tablespoon | Unit::Other(_))
 }
 
 pub(crate) fn quantity_label(cx: &Cx, quantity: &Quantity) -> String {
     match quantity {
         Quantity::Measured { value, unit } => {
-            let suffix = if *value != 1.0 && unit_takes_optional_plural(unit) {
-                OPTIONAL_PLURAL_SUFFIX
-            } else {
-                ""
-            };
+            let label = unit_label(cx, unit, *value);
 
-            format!("{value} {}{suffix}", unit_label(cx, unit))
+            if label.is_empty() {
+                format!("{value}")
+            } else {
+                format!("{value} {label}")
+            }
         }
         Quantity::Text(text) => text.clone(),
     }
@@ -218,7 +226,35 @@ mod tests {
     use super::*;
 
     #[test]
-    fn adds_the_optional_plural_suffix_to_word_like_units() {
+    fn localizes_word_like_units_with_singular_and_plural_forms() {
+        let en = Cx::default().with(topcoat::l10n::locale!("en"));
+        let fr = Cx::default().with(topcoat::l10n::locale!("fr"));
+
+        assert_eq!(
+            quantity_label(&en, &Quantity::from_measure(1.0, Unit::Teaspoon)),
+            "1 Teaspoon"
+        );
+        assert_eq!(
+            quantity_label(&en, &Quantity::from_measure(2.0, Unit::Teaspoon)),
+            "2 Teaspoons"
+        );
+        assert_eq!(
+            quantity_label(&fr, &Quantity::from_measure(1.0, Unit::Teaspoon)),
+            "1 Cuillère à café"
+        );
+        assert_eq!(
+            quantity_label(&fr, &Quantity::from_measure(2.0, Unit::Teaspoon)),
+            "2 Cuillères à café"
+        );
+        // French plural rules treat zero as singular.
+        assert_eq!(
+            quantity_label(&fr, &Quantity::from_measure(0.0, Unit::Tablespoon)),
+            "0 Cuillère à soupe"
+        );
+    }
+
+    #[test]
+    fn leaves_custom_units_exactly_as_entered() {
         let cx = Cx::default();
         let unit = Unit::Other("botte".to_string());
 
@@ -228,13 +264,23 @@ mod tests {
         );
         assert_eq!(
             quantity_label(&cx, &Quantity::from_measure(23.0, unit)),
-            "23 botte(s)"
+            "23 botte"
+        );
+    }
+
+    #[test]
+    fn displays_pieces_without_a_unit_label() {
+        let cx = Cx::default();
+
+        assert_eq!(
+            quantity_label(&cx, &Quantity::from_measure(3.0, Unit::Piece)),
+            "3"
         );
     }
 
     #[test]
     fn displays_metric_units_as_abbreviations_without_a_plural_suffix() {
-        let cx = Cx::default();
+        let cx = Cx::default().with(topcoat::l10n::locale!("en"));
 
         assert_eq!(
             quantity_label(&cx, &Quantity::from_measure(1.0, Unit::Gram)),

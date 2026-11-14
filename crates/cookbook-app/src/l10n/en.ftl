@@ -187,6 +187,35 @@ unit_teaspoon = Teaspoon
 unit_tablespoon = Tablespoon
 unit_other = Other
 
+quantity_unit_gram = { $count ->
+    [one] g
+   *[other] g
+}
+quantity_unit_kilogram = { $count ->
+    [one] kg
+   *[other] kg
+}
+quantity_unit_millilitre = { $count ->
+    [one] mL
+   *[other] mL
+}
+quantity_unit_centilitre = { $count ->
+    [one] cL
+   *[other] cL
+}
+quantity_unit_litre = { $count ->
+    [one] L
+   *[other] L
+}
+quantity_unit_teaspoon = { $count ->
+    [one] Teaspoon
+   *[other] Teaspoons
+}
+quantity_unit_tablespoon = { $count ->
+    [one] Tablespoon
+   *[other] Tablespoons
+}
+
 form_steps = Steps
 form_add_step = Add step
 form_insert_step_below = Add step below
