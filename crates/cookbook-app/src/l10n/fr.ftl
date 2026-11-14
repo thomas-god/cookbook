@@ -144,6 +144,14 @@ form_edit_message = Note de modification (facultatif)
 form_verification_message = Note de vérification (facultative)
     .placeholder = Quantités verifiées, température du four corrigée, ...
 form_cancel = Annuler
+form_details = Détails
+form_timing = Durées (minutes)
+form_revision_note = Note de révision
+form_edit_field = Modifier { $field }
+form_done_editing = Terminer la modification de { $field }
+form_remove_field = Supprimer { $field }
+form_remove_part = Supprimer la partie
+form_not_set = Non précisé
 
 form_title = Titre
     .placeholder = Tarte aux pommes de grand-mère
@@ -157,9 +165,9 @@ form_servings_portions = Portions
 form_servings_count = Nombre
 form_servings_label = Libellé (facultatif)
     .placeholder = biscuits, tranches, ...
-form_preparation = Préparation (minutes)
-form_rest = Repos (minutes)
-form_cooking = Cuisson (minutes)
+form_preparation = Préparation
+form_rest = Repos
+form_cooking = Cuisson
 
 form_ingredients = Ingrédients
 form_add_ingredient = Ajouter un ingrédient
@@ -175,7 +183,6 @@ form_quantity = Quantité
 form_unit = Unité
 form_unit_other = Unité personnalisée
     .placeholder = sachet, botte, pincée
-form_remove = Supprimer
 
 unit_gram = Gramme
 unit_kilogram = Kilogramme

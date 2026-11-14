@@ -144,6 +144,14 @@ form_edit_message = Edit note (optional)
 form_verification_message = Verification note (optional)
     .placeholder = Checked the quantities, corrected the oven temperature, ...
 form_cancel = Cancel
+form_details = Details
+form_timing = Timing (minutes)
+form_revision_note = Revision note
+form_edit_field = Edit { $field }
+form_done_editing = Done editing { $field }
+form_remove_field = Remove { $field }
+form_remove_part = Remove part
+form_not_set = Not set
 
 form_title = Title
     .placeholder = Grandma's apple pie
@@ -157,9 +165,9 @@ form_servings_portions = Portions
 form_servings_count = Count
 form_servings_label = Label (optional)
     .placeholder = cookies, slices, ...
-form_preparation = Preparation (minutes)
-form_rest = Rest (minutes)
-form_cooking = Cooking (minutes)
+form_preparation = Preparation
+form_rest = Rest
+form_cooking = Cooking
 
 form_ingredients = Ingredients
 form_add_ingredient = Add ingredient
@@ -175,7 +183,6 @@ form_quantity = Quantity
 form_unit = Unit
 form_unit_other = Custom unit
     .placeholder = sachet, bunch, pinch
-form_remove = Remove
 
 unit_gram = Gram
 unit_kilogram = Kilogram

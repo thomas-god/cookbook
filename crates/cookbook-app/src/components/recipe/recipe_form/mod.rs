@@ -1,3 +1,4 @@
+mod editable;
 mod fields;
 mod initial;
 mod parse;
@@ -195,10 +196,15 @@ async fn recipe_form_fields(
                 body_fields(
                     prefix: String::new(),
                     initial: body_initial,
-                    image_lookup: image_lookup.clone()
+                    image_lookup: image_lookup.clone(),
+                    start_editing: !is_edit
                 )
             } else {
-                parts_editor(initial: part_initials, image_lookup: image_lookup.clone())
+                parts_editor(
+                    initial: part_initials,
+                    image_lookup: image_lookup.clone(),
+                    start_editing: !is_edit
+                )
             }
 
             if is_edit {

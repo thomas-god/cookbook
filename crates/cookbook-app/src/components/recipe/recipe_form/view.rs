@@ -14,7 +14,7 @@ use crate::{
     components::{
         base::{
             button::{ButtonSize, ButtonVariant, button},
-            field::{field, field_description, field_label, field_legend, field_set},
+            field::{field, field_description, field_label},
             image_upload::image_upload,
             input::input,
         },
@@ -27,6 +27,9 @@ use crate::{
 };
 
 use super::{
+    editable::{
+        delete_button, edit_toggle_button, edit_toggle_guarded_button, form_field, form_section,
+    },
     fields::*,
     initial::{BodyInitial, FormImageInitial, IngredientInitial, PartInitial, StepInitial},
 };
@@ -142,6 +145,7 @@ struct PartListState {
 }
 
 #[component]
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn metadata_fields(
     cx: &Cx,
     title: String,
@@ -151,70 +155,68 @@ pub(super) async fn metadata_fields(
     servings_count: String,
     servings_label: String,
 ) -> Result<impl View> {
-    let title = signal(cx, move || title.clone());
-    let description = signal(cx, move || description.clone());
-    let category = signal(cx, move || category.clone());
-
-    let title_id = element_id(cx);
-    let description_id = element_id(cx);
-    let category_id = element_id(cx);
+    let heading = t!(form_details).resolve(cx).into_owned();
+    let title_label = t!(form_title).resolve(cx).into_owned();
+    let title_placeholder = t!(form_title.placeholder).resolve(cx).into_owned();
+    let description_label = t!(form_description).resolve(cx).into_owned();
+    let description_placeholder = t!(form_description.placeholder).resolve(cx).into_owned();
 
     Ok(view! {
-        field_set(
-            field(
-                input(
-                    attrs: attributes! {
-                        id=(&title_id)
-                        name=(TITLE_FIELD)
-                        type="text"
-                        placeholder=(t!(form_title.placeholder))
-                        required=""
-                        :value=$(title.get())
-                        @input=$(|e: Event| title.set(e.target.value))
-                    }
-                )
+        form_section(
+            heading: heading,
+            form_field(
+                name: TITLE_FIELD,
+                label: title_label,
+                initial: title,
+                placeholder: title_placeholder,
+                required: true,
             )
-            field(
-                field_label(
-                    attrs: attributes! { for=(&description_id) },
-                    (t!(form_description))
-                )
-                <textarea
-                    id=(&description_id)
-                    name=(DESCRIPTION_FIELD)
-                    rows="2"
-                    class=(TEXTAREA_CLASS)
-                    placeholder=(t!(form_description.placeholder))
-                    :value=$(description.get())
-                    @input=$(|e: Event| description.set(e.target.value))
-                ></textarea>
+            form_field(
+                name: DESCRIPTION_FIELD,
+                label: description_label,
+                initial: description,
+                placeholder: description_placeholder,
+                multiline: true,
             )
-            field(
-                field_label(
-                    attrs: attributes! { for=(&category_id) },
-                    (t!(category_label))
-                )
-                <select
-                    id=(&category_id)
-                    name=(CATEGORY_FIELD)
-                    class=(SELECT_CLASS)
-                    :value=$(category.get())
-                    @change=$(|e: Event| category.set(e.target.value))
-                >
-                    <option value="">(t!(category_none))</option>
-                    for option_category in RecipeCategory::ALL {
-                        <option value=(option_category.as_str())>
-                            (category_label(cx, option_category))
-                        </option>
-                    }
-                </select>
-            )
+            category_field(category: category)
             servings_fields(
                 servings_type: servings_type,
                 servings_count: servings_count,
-                servings_label: servings_label
+                servings_label: servings_label,
             )
         )
+    })
+}
+
+#[component]
+async fn category_field(cx: &Cx, category: String) -> Result<impl View> {
+    let category = signal(cx, move || category.clone());
+    let category_id = element_id(cx);
+    let category_label_text = t!(category_label).resolve(cx).into_owned();
+
+    Ok(view! {
+        <div class="flex flex-col gap-2">
+            <label
+                for=(&category_id)
+                class="text-sm font-medium text-muted-foreground"
+            >
+                (category_label_text)
+            </label>
+            <select
+                id=(&category_id)
+                name=(CATEGORY_FIELD)
+                class=(SELECT_CLASS)
+                :value=$(category.get())
+                @change=$(|e: Event| category.set(e.target.value))
+            >
+                <option value="">(t!(category_none))</option>
+                for option_category in RecipeCategory::ALL {
+                    <option value=(option_category.as_str())>
+                        (category_label(cx, option_category))
+                    </option>
+                }
+            </select>
+        </div>
     })
 }
 
@@ -236,14 +238,17 @@ async fn servings_fields(
 
     let none = ServingsType::None.wire_name();
     let portions = ServingsType::Portions.wire_name();
+    let servings_label_text = t!(form_servings).resolve(cx).into_owned();
 
     let servings_type_id = element_id(cx);
     let servings_count_id = element_id(cx);
     let servings_label_id = element_id(cx);
 
     Ok(view! {
-        field_set(
-            field_legend((t!(form_servings)))
+        <div class="flex flex-col gap-4">
+            <p class="text-sm font-medium text-muted-foreground">
+                (servings_label_text)
+            </p>
             <div class="grid gap-4 sm:grid-cols-3">
                 field(
                     field_label(
@@ -303,7 +308,7 @@ async fn servings_fields(
                     )
                 )
             </div>
-        )
+        </div>
     })
 }
 
@@ -323,19 +328,26 @@ pub(super) async fn revision_message_field(cx: &Cx, needs_review: bool) -> Resul
     } else {
         t!(form_edit_message.placeholder).resolve(cx).into_owned()
     };
+    let heading = t!(form_revision_note).resolve(cx).into_owned();
 
     Ok(view! {
-        field(
-            field_label(attrs: attributes! { for=(&message_id) }, (message_label))
-            <textarea
-                id=(&message_id)
-                name=(MESSAGE_FIELD)
-                rows="2"
-                class=(TEXTAREA_CLASS)
-                placeholder=(message_placeholder)
-                :value=$(message.get())
-                @input=$(|e: Event| message.set(e.target.value))
-            ></textarea>
+        form_section(
+            heading: heading,
+            field(
+                field_label(
+                    attrs: attributes! { for=(&message_id) },
+                    (message_label)
+                )
+                <textarea
+                    id=(&message_id)
+                    name=(MESSAGE_FIELD)
+                    rows="2"
+                    class=(TEXTAREA_CLASS)
+                    placeholder=(message_placeholder)
+                    :value=$(message.get())
+                    @input=$(|e: Event| message.set(e.target.value))
+                ></textarea>
+            )
         )
     })
 }
@@ -372,6 +384,7 @@ pub(super) async fn body_fields(
     prefix: String,
     initial: BodyInitial,
     image_lookup: HashMap<String, FormImageInitial>,
+    start_editing: bool,
 ) -> Result<impl View> {
     let BodyInitial {
         preparation,
@@ -387,19 +400,21 @@ pub(super) async fn body_fields(
             prefix: prefix.clone(),
             preparation: preparation,
             rest: rest,
-            cooking: cooking
+            cooking: cooking,
         )
         body_images(prefix: prefix.clone(), initials: images)
         body_ingredients(
             list_id: "ingredients".to_string(),
             prefix: prefix.clone(),
-            initials: ingredients
+            initials: ingredients,
+            start_editing: start_editing,
         )
         body_steps(
             list_id: "steps".to_string(),
             prefix: prefix,
             initials: steps,
-            image_lookup: image_lookup
+            image_lookup: image_lookup,
+            start_editing: start_editing,
         )
     })
 }
@@ -415,69 +430,44 @@ async fn body_durations(
     let preparation_field = body_field(&prefix, PREPARATION_FIELD);
     let rest_field = body_field(&prefix, REST_FIELD);
     let cooking_field = body_field(&prefix, COOKING_FIELD);
-
-    let preparation = signal(cx, move || preparation.clone());
-    let rest = signal(cx, move || rest.clone());
-    let cooking = signal(cx, move || cooking.clone());
-
-    let preparation_id = element_id(cx);
-    let rest_id = element_id(cx);
-    let cooking_id = element_id(cx);
+    let heading = t!(form_timing).resolve(cx).into_owned();
+    let preparation_label = t!(form_preparation).resolve(cx).into_owned();
+    let rest_label = t!(form_rest).resolve(cx).into_owned();
+    let cooking_label = t!(form_cooking).resolve(cx).into_owned();
 
     Ok(view! {
-        <div class="grid gap-4 sm:grid-cols-3">
-            field(
-                field_label(
-                    attrs: attributes! { for=(&preparation_id) },
-                    (t!(form_preparation))
+        form_section(
+            heading: heading,
+            <div class="grid gap-4 sm:grid-cols-3">
+                form_field(
+                    name: preparation_field,
+                    label: preparation_label,
+                    initial: preparation,
+                    placeholder: "15",
+                    input_type: "number",
+                    min: "0",
+                    step: "1",
                 )
-                input(
-                    attrs: attributes! {
-                        id=(&preparation_id)
-                        name=(preparation_field)
-                        type="number"
-                        min="0"
-                        step="1"
-                        placeholder="15"
-                        :value=$(preparation.get())
-                        @input=$(|e: Event| preparation.set(e.target.value))
-                    }
+                form_field(
+                    name: rest_field,
+                    label: rest_label,
+                    initial: rest,
+                    placeholder: "30",
+                    input_type: "number",
+                    min: "0",
+                    step: "1",
                 )
-            )
-            field(
-                field_label(attrs: attributes! { for=(&rest_id) }, (t!(form_rest)))
-                input(
-                    attrs: attributes! {
-                        id=(&rest_id)
-                        name=(rest_field)
-                        type="number"
-                        min="0"
-                        step="1"
-                        placeholder="30"
-                        :value=$(rest.get())
-                        @input=$(|e: Event| rest.set(e.target.value))
-                    }
+                form_field(
+                    name: cooking_field,
+                    label: cooking_label,
+                    initial: cooking,
+                    placeholder: "45",
+                    input_type: "number",
+                    min: "0",
+                    step: "1",
                 )
-            )
-            field(
-                field_label(
-                    attrs: attributes! { for=(&cooking_id) },
-                    (t!(form_cooking))
-                )
-                input(
-                    attrs: attributes! {
-                        id=(&cooking_id)
-                        name=(cooking_field)
-                        type="number"
-                        min="0"
-                        step="1"
-                        placeholder="45"
-                        :value=$(cooking.get())
-                        @input=$(|e: Event| cooking.set(e.target.value))
-                    }
-                )
-            )
-        </div>
+            </div>
+        )
     })
 }
 
@@ -490,10 +480,11 @@ async fn body_images(
     let image_ids_field = body_field(&prefix, IMAGE_IDS_FIELD);
     let images_field = body_field(&prefix, IMAGES_FIELD);
     let recipe_images_id = element_id(cx);
+    let heading = t!(form_recipe_images).resolve(cx).into_owned();
 
     Ok(view! {
-        field_set(
-            field_legend((t!(form_recipe_images)))
+        form_section(
+            heading: heading,
             if initials.is_empty() {
                 <p class="text-sm text-muted-foreground">
                     (t!(form_recipe_images_empty))
@@ -503,7 +494,7 @@ async fn body_images(
                     for image in &initials {
                         form_image_row(
                             image: image.clone(),
-                            image_ids_field: image_ids_field.clone()
+                            image_ids_field: image_ids_field.clone(),
                         )
                     }
                 </ul>
@@ -529,20 +520,23 @@ async fn body_ingredients(
     list_id: String,
     prefix: String,
     initials: Vec<IngredientInitial>,
+    start_editing: bool,
 ) -> Result<impl View> {
     let initial_count = initials.len().max(1);
     let count = signal(cx, move || initial_count);
+    let heading = t!(form_ingredients).resolve(cx).into_owned();
 
     Ok(view! {
-        field_set(
-            field_legend((t!(form_ingredients)))
+        form_section(
+            heading: heading,
             <div id=(list_id) class="flex flex-col gap-3">
                 #[key(index)]
                 for index in 0..count.get() {
                     ingredient_row(
                         row: index,
                         prefix: prefix.clone(),
-                        initial: initials.get(index).cloned()
+                        initial: initials.get(index).cloned(),
+                        start_editing: start_editing,
                     )
                 }
             </div>
@@ -565,6 +559,7 @@ async fn body_steps(
     prefix: String,
     initials: Vec<StepInitial>,
     image_lookup: HashMap<String, FormImageInitial>,
+    start_editing: bool,
 ) -> Result<impl View> {
     let initial_step_count = initials.len().max(1);
     let initial_step_order: Vec<usize> = (0..initial_step_count).collect();
@@ -582,10 +577,11 @@ async fn body_steps(
         insert_instruction: insert_instruction.clone(),
         insert_images: insert_images.clone(),
     };
+    let heading = t!(form_steps).resolve(cx).into_owned();
 
     Ok(view! {
-        field_set(
-            field_legend((t!(form_steps)))
+        form_section(
+            heading: heading,
             <div id=(list_id) class="flex flex-col gap-4">
                 #[key(step_key)]
                 for (position, step_key) in step_order.get().into_iter().enumerate() {
@@ -606,7 +602,9 @@ async fn body_steps(
                             initials.get(step_key).cloned()
                         },
                         list: list.clone(),
-                        image_lookup: image_lookup.clone()
+                        image_lookup: image_lookup.clone(),
+                        start_editing: start_editing,
+                        new_row: inserted_slot.get() == Some(step_key),
                     )
                 }
             </div>
@@ -638,6 +636,7 @@ pub(super) async fn parts_editor(
     cx: &Cx,
     initial: Vec<PartInitial>,
     image_lookup: HashMap<String, FormImageInitial>,
+    start_editing: bool,
 ) -> Result<impl View> {
     let initial_part_count = initial.len().max(1);
     let initial_order: Vec<usize> = (0..initial_part_count).collect();
@@ -647,10 +646,11 @@ pub(super) async fn parts_editor(
         order: order.clone(),
         next_key: next_key.clone(),
     };
+    let heading = t!(form_parts).resolve(cx).into_owned();
 
     Ok(view! {
-        field_set(
-            field_legend((t!(form_parts)))
+        form_section(
+            heading: heading,
             <div id="parts" class="flex flex-col gap-4">
                 #[key(format!("part-{key}"))]
                 for (position, key) in order.get().into_iter().enumerate() {
@@ -659,7 +659,8 @@ pub(super) async fn parts_editor(
                         key: key,
                         initial: initial.get(key).cloned(),
                         list: list.clone(),
-                        image_lookup: image_lookup.clone()
+                        image_lookup: image_lookup.clone(),
+                        start_editing: start_editing,
                     )
                 }
             </div>
@@ -693,8 +694,11 @@ async fn part_row(
     initial: Option<PartInitial>,
     list: PartListState,
     image_lookup: HashMap<String, FormImageInitial>,
+    start_editing: bool,
 ) -> Result<impl View> {
     let PartListState { order, next_key } = list;
+    let is_new = initial.is_none();
+    let start_editing = start_editing || is_new;
     let initial = initial.unwrap_or_default();
     let id_value = initial.id;
     let title_value = initial.title;
@@ -707,69 +711,52 @@ async fn part_row(
         images,
         steps,
     } = initial.body;
-    let title = signal(cx, move || title_value.clone());
-    let description = signal(cx, move || description_value.clone());
     let prefix = format!("parts[{row}]");
 
-    let title_id = element_id(cx);
-    let description_id = element_id(cx);
     let id_field = PartField::Id.key(row);
     let title_field = PartField::Title.key(row);
     let description_field = PartField::Description.key(row);
+    let title_label = t!(form_part_title).resolve(cx).into_owned();
+    let description_label = t!(form_part_description).resolve(cx).into_owned();
+    let part_remove_label = format!("{} {}", t!(form_remove_part).resolve(cx), row + 1);
 
     Ok(view! {
         <fieldset
-            class="m-0 flex min-w-0 flex-col gap-4 rounded-lg border border-border p-4"
+            class="m-0 flex min-w-0 flex-col gap-4 rounded-lg border border-border bg-background/60 p-4"
         >
             <input type="hidden" name=(id_field) value=(id_value)>
-            field(
-                field_label(
-                    attrs: attributes! { for=(&title_id) },
-                    (t!(form_part_title))
-                )
-                input(
-                    attrs: attributes! {
-                        id=(&title_id)
-                        name=(title_field)
-                        type="text"
-                        required=""
-                        :value=$(title.get())
-                        @input=$(|e: Event| title.set(e.target.value))
-                    }
-                )
+            form_field(
+                name: title_field,
+                label: title_label,
+                initial: title_value,
+                required: true,
             )
-            field(
-                field_label(
-                    attrs: attributes! { for=(&description_id) },
-                    (t!(form_part_description))
-                )
-                <textarea
-                    id=(&description_id)
-                    name=(description_field)
-                    rows="2"
-                    class=(TEXTAREA_CLASS)
-                    :value=$(description.get())
-                    @input=$(|e: Event| description.set(e.target.value))
-                ></textarea>
+            form_field(
+                name: description_field,
+                label: description_label,
+                initial: description_value,
+                multiline: true,
             )
 
             body_durations(
                 prefix: prefix.clone(),
                 preparation: preparation,
                 rest: rest,
-                cooking: cooking
+                cooking: cooking,
             )
             body_images(prefix: prefix.clone(), initials: images)
             body_ingredients(
                 list_id: format!("part-{key}-ingredients"),
                 prefix: prefix.clone(),
-                initials: ingredients
+                initials: ingredients,
+                start_editing: start_editing,
             )
             body_steps(
                 list_id: format!("part-{key}-steps"),
                 prefix: prefix,
                 initials: steps,
-                image_lookup: image_lookup
+                image_lookup: image_lookup,
+                start_editing: start_editing,
             )
 
             <div class="flex flex-wrap items-center justify-end gap-2">
@@ -819,17 +806,14 @@ async fn part_row(
                     },
                     ("↓")
                 )
-                button(
-                    variant: ButtonVariant::Ghost,
-                    size: ButtonSize::Sm,
+                delete_button(
+                    label: part_remove_label,
                     attrs: attributes! {
-                        type="button"
                         @click=$(async |_e: Event| {
                             let next = form_remove_item(order.get(), key).await;
                             order.set(next);
                         })
-                    },
-                    (t!(form_remove))
+                    }
                 )
             </div>
         </fieldset>
@@ -842,7 +826,9 @@ async fn ingredient_row(
     row: usize,
     prefix: String,
     initial: Option<IngredientInitial>,
+    start_editing: bool,
 ) -> Result<impl View> {
+    let is_new = initial.is_none();
     let IngredientInitial {
         name,
         amount_type,
@@ -859,7 +845,20 @@ async fn ingredient_row(
         amount_type
     };
     let amount_type = signal(cx, move || amount_type_value.clone());
+    let quantity = signal(cx, move || quantity.clone());
+    let quantity_text = signal(cx, move || quantity_text.clone());
+    let unit_value = if unit.is_empty() {
+        DEFAULT_UNIT.to_string()
+    } else {
+        unit
+    };
+    let unit = signal(cx, move || unit_value.clone());
+    let unit_other = signal(cx, move || unit_other.clone());
     let removed = signal(cx, || false);
+    let editing = signal(cx, || is_new || start_editing);
+
+    let measured = AmountType::Measured.wire_name();
+    let text = AmountType::Text.wire_name();
 
     let name_id = element_id(cx);
     let amount_type_id = element_id(cx);
@@ -867,69 +866,157 @@ async fn ingredient_row(
     let name_field = IngredientField::Name.key(row, &prefix);
     let amount_type_field = IngredientField::AmountType.key(row, &prefix);
 
+    let ingredient_label = t!(form_ingredient).resolve(cx).into_owned();
+    let amount_type_label_text = t!(form_amount_type).resolve(cx).into_owned();
+    let not_set = t!(form_not_set).resolve(cx).into_owned();
+    let edit_field = format!("{ingredient_label} {}", row + 1);
+    let remove_label = t!(form_remove_field, field = edit_field.clone())
+        .resolve(cx)
+        .into_owned();
+
+    let gram = unit_label(cx, "gram");
+    let kilogram = unit_label(cx, "kilogram");
+    let millilitre = unit_label(cx, "millilitre");
+    let centilitre = unit_label(cx, "centilitre");
+    let litre = unit_label(cx, "litre");
+    let teaspoon = unit_label(cx, "teaspoon");
+    let tablespoon = unit_label(cx, "tablespoon");
+    let empty_unit = String::new();
+
     Ok(view! {
         <fieldset
             :hidden=$(removed.get())
             :disabled=$(removed.get())
-            class="m-0 flex min-w-0 flex-col gap-3 rounded-lg border border-border p-4"
+            class="m-0 flex min-w-0 flex-col gap-3 rounded-lg border border-border bg-background/60 p-4"
         >
-            <div
-                class="grid gap-3 sm:grid-cols-[minmax(0,1fr)_10rem_auto] sm:items-end"
-            >
-                field(
-                    field_label(
-                        attrs: attributes! { for=(&name_id) },
-                        (t!(form_ingredient))
+            <div class="flex items-start justify-between gap-3">
+                <div class="min-w-0 flex-1">
+                    <div :hidden=$(editing.get()) class="flex flex-col gap-1">
+                        <p class="font-medium">
+                            <span :hidden=$(name.get().trim().is_empty())>
+                                $(name.get())
+                            </span>
+                            <span
+                                :hidden=$(!name.get().trim().is_empty())
+                                class="italic text-muted-foreground"
+                            >
+                                (not_set.clone())
+                            </span>
+                        </p>
+                        <p class="text-sm text-muted-foreground">
+                            <span :hidden=$(amount_type.get() != measured)>
+                                <span :hidden=$(quantity.get().is_empty())>
+                                    $(quantity.get())
+                                </span>
+                                <span :hidden=$(quantity.get().is_empty())>
+                                    <span :hidden=$(unit.get() == "piece")>
+                                        <span :hidden=$(unit.get() != "other")>
+                                            <span :hidden=$(unit_other.get().is_empty())>
+                                                " "
+                                                $(unit_other.get())
+                                            </span>
+                                        </span>
+                                        <span :hidden=$(unit.get() == "other")>
+                                            " "
+                                            $(if unit.get() == "gram" {
+                                                gram
+                                            } else if unit.get() == "kilogram" {
+                                                kilogram
+                                            } else if unit.get() == "millilitre" {
+                                                millilitre
+                                            } else if unit.get() == "centilitre" {
+                                                centilitre
+                                            } else if unit.get() == "litre" {
+                                                litre
+                                            } else if unit.get() == "teaspoon" {
+                                                teaspoon
+                                            } else if unit.get() == "tablespoon" {
+                                                tablespoon
+                                            } else {
+                                                empty_unit
+                                            })
+                                        </span>
+                                    </span>
+                                </span>
+                            </span>
+                            <span :hidden=$(amount_type.get() != text)>
+                                <span :hidden=$(quantity_text.get().trim().is_empty())>
+                                    $(quantity_text.get())
+                                </span>
+                                <span
+                                    :hidden=$(!quantity_text.get().trim().is_empty())
+                                    class="italic text-muted-foreground"
+                                >
+                                    (not_set)
+                                </span>
+                            </span>
+                        </p>
+                    </div>
+
+                    <div :hidden=$(!editing.get()) class="flex flex-col gap-3">
+                        <div class="grid gap-3 sm:grid-cols-[minmax(0,1fr)_10rem] sm:items-end">
+                            field(
+                                field_label(
+                                    attrs: attributes! { for=(&name_id) },
+                                    (ingredient_label)
+                                )
+                                input(
+                                    attrs: attributes! {
+                                        id=(&name_id)
+                                        name=(name_field)
+                                        type="text"
+                                        placeholder=(t!(form_ingredient.placeholder))
+                                        :value=$(name.get())
+                                        @input=$(|e: Event| name.set(e.target.value))
+                                    }
+                                )
+                            )
+                            field(
+                                field_label(
+                                    attrs: attributes! { for=(&amount_type_id) },
+                                    (amount_type_label_text)
+                                )
+                                <select
+                                    id=(&amount_type_id)
+                                    name=(amount_type_field)
+                                    class=(SELECT_CLASS)
+                                    :value=$(amount_type.get())
+                                    @change=$(|e: Event| amount_type.set(e.target.value))
+                                >
+                                    for option_type in AmountType::ALL {
+                                        <option value=(option_type.wire_name())>
+                                            (amount_type_label(cx, option_type))
+                                        </option>
+                                    }
+                                </select>
+                            )
+                        </div>
+
+                        ingredient_amount_fields(
+                            row: row,
+                            prefix: prefix,
+                            amount_type: amount_type.clone(),
+                            quantity: quantity.clone(),
+                            quantity_text: quantity_text.clone(),
+                            unit: unit.clone(),
+                            unit_other: unit_other.clone()
+                        )
+                    </div>
+                </div>
+
+                <div class="flex shrink-0 items-center gap-1">
+                    edit_toggle_button(
+                        editing: editing.clone(),
+                        field: edit_field,
                     )
-                    input(
+                    delete_button(
+                        label: remove_label,
                         attrs: attributes! {
-                            id=(&name_id)
-                            name=(name_field)
-                            type="text"
-                            placeholder=(t!(form_ingredient.placeholder))
-                            :value=$(name.get())
-                            @input=$(|e: Event| name.set(e.target.value))
+                            @click=$(|_e: Event| removed.set(true))
                         }
-                    )
-                )
-                field(
-                    field_label(
-                        attrs: attributes! { for=(&amount_type_id) },
-                        (t!(form_amount_type))
-                    )
-                    <select
-                        id=(&amount_type_id)
-                        name=(amount_type_field)
-                        class=(SELECT_CLASS)
-                        :value=$(amount_type.get())
-                        @change=$(|e: Event| amount_type.set(e.target.value))
-                    >
-                        for option_type in AmountType::ALL {
-                            <option value=(option_type.wire_name())>
-                                (amount_type_label(cx, option_type))
-                            </option>
-                        }
-                    </select>
-                )
-                <div class="flex items-end">
-                    button(
-                        variant: ButtonVariant::Ghost,
-                        size: ButtonSize::Sm,
-                        attrs: attributes! { type="button" @click=$(|_e: Event| removed.set(true)) },
-                        (t!(form_remove))
                     )
                 </div>
             </div>
-
-            ingredient_amount_fields(
-                row: row,
-                prefix: prefix,
-                amount_type: amount_type.clone(),
-                quantity: quantity,
-                quantity_text: quantity_text,
-                unit: unit,
-                unit_other: unit_other
-            )
         </fieldset>
     })
 }
@@ -940,21 +1027,11 @@ async fn ingredient_amount_fields(
     row: usize,
     prefix: String,
     amount_type: Signal<String>,
-    quantity: String,
-    quantity_text: String,
-    unit: String,
-    unit_other: String,
+    quantity: Signal<String>,
+    quantity_text: Signal<String>,
+    unit: Signal<String>,
+    unit_other: Signal<String>,
 ) -> Result<impl View> {
-    let quantity = signal(cx, move || quantity.clone());
-    let quantity_text = signal(cx, move || quantity_text.clone());
-    let unit_value = if unit.is_empty() {
-        DEFAULT_UNIT.to_string()
-    } else {
-        unit
-    };
-    let unit = signal(cx, move || unit_value.clone());
-    let unit_other = signal(cx, move || unit_other.clone());
-
     let measured = AmountType::Measured.wire_name();
     let text = AmountType::Text.wire_name();
     let other_unit = OTHER_UNIT;
@@ -1059,6 +1136,7 @@ async fn form_image_row(
     image_ids_field: String,
 ) -> Result<impl View> {
     let removed = signal(cx, || false);
+    let remove_label = t!(form_recipe_images_remove).resolve(cx).into_owned();
 
     Ok(view! {
         <li class="flex flex-col gap-2" :hidden=$(removed.get())>
@@ -1070,11 +1148,9 @@ async fn form_image_row(
                 :disabled=$(removed.get())
             >
             <div class="flex justify-end">
-                button(
-                    variant: ButtonVariant::Ghost,
-                    size: ButtonSize::Sm,
-                    attrs: attributes! { type="button" @click=$(|_e: Event| removed.set(true)) },
-                    (t!(form_recipe_images_remove))
+                delete_button(
+                    label: remove_label,
+                    attrs: attributes! { @click=$(|_e: Event| removed.set(true)) }
                 )
             </div>
         </li>
@@ -1082,6 +1158,7 @@ async fn form_image_row(
 }
 
 #[component]
+#[allow(clippy::too_many_arguments)]
 async fn step_row(
     cx: &Cx,
     row: usize,
@@ -1090,6 +1167,8 @@ async fn step_row(
     initial: Option<StepInitial>,
     list: StepListState,
     image_lookup: HashMap<String, FormImageInitial>,
+    start_editing: bool,
+    new_row: bool,
 ) -> Result<impl View> {
     let StepListState {
         order,
@@ -1099,6 +1178,7 @@ async fn step_row(
         insert_instruction,
         insert_images,
     } = list;
+    let is_new = initial.is_none();
     let initial = initial.unwrap_or_default();
     let id_value = initial.id;
     let title_value = initial.title;
@@ -1107,6 +1187,7 @@ async fn step_row(
     let title = signal(cx, move || title_value.clone());
     let instruction = signal(cx, move || instruction_value.clone());
     let step_image_ids = signal(cx, move || image_ids_value.clone());
+    let editing = signal(cx, || is_new || new_row || start_editing);
 
     let title_id = element_id(cx);
     let instruction_id = element_id(cx);
@@ -1114,52 +1195,90 @@ async fn step_row(
     let id_field = StepField::Id.key(row, &prefix);
     let title_field = StepField::Title.key(row, &prefix);
     let instruction_field = StepField::Instruction.key(row, &prefix);
+    let step_label = format!("{} {}", t!(recipe_step).resolve(cx), row + 1);
+    let step_remove_label = t!(form_remove_field, field = step_label.clone())
+        .resolve(cx)
+        .into_owned();
+    let not_set = t!(form_not_set).resolve(cx).into_owned();
 
     Ok(view! {
         <fieldset
-            class="m-0 flex min-w-0 flex-col gap-3 rounded-lg border border-border p-4"
+            class="m-0 flex min-w-0 flex-col gap-3 rounded-lg border border-border bg-background/60 p-4"
         >
             <input type="hidden" name=(id_field) value=(id_value)>
-            field(
-                field_label(
-                    attrs: attributes! { for=(&title_id) },
-                    (t!(form_step_title))
+
+            <div :hidden=$(editing.get()) class="flex flex-col gap-2">
+                <h4 class="font-semibold">
+                    (t!(recipe_step))
+                    " "
+                    (row + 1)
+                    <span :hidden=$(title.get().trim().is_empty())>
+                        ": "
+                        $(title.get())
+                    </span>
+                </h4>
+                <p class="whitespace-pre-line text-sm text-muted-foreground">
+                    <span :hidden=$(instruction.get().trim().is_empty())>
+                        $(instruction.get())
+                    </span>
+                    <span
+                        :hidden=$(!instruction.get().trim().is_empty())
+                        class="italic"
+                    >
+                        (not_set)
+                    </span>
+                </p>
+            </div>
+
+            <div :hidden=$(!editing.get()) class="flex flex-col gap-3">
+                field(
+                    field_label(
+                        attrs: attributes! { for=(&title_id) },
+                        (t!(form_step_title))
+                    )
+                    input(
+                        attrs: attributes! {
+                            id=(&title_id)
+                            name=(title_field)
+                            type="text"
+                            placeholder=(t!(form_step_title.placeholder))
+                            :value=$(title.get())
+                            @input=$(|e: Event| title.set(e.target.value))
+                        }
+                    )
                 )
-                input(
-                    attrs: attributes! {
-                        id=(&title_id)
-                        name=(title_field)
-                        type="text"
-                        placeholder=(t!(form_step_title.placeholder))
-                        :value=$(title.get())
-                        @input=$(|e: Event| title.set(e.target.value))
-                    }
+                field(
+                    field_label(
+                        attrs: attributes! { for=(&instruction_id) },
+                        (t!(form_instruction))
+                    )
+                    <textarea
+                        id=(&instruction_id)
+                        name=(instruction_field)
+                        rows="3"
+                        class=(TEXTAREA_CLASS)
+                        placeholder=(t!(form_instruction.placeholder))
+                        required=""
+                        :value=$(instruction.get())
+                        @input=$(|e: Event| instruction.set(e.target.value))
+                    ></textarea>
                 )
-            )
-            field(
-                field_label(
-                    attrs: attributes! { for=(&instruction_id) },
-                    (t!(form_instruction))
-                )
-                <textarea
-                    id=(&instruction_id)
-                    name=(instruction_field)
-                    rows="3"
-                    class=(TEXTAREA_CLASS)
-                    placeholder=(t!(form_instruction.placeholder))
-                    required=""
-                    :value=$(instruction.get())
-                    @input=$(|e: Event| instruction.set(e.target.value))
-                ></textarea>
-            )
+            </div>
+
             step_images_field(
                 row: row,
                 prefix: prefix.clone(),
                 image_ids: step_image_ids.clone(),
-                image_lookup: image_lookup
+                image_lookup: image_lookup,
+                editing: editing.clone(),
             )
 
             <div class="flex flex-wrap items-center justify-end gap-2">
+                edit_toggle_guarded_button(
+                    editing: editing.clone(),
+                    field: step_label,
+                    value: instruction.clone(),
+                )
                 button(
                     variant: ButtonVariant::Ghost,
                     size: ButtonSize::Sm,
@@ -1225,17 +1344,14 @@ async fn step_row(
                     },
                     (t!(form_split_step))
                 )
-                button(
-                    variant: ButtonVariant::Ghost,
-                    size: ButtonSize::Sm,
+                delete_button(
+                    label: step_remove_label,
                     attrs: attributes! {
-                        type="button"
                         @click=$(async |_e: Event| {
                             let next = form_remove_item(order.get(), key).await;
                             order.set(next);
                         })
-                    },
-                    (t!(form_remove))
+                    }
                 )
             </div>
         </fieldset>
@@ -1249,37 +1365,45 @@ async fn step_images_field(
     prefix: String,
     image_ids: Signal<Vec<String>>,
     image_lookup: HashMap<String, FormImageInitial>,
+    editing: Signal<bool>,
 ) -> Result<impl View> {
     let step_images_id = element_id(cx);
     let step_images_field = StepField::Images.key(row, &prefix);
     let image_ids_field = StepField::ImageIds.key(row, &prefix);
 
     Ok(view! {
-        field(
-            field_label(
-                attrs: attributes! { for=(&step_images_id) },
-                (t!(form_step_images))
-            )
-            if !image_ids.get().is_empty() {
-                <ul class=(format!("mb-2 {IMAGE_GRID_CLASS}"))>
+        <div class="flex flex-col gap-2">
+            <div :hidden=$(!editing.get())>
+                field_label(
+                    attrs: attributes! { for=(&step_images_id) },
+                    (t!(form_step_images))
+                )
+            </div>
+
+            <div :hidden=$(image_ids.get().is_empty())>
+                <ul class=(IMAGE_GRID_CLASS)>
                     #[key(image_id.clone())]
                     for image_id in image_ids.get() {
                         if let Some(image) = image_lookup.get(&image_id) {
                             step_image_row(
                                 image: image.clone(),
                                 image_ids: image_ids.clone(),
-                                image_ids_field: image_ids_field.clone()
+                                image_ids_field: image_ids_field.clone(),
+                                editing: editing.clone(),
                             )
                         }
                     }
                 </ul>
-            }
-            image_upload(
-                multiple: true,
-                attrs: attributes! { id=(&step_images_id) name=(step_images_field) }
-            )
-            field_description((t!(form_step_images_upload_hint)))
-        )
+            </div>
+
+            <div :hidden=$(!editing.get()) class="flex flex-col gap-2">
+                image_upload(
+                    multiple: true,
+                    attrs: attributes! { id=(&step_images_id) name=(step_images_field) }
+                )
+                field_description((t!(form_step_images_upload_hint)))
+            </div>
+        </div>
     })
 }
 
@@ -1289,26 +1413,24 @@ async fn step_image_row(
     image: FormImageInitial,
     image_ids: Signal<Vec<String>>,
     image_ids_field: String,
+    editing: Signal<bool>,
 ) -> Result<impl View> {
-    let _ = cx;
     let image_id = image.id.clone();
+    let remove_label = t!(form_recipe_images_remove).resolve(cx).into_owned();
 
     Ok(view! {
         <li class="flex flex-col gap-2">
             image_thumbnail(url: image.url, alt: image.alt)
             <input type="hidden" name=(image_ids_field) value=(image.id)>
-            <div class="flex justify-end">
-                button(
-                    variant: ButtonVariant::Ghost,
-                    size: ButtonSize::Sm,
+            <div class="flex justify-end" :hidden=$(!editing.get())>
+                delete_button(
+                    label: remove_label,
                     attrs: attributes! {
-                        type="button"
                         @click=$(async |_e: Event| {
                             let next = form_remove_step_image(image_ids.get(), image_id).await;
                             image_ids.set(next);
                         })
-                    },
-                    (t!(form_recipe_images_remove))
+                    }
                 )
             </div>
         </li>
