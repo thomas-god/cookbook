@@ -2,9 +2,9 @@ use std::time::SystemTime;
 
 use cookbook_domain::recipe::models::{
     DurationMinutes, Ingredient, IngredientName, Quantity, Recipe, RecipeBody, RecipeCategory,
-    RecipeContent, RecipeDescription, RecipeDurations, RecipeId, RecipeRevision, RecipeRevisionId,
-    RecipeStep, RecipeStepId, RecipeTitle, RecipeWithContent, RevisionOrigin, RevisionVerification,
-    Servings, Unit,
+    RecipeContent, RecipeDescription, RecipeDurations, RecipeId, RecipePart, RecipePartId,
+    RecipePartTitle, RecipeRevision, RecipeRevisionId, RecipeStep, RecipeStepId, RecipeTitle,
+    RecipeWithContent, RevisionOrigin, RevisionVerification, Servings, Unit,
 };
 use cookbook_domain::user::models::UserId;
 use uuid::Uuid;
@@ -60,6 +60,7 @@ pub fn sample_recipes() -> Vec<RecipeWithContent> {
                     Vec::new(),
                 ),
             ],
+            RevisionVerification::Verified,
         ),
         seeded_recipe(
             "seed-lemon-pasta",
@@ -100,6 +101,7 @@ pub fn sample_recipes() -> Vec<RecipeWithContent> {
                     Vec::new(),
                 ),
             ],
+            RevisionVerification::Verified,
         ),
         seeded_recipe(
             "seed-banana-bread",
@@ -144,6 +146,106 @@ pub fn sample_recipes() -> Vec<RecipeWithContent> {
                     Vec::new(),
                 ),
             ],
+            RevisionVerification::Verified,
+        ),
+        seeded_recipe(
+            "seed-pickled-onions",
+            "Quick Pickled Onions",
+            "A sharp, crunchy topping that is ready in under an hour.",
+            Some(Servings::people(6)),
+            Some(RecipeCategory::Side),
+            RecipeDurations::new(
+                Some(DurationMinutes::new(10)),
+                Some(DurationMinutes::new(40)),
+                None,
+            ),
+            vec![
+                Ingredient::new(
+                    IngredientName::new("red onion".to_string()),
+                    Quantity::from_measure(2.0, Unit::Piece),
+                ),
+                Ingredient::new(
+                    IngredientName::new("vinegar".to_string()),
+                    Quantity::from_measure(200.0, Unit::MilliLitre),
+                ),
+                Ingredient::new(
+                    IngredientName::new("sugar".to_string()),
+                    Quantity::from_measure(2.0, Unit::Tablespoon),
+                ),
+            ],
+            vec![
+                RecipeStep::new(
+                    RecipeStepId::generate(),
+                    None,
+                    "Slice the onions as thinly as possible.".to_string(),
+                    Vec::new(),
+                ),
+                RecipeStep::new(
+                    RecipeStepId::generate(),
+                    None,
+                    "Warm the vinegar and sugar, pour over the onions and leave to pickle.".to_string(),
+                    Vec::new(),
+                ),
+            ],
+            RevisionVerification::NeedsReview,
+        ),
+        seeded_multipart_recipe(
+            "seed-roast-chicken",
+            "Sunday Roast Chicken",
+            "A roast dinner in two parts: the bird and the gravy.",
+            Some(Servings::people(4)),
+            Some(RecipeCategory::Main),
+            vec![
+                seeded_part(
+                    "Roast chicken",
+                    Some("Crisp skin and juicy meat."),
+                    RecipeDurations::new(
+                        Some(DurationMinutes::new(15)),
+                        None,
+                        Some(DurationMinutes::new(80)),
+                    ),
+                    vec![
+                        Ingredient::new(
+                            IngredientName::new("whole chicken".to_string()),
+                            Quantity::from_measure(1.5, Unit::Kilogram),
+                        ),
+                        Ingredient::new(
+                            IngredientName::new("butter".to_string()),
+                            Quantity::from_measure(50.0, Unit::Gram),
+                        ),
+                    ],
+                    vec![RecipeStep::new(
+                        RecipeStepId::generate(),
+                        None,
+                        "Rub the chicken with butter, season and roast until the juices run clear."
+                            .to_string(),
+                        Vec::new(),
+                    )],
+                ),
+                seeded_part(
+                    "Pan gravy",
+                    None,
+                    RecipeDurations::new(None, None, Some(DurationMinutes::new(15))),
+                    vec![
+                        Ingredient::new(
+                            IngredientName::new("flour".to_string()),
+                            Quantity::from_measure(2.0, Unit::Tablespoon),
+                        ),
+                        Ingredient::new(
+                            IngredientName::new("chicken stock".to_string()),
+                            Quantity::from_measure(0.5, Unit::Litre),
+                        ),
+                    ],
+                    vec![RecipeStep::new(
+                        RecipeStepId::generate(),
+                        None,
+                        "Stir the flour into the roasting juices, then whisk in the stock and simmer."
+                            .to_string(),
+                        Vec::new(),
+                    )],
+                ),
+            ],
+            RevisionVerification::Verified,
         ),
     ]
 }
@@ -158,8 +260,8 @@ fn seeded_recipe(
     durations: RecipeDurations,
     ingredients: Vec<Ingredient>,
     steps: Vec<RecipeStep>,
+    verification: RevisionVerification,
 ) -> RecipeWithContent {
-    let recipe = Recipe::new(RecipeId::new(id.to_string()), seed_author());
     let content = RecipeContent::new_simple(
         RecipeTitle::new(title.to_string()),
         Some(RecipeDescription::new(description.to_string())),
@@ -168,6 +270,53 @@ fn seeded_recipe(
         RecipeBody::new(durations, ingredients, Vec::new(), steps),
     )
     .expect("seed recipe content is valid");
+
+    seeded_revision(id, content, verification)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn seeded_multipart_recipe(
+    id: &str,
+    title: &str,
+    description: &str,
+    servings: Option<Servings>,
+    category: Option<RecipeCategory>,
+    parts: Vec<RecipePart>,
+    verification: RevisionVerification,
+) -> RecipeWithContent {
+    let content = RecipeContent::new_multipart(
+        RecipeTitle::new(title.to_string()),
+        Some(RecipeDescription::new(description.to_string())),
+        servings,
+        category,
+        parts,
+    )
+    .expect("seed multipart recipe content is valid");
+
+    seeded_revision(id, content, verification)
+}
+
+fn seeded_part(
+    title: &str,
+    description: Option<&str>,
+    durations: RecipeDurations,
+    ingredients: Vec<Ingredient>,
+    steps: Vec<RecipeStep>,
+) -> RecipePart {
+    RecipePart::new(
+        RecipePartId::generate(),
+        RecipePartTitle::new(title.to_string()),
+        description.map(|description| RecipeDescription::new(description.to_string())),
+        RecipeBody::new(durations, ingredients, Vec::new(), steps),
+    )
+}
+
+fn seeded_revision(
+    id: &str,
+    content: RecipeContent,
+    verification: RevisionVerification,
+) -> RecipeWithContent {
+    let recipe = Recipe::new(RecipeId::new(id.to_string()), seed_author());
     let revision = RecipeRevision::new(
         RecipeRevisionId::new(Uuid::new_v4().to_string()),
         recipe.id().clone(),
@@ -175,7 +324,7 @@ fn seeded_recipe(
         recipe.author().clone(),
         SystemTime::now(),
         RevisionOrigin::Created,
-        RevisionVerification::Verified,
+        verification,
     );
 
     RecipeWithContent::new(recipe, revision).expect("seed revision belongs to its recipe")
@@ -193,11 +342,18 @@ mod tests {
     fn sample_recipes_are_complete() {
         let recipes = sample_recipes();
 
-        assert_eq!(recipes.len(), 3);
-        for recipe in recipes {
+        assert_eq!(recipes.len(), 5);
+        for recipe in &recipes {
             assert_eq!(recipe.revision().recipe_id(), recipe.id());
             assert_eq!(recipe.author().as_str(), SEED_USER_ID);
             assert!(!recipe.title().as_str().is_empty());
         }
+
+        assert!(
+            recipes
+                .iter()
+                .any(|recipe| recipe.verification() == RevisionVerification::NeedsReview)
+        );
+        assert!(recipes.iter().any(|recipe| recipe.content().is_multipart()));
     }
 }

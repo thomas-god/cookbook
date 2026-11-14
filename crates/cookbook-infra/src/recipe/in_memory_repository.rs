@@ -626,7 +626,16 @@ mod tests {
             .collect();
         titles.sort();
 
-        assert_eq!(titles, ["Banana Bread", "Lemon Pasta", "Tomato Soup"]);
+        assert_eq!(
+            titles,
+            [
+                "Banana Bread",
+                "Lemon Pasta",
+                "Quick Pickled Onions",
+                "Sunday Roast Chicken",
+                "Tomato Soup",
+            ]
+        );
     }
 
     #[tokio::test]
