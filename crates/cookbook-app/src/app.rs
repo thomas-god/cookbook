@@ -39,6 +39,7 @@ use crate::{
         auth::{AuthSettings, SESSION_POLICY},
         locale::get_locale,
     },
+    backup::{self, BackupSettings},
     components::{
         base::button::{ButtonSize, ButtonVariant, button},
         misc::locale_select::locale_select,
@@ -70,6 +71,9 @@ pub async fn router() -> topcoat::router::Router {
     let database = SqliteDatabase::open(data_config.database_path())
         .await
         .expect("failed to open the SQLite database");
+    let backup_settings =
+        BackupSettings::from_env(&data_config).expect("invalid backup configuration");
+    backup::spawn(backup_settings);
     let files = FileStore::new(data_config.data_dir().to_path_buf());
     let recipe_repository = SqliteRecipeRepository::new(database.pool().clone());
     let document_repository = FileRecipeDocumentRepository::new(database.pool().clone(), files);

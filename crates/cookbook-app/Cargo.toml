@@ -10,6 +10,7 @@ chrono.workspace = true
 cookbook-domain.workspace = true
 cookbook-infra.workspace = true
 cookbook-vision.workspace = true
+cron.workspace = true
 form_urlencoded.workspace = true
 serde.workspace = true
 tokio.workspace = true
