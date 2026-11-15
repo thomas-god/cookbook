@@ -5,4 +5,5 @@ images
 **/.venv
 *.log
 icons
+!crates/cookbook-app/src/components/base/icons
 data

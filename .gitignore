@@ -28,6 +28,7 @@ images
 
 # Topcoat Iconify icon sets
 icons
+!crates/cookbook-app/src/components/base/icons
 
 # Local test data
 data
