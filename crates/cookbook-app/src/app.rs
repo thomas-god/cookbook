@@ -25,7 +25,7 @@ use topcoat::{
     },
     runtime::RouterBuilderRuntimeExt,
     session::{RouterBuilderSessionExt, SessionConfig},
-    view::{View, attributes, view},
+    view::{View, view},
 };
 
 pub(crate) mod auth;
@@ -42,7 +42,7 @@ use crate::{
     backup::{self, BackupSettings},
     components::{
         base::button::{ButtonSize, ButtonVariant, button},
-        misc::locale_select::locale_select,
+        misc::{locale_select::locale_select, user_menu::user_menu},
     },
     storage::DataConfig,
     t,
@@ -151,20 +151,7 @@ async fn root_layout(cx: &Cx, slot: Slot<'_>) -> Result<impl View> {
                         </a>
                         <div class="ml-auto flex items-center gap-3">
                             if let Some(current) = current_user {
-                                <a
-                                    class="text-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
-                                    href=(href!(auth::account::page))
-                                >
-                                    (current.display_name())
-                                </a>
-                                <form method="post" action="/logout">
-                                    button(
-                                        variant: ButtonVariant::Ghost,
-                                        size: ButtonSize::Sm,
-                                        attrs: attributes! { type="submit" },
-                                        (t!(auth_logout))
-                                    )
-                                </form>
+                                user_menu(user: current)
                             } else {
                                 <a
                                     class="text-sm underline underline-offset-4"

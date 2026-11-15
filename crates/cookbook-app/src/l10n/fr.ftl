@@ -24,6 +24,7 @@ auth_email_taken = Un compte avec cette adresse e-mail existe déjà.
 auth_registration_disabled = Les inscriptions sont désactivées.
 
 account_heading = Compte
+account_menu_label = Menu du compte
 account_email_heading = Adresse e-mail
 account_current_email = Adresse e-mail actuelle
 account_new_email = Nouvelle adresse e-mail
