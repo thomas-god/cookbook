@@ -16,8 +16,7 @@ use cookbook_domain::user::models::UserId;
 use cookbook_infra::auth::models::AuthenticatedUser;
 use cookbook_infra::auth::ports::UserRepository;
 use cookbook_vision::detect_source_document_content_type;
-use topcoat::icon::iconify::iconify_icon;
-use topcoat::icon::{IconData, icon};
+use topcoat::icon::icon;
 use topcoat::view::component;
 use topcoat::{
     Result,
@@ -34,6 +33,7 @@ use topcoat::{
     view::{View, attributes, class, view},
 };
 
+use crate::components::base::icons::{BACK_ARROW, MORE_VERT};
 use crate::{
     app::{AppRecipeService, AppUserRepository, auth},
     components::{
@@ -388,9 +388,6 @@ path_param!(revision_id);
 path_param!(pub source_document_id);
 path_param!(pub image_id);
 
-const BACK_ARROW: IconData = iconify_icon!("si:arrow-left-line");
-const MORE_VERT: IconData = iconify_icon!("si:more-vert-line");
-
 #[page("/recipe/{recipe_id}")]
 pub async fn recipe_detail(cx: &Cx) -> Result<impl View> {
     let user = auth::require_user(cx)?;
@@ -689,6 +686,13 @@ pub async fn edit_recipe(cx: &Cx) -> Result<impl View> {
                     (t!(recipe_ingredient_conflicts_notice))
                 </p>
             }
+            <a
+                class="text-sm text-muted-foreground underline-offset-4 hover:underline italic opacity-80 flex items-center gap-1.5"
+                href=(href!(recipe_detail, RecipeId(recipe_id.clone())))
+            >
+                icon(data: BACK_ARROW)
+                (t!(recipe_back_to_recipe))
+            </a>
             card(
                 card_header(card_title((form_title)))
                 card_content(recipe_form(mode: mode))
