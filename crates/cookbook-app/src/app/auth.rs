@@ -10,6 +10,7 @@ pub const SESSION_POLICY: SessionPolicy = SessionPolicy::new(
     Duration::from_secs(60 * 60 * 24 * 7),
 );
 
+pub mod account;
 pub mod login;
 pub mod logout;
 pub mod register;

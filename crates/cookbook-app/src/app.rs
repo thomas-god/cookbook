@@ -151,9 +151,12 @@ async fn root_layout(cx: &Cx, slot: Slot<'_>) -> Result<impl View> {
                         </a>
                         <div class="ml-auto flex items-center gap-3">
                             if let Some(current) = current_user {
-                                <span class="text-sm text-muted-foreground">
+                                <a
+                                    class="text-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+                                    href=(href!(auth::account::page))
+                                >
                                     (current.display_name())
-                                </span>
+                                </a>
                                 <form method="post" action="/logout">
                                     button(
                                         variant: ButtonVariant::Ghost,
@@ -177,8 +180,8 @@ async fn root_layout(cx: &Cx, slot: Slot<'_>) -> Result<impl View> {
                                         (t!(auth_register_link))
                                     </a>
                                 }
+                                locale_select()
                             }
-                            locale_select()
                         </div>
                     </div>
                 </header>

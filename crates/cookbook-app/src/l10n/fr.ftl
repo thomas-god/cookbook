@@ -23,6 +23,26 @@ auth_password_mismatch = Les mots de passe ne correspondent pas.
 auth_email_taken = Un compte avec cette adresse e-mail existe déjà.
 auth_registration_disabled = Les inscriptions sont désactivées.
 
+account_heading = Compte
+account_email_heading = Adresse e-mail
+account_current_email = Adresse e-mail actuelle
+account_new_email = Nouvelle adresse e-mail
+account_username_heading = Nom d'utilisateur
+account_current_username = Nom d'utilisateur actuel
+account_new_username = Nouveau nom d'utilisateur (facultatif)
+account_username_none = Non défini
+account_password_heading = Mot de passe
+account_username_hint = Affiché sur les recettes et dans l'en-tête. Laissez vide pour afficher votre adresse e-mail à la place.
+account_current_password = Mot de passe actuel
+account_new_password = Nouveau mot de passe
+account_save_email = Modifier l'adresse e-mail
+account_save_username = Modifier le nom d'utilisateur
+account_save_password = Modifier le mot de passe
+account_invalid_current_password = Le mot de passe actuel est incorrect.
+account_updated_email = Votre adresse e-mail a été mise à jour.
+account_updated_username = Votre nom d'utilisateur a été mis à jour.
+account_updated_password = Votre mot de passe a été mis à jour.
+
 recipe_list = Recettes
 new_recipe = Nouvelle recette
 recipes_heading = Recettes

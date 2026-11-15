@@ -23,6 +23,26 @@ auth_password_mismatch = The passwords do not match.
 auth_email_taken = An account with this email already exists.
 auth_registration_disabled = Registration is disabled.
 
+account_heading = Account
+account_email_heading = Email address
+account_current_email = Current email
+account_new_email = New email
+account_username_heading = Username
+account_current_username = Current username
+account_new_username = New username (optional)
+account_username_none = Not set
+account_password_heading = Password
+account_username_hint = Shown on recipes and in the header. Leave empty to display your email instead.
+account_current_password = Current password
+account_new_password = New password
+account_save_email = Update email
+account_save_username = Update username
+account_save_password = Update password
+account_invalid_current_password = Current password is incorrect.
+account_updated_email = Your email address was updated.
+account_updated_username = Your username was updated.
+account_updated_password = Your password was updated.
+
 recipe_list = Recipes
 new_recipe = New recipe
 recipes_heading = Recipes
