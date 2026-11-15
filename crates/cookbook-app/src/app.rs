@@ -43,7 +43,7 @@ use crate::{
     backup::{self, BackupSettings},
     components::{
         base::button::{ButtonSize, ButtonVariant, button},
-        misc::{locale_select::locale_select, user_menu::user_menu},
+        misc::{add_recipe::add_recipe_dialog, locale_select::locale_select, user_menu::user_menu},
     },
     storage::DataConfig,
     t,
@@ -130,6 +130,7 @@ async fn root_layout(cx: &Cx, slot: Slot<'_>) -> Result<impl View> {
     let current_locale = locale(cx);
     let current_user = auth::current_user(cx);
     let settings: &AuthSettings = app_context(cx);
+    let vision_settings: &vision::VisionSettings = app_context(cx);
 
     Ok(view! {
         <!DOCTYPE html>
@@ -152,6 +153,9 @@ async fn root_layout(cx: &Cx, slot: Slot<'_>) -> Result<impl View> {
                         </a>
                         <div class="ml-auto flex items-center gap-3">
                             if let Some(current) = current_user {
+                                add_recipe_dialog(
+                                    import_enabled: vision_settings.enabled()
+                                )
                                 user_menu(user: current)
                             } else {
                                 <a
@@ -220,7 +224,6 @@ async fn locale_layer(cx: &Cx, body: Body, next: Next<'_>) -> Result<Response> {
 #[page]
 pub async fn page(cx: &Cx) -> Result<impl View> {
     auth::require_user(cx)?;
-    let vision_settings: &vision::VisionSettings = app_context(cx);
 
     Ok(view! {
         <h2 class="mb-2 text-2xl font-semibold">(t!(recipes_heading))</h2>
@@ -233,22 +236,6 @@ pub async fn page(cx: &Cx) -> Result<impl View> {
                     (t!(recipe_list))
                 )
             </a>
-            <a href=(href!(recipe::new::page))>
-                button(
-                    variant: ButtonVariant::Primary,
-                    size: ButtonSize::Md,
-                    (t!(new_recipe))
-                )
-            </a>
-            if vision_settings.enabled() {
-                <a href=(href!(recipe::import::page))>
-                    button(
-                        variant: ButtonVariant::Primary,
-                        size: ButtonSize::Md,
-                        (t!(recipe_import_link))
-                    )
-                </a>
-            }
         </div>
     })
 }
