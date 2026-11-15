@@ -3,20 +3,22 @@ use std::time::SystemTime;
 use cookbook_domain::recipe::models::{
     NewRecipeSourceDocument, RecipeCategory, RecipeId as RecipeIdValue,
     RecipeImageId as RecipeImageIdValue, RecipeRevision, RecipeRevisionId, RecipeScope,
-    RecipeSourceDocumentId as RecipeSourceDocumentIdValue, RecipeStructureKind, RevisionOrigin,
-    RevisionVerification, Servings,
+    RecipeSourceDocumentId as RecipeSourceDocumentIdValue, RecipeStructureKind, RecipeWithContent,
+    RevisionOrigin, RevisionVerification, Servings,
 };
 use cookbook_domain::recipe::ports::{
     AddRecipeSourceDocumentsError, AddRecipeSourceDocumentsRequest, ConvertRecipeStructureRequest,
-    DeleteRecipeSourceDocumentError, RecipeSearchCriteria, RecipeService, RecipeSort,
-    RestoreRecipeRevisionError, RestoreRecipeRevisionRequest, SearchRecipesQuery, SortDirection,
-    UpdateRecipeError, UpdateRecipeScopeError, UpdateRecipeScopeRequest,
+    DeleteRecipeError, DeleteRecipeSourceDocumentError, RecipeSearchCriteria, RecipeService,
+    RecipeSort, RestoreRecipeRevisionError, RestoreRecipeRevisionRequest, SearchRecipesQuery,
+    SortDirection, UpdateRecipeError, UpdateRecipeScopeError, UpdateRecipeScopeRequest,
 };
 use cookbook_domain::user::models::UserId;
+use cookbook_infra::auth::models::AuthenticatedUser;
 use cookbook_infra::auth::ports::UserRepository;
 use cookbook_vision::detect_source_document_content_type;
 use topcoat::icon::iconify::iconify_icon;
 use topcoat::icon::{IconData, icon};
+use topcoat::view::component;
 use topcoat::{
     Result,
     context::{Cx, app_context},
@@ -29,7 +31,7 @@ use topcoat::{
         route,
     },
     runtime::{shard, signal},
-    view::{View, attributes, view},
+    view::{View, attributes, class, view},
 };
 
 use crate::{
@@ -387,6 +389,7 @@ path_param!(pub source_document_id);
 path_param!(pub image_id);
 
 const BACK_ARROW: IconData = iconify_icon!("si:arrow-left-line");
+const MORE_VERT: IconData = iconify_icon!("si:more-vert-line");
 
 #[page("/recipe/{recipe_id}")]
 pub async fn recipe_detail(cx: &Cx) -> Result<impl View> {
@@ -405,7 +408,6 @@ pub async fn recipe_detail(cx: &Cx) -> Result<impl View> {
         .get_recipe_images(recipe.id().clone(), user.id().clone())
         .await?;
 
-    let can_edit = recipe.can_edit(user.id());
     let is_author = recipe.author() == user.id();
     let scope = recipe.scope();
     let author_name = display_name(cx, recipe.author()).await?;
@@ -444,24 +446,7 @@ pub async fn recipe_detail(cx: &Cx) -> Result<impl View> {
                         >
                             (t!(recipe_cook))
                         </a>
-                        if can_edit {
-                            <a
-                                class="underline underline-offset-4"
-                                href=(href!(edit_recipe, RecipeId(recipe.id().as_str())))
-                            >
-                                if recipe.needs_review() {
-                                    (t!(recipe_verify))
-                                } else {
-                                    (t!(recipe_edit))
-                                }
-                            </a>
-                        }
-                        <a
-                            class="underline underline-offset-4"
-                            href=(href!(recipe_history, RecipeId(recipe.id().as_str())))
-                        >
-                            (t!(recipe_history))
-                        </a>
+                        recipe_menu(user: &user, recipe: &recipe)
                     </div>
                 </div>
 
@@ -533,6 +518,78 @@ pub async fn recipe_detail(cx: &Cx) -> Result<impl View> {
                 </section>
             }
         </div>
+    })
+}
+
+#[component]
+pub async fn recipe_menu(
+    cx: &Cx,
+    user: &AuthenticatedUser,
+    recipe: &RecipeWithContent,
+) -> Result<impl View> {
+    let is_author = recipe.author() == user.id();
+    let can_edit = recipe.can_edit(user.id());
+    let delete_action = href!(delete_recipe, RecipeId(recipe.id().as_str())).resolve(cx);
+    let delete_confirm = t!(recipe_delete_confirm).resolve(cx);
+    Ok(view! {
+        cx =>
+        <details class="relative" data-menu="">
+            <summary
+                class=(class!(
+                    button_variants(ButtonVariant::Ghost, ButtonSize::Icon),
+                    "cursor-pointer list-none [&::-webkit-details-marker]:hidden",
+                ))
+                aria-label=(t!(recipe_actions))
+                title=(t!(recipe_actions))
+            >
+                icon(data: MORE_VERT)
+            </summary>
+            <div
+                class="absolute right-0 z-10 mt-2 flex w-48 flex-col gap-1 rounded-lg border border-border bg-card p-1 shadow-md"
+            >
+                if can_edit {
+                    <a
+                        class=(class!(
+                            button_variants(ButtonVariant::Ghost, ButtonSize::Sm),
+                            "w-full justify-start",
+                        ))
+                        href=(href!(edit_recipe, RecipeId(recipe.id().as_str())))
+                    >
+                        if recipe.needs_review() {
+                            (t!(recipe_verify))
+                        } else {
+                            (t!(recipe_edit))
+                        }
+                    </a>
+                }
+                <a
+                    class=(class!(
+                        button_variants(ButtonVariant::Ghost, ButtonSize::Sm),
+                        "w-full justify-start",
+                    ))
+                    href=(href!(recipe_history, RecipeId(recipe.id().as_str())))
+                >
+                    (t!(recipe_history))
+                </a>
+                if is_author {
+                    <form
+                        method="post"
+                        action=(delete_action)
+                        onsubmit=(format!("return confirm({delete_confirm:?})"))
+                    >
+                        button(
+                            variant: ButtonVariant::Ghost,
+                            size: ButtonSize::Sm,
+                            attrs: attributes! {
+                                type="submit"
+                                class="w-full justify-start text-destructive hover:bg-destructive/10"
+                            },
+                            (t!(recipe_delete))
+                        )
+                    </form>
+                }
+            </div>
+        </details>
     })
 }
 
@@ -835,6 +892,24 @@ pub async fn update_recipe_scope(
         )),
         Err(UpdateRecipeScopeError::NotFound) => Err(not_found().into()),
         Err(UpdateRecipeScopeError::Forbidden) => Err(forbidden().into()),
+        Err(error) => Err(error.into()),
+    }
+}
+
+// Not DELETE since its driven by an HTTP form that can only use POST
+#[route(POST "/recipe/{recipe_id}/delete")]
+pub async fn delete_recipe(cx: &Cx) -> Result<SeeOther> {
+    let user = auth::require_user(cx)?;
+    let recipe_id = path_param::<RecipeId>(cx).to_string();
+    let recipe_service: &AppRecipeService = app_context(cx);
+
+    match recipe_service
+        .delete_recipe(RecipeIdValue::new(recipe_id), user.id().clone())
+        .await
+    {
+        Ok(_) => Ok(see_other(href!(page).resolve(cx))),
+        Err(DeleteRecipeError::NotFound) => Err(not_found().into()),
+        Err(DeleteRecipeError::Forbidden) => Err(forbidden().into()),
         Err(error) => Err(error.into()),
     }
 }
@@ -1285,14 +1360,6 @@ fn parse_scope_form(pairs: Vec<(String, String)>) -> Result<RecipeScope> {
         scope.ok_or_else(|| -> topcoat::Error { bad_request("scope is required").into() })?;
 
     RecipeScope::parse(scope.trim()).ok_or_else(|| bad_request("unknown recipe scope").into())
-}
-
-fn scope_label(cx: &Cx, scope: RecipeScope) -> String {
-    match scope {
-        RecipeScope::Private => t!(scope_private).resolve(cx).into_owned(),
-        RecipeScope::Viewable => t!(scope_viewable).resolve(cx).into_owned(),
-        RecipeScope::Editable => t!(scope_editable).resolve(cx).into_owned(),
-    }
 }
 
 async fn display_name(cx: &Cx, user_id: &UserId) -> Result<String> {

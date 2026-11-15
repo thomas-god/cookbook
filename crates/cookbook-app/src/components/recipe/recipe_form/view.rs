@@ -169,20 +169,20 @@ pub(super) async fn metadata_fields(
                 label: title_label,
                 initial: title,
                 placeholder: title_placeholder,
-                required: true,
+                required: true
             )
             form_field(
                 name: DESCRIPTION_FIELD,
                 label: description_label,
                 initial: description,
                 placeholder: description_placeholder,
-                multiline: true,
+                multiline: true
             )
             category_field(category: category)
             servings_fields(
                 servings_type: servings_type,
                 servings_count: servings_count,
-                servings_label: servings_label,
+                servings_label: servings_label
             )
         )
     })
@@ -196,10 +196,7 @@ async fn category_field(cx: &Cx, category: String) -> Result<impl View> {
 
     Ok(view! {
         <div class="flex flex-col gap-2">
-            <label
-                for=(&category_id)
-                class="text-sm font-medium text-muted-foreground"
-            >
+            <label for=(&category_id) class="text-sm font-medium text-muted-foreground">
                 (category_label_text)
             </label>
             <select
@@ -334,10 +331,7 @@ pub(super) async fn revision_message_field(cx: &Cx, needs_review: bool) -> Resul
         form_section(
             heading: heading,
             field(
-                field_label(
-                    attrs: attributes! { for=(&message_id) },
-                    (message_label)
-                )
+                field_label(attrs: attributes! { for=(&message_id) }, (message_label))
                 <textarea
                     id=(&message_id)
                     name=(MESSAGE_FIELD)
@@ -400,21 +394,21 @@ pub(super) async fn body_fields(
             prefix: prefix.clone(),
             preparation: preparation,
             rest: rest,
-            cooking: cooking,
+            cooking: cooking
         )
         body_images(prefix: prefix.clone(), initials: images)
         body_ingredients(
             list_id: "ingredients".to_string(),
             prefix: prefix.clone(),
             initials: ingredients,
-            start_editing: start_editing,
+            start_editing: start_editing
         )
         body_steps(
             list_id: "steps".to_string(),
             prefix: prefix,
             initials: steps,
             image_lookup: image_lookup,
-            start_editing: start_editing,
+            start_editing: start_editing
         )
     })
 }
@@ -446,7 +440,7 @@ async fn body_durations(
                     placeholder: "15",
                     input_type: "number",
                     min: "0",
-                    step: "1",
+                    step: "1"
                 )
                 form_field(
                     name: rest_field,
@@ -455,7 +449,7 @@ async fn body_durations(
                     placeholder: "30",
                     input_type: "number",
                     min: "0",
-                    step: "1",
+                    step: "1"
                 )
                 form_field(
                     name: cooking_field,
@@ -464,7 +458,7 @@ async fn body_durations(
                     placeholder: "45",
                     input_type: "number",
                     min: "0",
-                    step: "1",
+                    step: "1"
                 )
             </div>
         )
@@ -494,7 +488,7 @@ async fn body_images(
                     for image in &initials {
                         form_image_row(
                             image: image.clone(),
-                            image_ids_field: image_ids_field.clone(),
+                            image_ids_field: image_ids_field.clone()
                         )
                     }
                 </ul>
@@ -536,7 +530,7 @@ async fn body_ingredients(
                         row: index,
                         prefix: prefix.clone(),
                         initial: initials.get(index).cloned(),
-                        start_editing: start_editing,
+                        start_editing: start_editing
                     )
                 }
             </div>
@@ -604,7 +598,7 @@ async fn body_steps(
                         list: list.clone(),
                         image_lookup: image_lookup.clone(),
                         start_editing: start_editing,
-                        new_row: inserted_slot.get() == Some(step_key),
+                        new_row: inserted_slot.get() == Some(step_key)
                     )
                 }
             </div>
@@ -660,7 +654,7 @@ pub(super) async fn parts_editor(
                         initial: initial.get(key).cloned(),
                         list: list.clone(),
                         image_lookup: image_lookup.clone(),
-                        start_editing: start_editing,
+                        start_editing: start_editing
                     )
                 }
             </div>
@@ -729,36 +723,34 @@ async fn part_row(
                 name: title_field,
                 label: title_label,
                 initial: title_value,
-                required: true,
+                required: true
             )
             form_field(
                 name: description_field,
                 label: description_label,
                 initial: description_value,
-                multiline: true,
+                multiline: true
             )
-
             body_durations(
                 prefix: prefix.clone(),
                 preparation: preparation,
                 rest: rest,
-                cooking: cooking,
+                cooking: cooking
             )
             body_images(prefix: prefix.clone(), initials: images)
             body_ingredients(
                 list_id: format!("part-{key}-ingredients"),
                 prefix: prefix.clone(),
                 initials: ingredients,
-                start_editing: start_editing,
+                start_editing: start_editing
             )
             body_steps(
                 list_id: format!("part-{key}-steps"),
                 prefix: prefix,
                 initials: steps,
                 image_lookup: image_lookup,
-                start_editing: start_editing,
+                start_editing: start_editing
             )
-
             <div class="flex flex-wrap items-center justify-end gap-2">
                 button(
                     variant: ButtonVariant::Ghost,
@@ -954,7 +946,9 @@ async fn ingredient_row(
                     </div>
 
                     <div :hidden=$(!editing.get()) class="flex flex-col gap-3">
-                        <div class="grid gap-3 sm:grid-cols-[minmax(0,1fr)_10rem] sm:items-end">
+                        <div
+                            class="grid gap-3 sm:grid-cols-[minmax(0,1fr)_10rem] sm:items-end"
+                        >
                             field(
                                 field_label(
                                     attrs: attributes! { for=(&name_id) },
@@ -1005,15 +999,10 @@ async fn ingredient_row(
                 </div>
 
                 <div class="flex shrink-0 items-center gap-1">
-                    edit_toggle_button(
-                        editing: editing.clone(),
-                        field: edit_field,
-                    )
+                    edit_toggle_button(editing: editing.clone(), field: edit_field)
                     delete_button(
                         label: remove_label,
-                        attrs: attributes! {
-                            @click=$(|_e: Event| removed.set(true))
-                        }
+                        attrs: attributes! { @click=$(|_e: Event| removed.set(true)) }
                     )
                 </div>
             </div>
@@ -1270,14 +1259,13 @@ async fn step_row(
                 prefix: prefix.clone(),
                 image_ids: step_image_ids.clone(),
                 image_lookup: image_lookup,
-                editing: editing.clone(),
+                editing: editing.clone()
             )
-
             <div class="flex flex-wrap items-center justify-end gap-2">
                 edit_toggle_guarded_button(
                     editing: editing.clone(),
                     field: step_label,
-                    value: instruction.clone(),
+                    value: instruction.clone()
                 )
                 button(
                     variant: ButtonVariant::Ghost,
@@ -1389,7 +1377,7 @@ async fn step_images_field(
                                 image: image.clone(),
                                 image_ids: image_ids.clone(),
                                 image_ids_field: image_ids_field.clone(),
-                                editing: editing.clone(),
+                                editing: editing.clone()
                             )
                         }
                     }

@@ -2,6 +2,27 @@ const debounceTimers = new Map();
 
 const cookbook = (globalThis.cookbook ??= {});
 
+const closeMenus = (except) => {
+    for (const menu of document.querySelectorAll("details[data-menu][open]")) {
+        if (menu !== except) {
+            menu.open = false;
+        }
+    }
+};
+
+document.addEventListener("click", (event) => {
+    if (event.target instanceof Node) {
+        const menu = event.target.closest("details[data-menu]");
+        closeMenus(menu);
+    }
+});
+
+document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+        closeMenus();
+    }
+});
+
 cookbook.debounce = (key, delayMs, callback) => {
     if (key == null) {
         return;

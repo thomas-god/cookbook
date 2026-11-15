@@ -86,11 +86,7 @@ pub(super) async fn edit_toggle_button(
             } else {
                 edit_label.clone()
             })
-            :title=$(if editing.get() {
-                done_label.clone()
-            } else {
-                edit_label.clone()
-            })
+            :title=$(if editing.get() { done_label.clone() } else { edit_label.clone() })
             @click=$(|_e: Event| editing.toggle())
         >
             edit_toggle_icons(editing: editing.clone())
@@ -160,11 +156,7 @@ pub(super) async fn edit_toggle_guarded_button(
             } else {
                 edit_label.clone()
             })
-            :title=$(if editing.get() {
-                done_label.clone()
-            } else {
-                edit_label.clone()
-            })
+            :title=$(if editing.get() { done_label.clone() } else { edit_label.clone() })
             @click=$(|_e: Event| {
                 if editing.get() {
                     if !value.get().trim().is_empty() {
@@ -213,10 +205,7 @@ pub(super) async fn form_field(
 
     Ok(view! {
         <div class="flex flex-col gap-2">
-            <label
-                for=(&input_id)
-                class="text-sm font-medium text-muted-foreground"
-            >
+            <label for=(&input_id) class="text-sm font-medium text-muted-foreground">
                 (label)
             </label>
 
