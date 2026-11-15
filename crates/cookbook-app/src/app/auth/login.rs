@@ -38,12 +38,13 @@ pub async fn login(cx: &Cx, Form(form): Form<Vec<(String, String)>>) -> Result<i
         return login_form(cx, String::new(), Some(LoginFormError::InvalidForm)).await;
     };
 
+    let Ok(email) = UserEmail::try_new(form.email.clone()) else {
+        return login_form(cx, form.email, Some(LoginFormError::InvalidCredentials)).await;
+    };
+
     let auth: &AppAuthService = app_context(cx);
 
-    match auth
-        .login(UserEmail::new(form.email.clone()), form.password)
-        .await
-    {
+    match auth.login(email, form.password).await {
         Ok(result) => {
             write_issued_session(cx, result.session()).await?;
             Err(see_other("/recipes").into())

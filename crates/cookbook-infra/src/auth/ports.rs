@@ -190,7 +190,6 @@ pub struct CreateUserRequest {
 
 #[derive(Debug)]
 pub enum RegisterError {
-    InvalidEmail,
     EmailTaken,
     SessionError(StartSessionError),
     Storage(anyhow::Error),
@@ -199,7 +198,6 @@ pub enum RegisterError {
 impl fmt::Display for RegisterError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::InvalidEmail => f.write_str("invalid email address"),
             Self::EmailTaken => f.write_str("an account with this email already exists"),
             Self::SessionError(err) => write!(f, "failed to start a session: {err}"),
             Self::Storage(reason) => write!(f, "failed to register user: {reason}"),
@@ -229,7 +227,6 @@ impl std::error::Error for LoginError {}
 #[derive(Debug)]
 pub enum ChangeEmailError {
     InvalidPassword,
-    InvalidEmail,
     EmailTaken,
     Storage(anyhow::Error),
 }
@@ -238,7 +235,6 @@ impl fmt::Display for ChangeEmailError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::InvalidPassword => f.write_str("current password is incorrect"),
-            Self::InvalidEmail => f.write_str("invalid email address"),
             Self::EmailTaken => f.write_str("an account with this email already exists"),
             Self::Storage(reason) => write!(f, "failed to change email: {reason}"),
         }
@@ -311,7 +307,6 @@ impl std::error::Error for GetUserError {}
 
 #[derive(Debug)]
 pub enum CreateUserError {
-    InvalidEmail,
     EmailTaken,
     Storage(anyhow::Error),
 }
@@ -319,7 +314,6 @@ pub enum CreateUserError {
 impl fmt::Display for CreateUserError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::InvalidEmail => f.write_str("invalid email address"),
             Self::EmailTaken => f.write_str("an account with this email already exists"),
             Self::Storage(reason) => write!(f, "failed to create user: {reason}"),
         }
@@ -331,7 +325,6 @@ impl std::error::Error for CreateUserError {}
 #[derive(Debug)]
 pub enum ChangeUserEmailError {
     NotFound,
-    InvalidEmail,
     EmailTaken,
     Storage(anyhow::Error),
 }
@@ -340,7 +333,6 @@ impl fmt::Display for ChangeUserEmailError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::NotFound => f.write_str("user not found"),
-            Self::InvalidEmail => f.write_str("invalid email address"),
             Self::EmailTaken => f.write_str("an account with this email already exists"),
             Self::Storage(reason) => write!(f, "failed to change user email: {reason}"),
         }

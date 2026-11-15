@@ -27,13 +27,11 @@ pub struct AuthServiceImpl<U, P, S, C, G> {
 }
 
 enum CreateAccountFailure {
-    InvalidEmail,
     EmailTaken,
     Storage(anyhow::Error),
 }
 
 enum EmailChangeFailure {
-    InvalidEmail,
     EmailTaken,
     Storage(anyhow::Error),
 }
@@ -125,7 +123,6 @@ where
             .apply_email(user, new_email)
             .await
             .map_err(|error| match error {
-                EmailChangeFailure::InvalidEmail => ChangeEmailError::InvalidEmail,
                 EmailChangeFailure::EmailTaken => ChangeEmailError::EmailTaken,
                 EmailChangeFailure::Storage(error) => ChangeEmailError::Storage(error),
             })?;
@@ -299,7 +296,6 @@ where
             )
             .await
             .map_err(|error| match error {
-                CreateAccountFailure::InvalidEmail => CreateUserError::InvalidEmail,
                 CreateAccountFailure::EmailTaken => CreateUserError::EmailTaken,
                 CreateAccountFailure::Storage(error) => CreateUserError::Storage(error),
             })?;
@@ -323,7 +319,6 @@ where
             .apply_email(user, email)
             .await
             .map_err(|error| match error {
-                EmailChangeFailure::InvalidEmail => ChangeUserEmailError::InvalidEmail,
                 EmailChangeFailure::EmailTaken => ChangeUserEmailError::EmailTaken,
                 EmailChangeFailure::Storage(error) => ChangeUserEmailError::Storage(error),
             })?;
@@ -456,7 +451,6 @@ where
             )
             .await
             .map_err(|error| match error {
-                CreateAccountFailure::InvalidEmail => RegisterError::InvalidEmail,
                 CreateAccountFailure::EmailTaken => RegisterError::EmailTaken,
                 CreateAccountFailure::Storage(error) => RegisterError::Storage(error),
             })?;
@@ -505,10 +499,6 @@ where
         password: String,
         role: UserRole,
     ) -> Result<AuthUser, CreateAccountFailure> {
-        if !valid_email(email.as_str()) {
-            return Err(CreateAccountFailure::InvalidEmail);
-        }
-
         if self
             .users
             .find_by_email(&email)
@@ -546,10 +536,6 @@ where
         user: AuthUser,
         new_email: UserEmail,
     ) -> Result<AuthUser, EmailChangeFailure> {
-        if !valid_email(new_email.as_str()) {
-            return Err(EmailChangeFailure::InvalidEmail);
-        }
-
         if let Some(existing) = self
             .users
             .find_by_email(&new_email)
@@ -597,18 +583,6 @@ where
 
         Ok(())
     }
-}
-
-fn valid_email(email: &str) -> bool {
-    let Some((local, domain)) = email.split_once('@') else {
-        return false;
-    };
-
-    !local.is_empty()
-        && !domain.is_empty()
-        && !domain.contains('@')
-        && !domain.starts_with('.')
-        && !domain.ends_with('.')
 }
 
 #[cfg(test)]
@@ -673,9 +647,13 @@ mod tests {
         )
     }
 
+    fn user_email(value: &str) -> UserEmail {
+        UserEmail::try_new(value).unwrap()
+    }
+
     fn request(email: &str) -> RegisterRequest {
         RegisterRequest {
-            email: UserEmail::new(email),
+            email: user_email(email),
             username: Some(Username::new("Alice".to_string())),
             password: "correct horse battery".to_string(),
             role: UserRole::User,
@@ -685,7 +663,7 @@ mod tests {
     fn user(email: &str) -> AuthUser {
         AuthUser::new(
             UserId::new("user-1".to_string()),
-            UserEmail::new(email),
+            user_email(email),
             Some(Username::new("Alice".to_string())),
             PasswordHash::new("stored-hash"),
             UserRole::User,
@@ -777,7 +755,7 @@ mod tests {
         let service = test_service(users, passwords, sessions, SystemTime::now());
 
         let result = service
-            .login(UserEmail::new("alice@example.com"), "password".to_string())
+            .login(user_email("alice@example.com"), "password".to_string())
             .await
             .unwrap();
 
@@ -798,7 +776,7 @@ mod tests {
         );
 
         let result = service
-            .login(UserEmail::new("nobody@example.com"), "password".to_string())
+            .login(user_email("nobody@example.com"), "password".to_string())
             .await;
 
         assert!(matches!(result, Err(LoginError::InvalidCredentials)));
@@ -821,7 +799,7 @@ mod tests {
         );
 
         let result = service
-            .login(UserEmail::new("alice@example.com"), "wrong".to_string())
+            .login(user_email("alice@example.com"), "wrong".to_string())
             .await;
 
         assert!(matches!(result, Err(LoginError::InvalidCredentials)));
@@ -855,7 +833,7 @@ mod tests {
             .change_email(
                 &UserId::new("user-1".to_string()),
                 "correct horse battery".to_string(),
-                UserEmail::new(" New@Example.com "),
+                user_email(" New@Example.com "),
             )
             .await
             .unwrap();
@@ -886,7 +864,7 @@ mod tests {
             .change_email(
                 &UserId::new("user-1".to_string()),
                 "wrong".to_string(),
-                UserEmail::new("new@example.com"),
+                user_email("new@example.com"),
             )
             .await;
 
@@ -902,7 +880,7 @@ mod tests {
         users.expect_find_by_email().returning(|_| {
             Ok(Some(AuthUser::new(
                 UserId::new("user-2".to_string()),
-                UserEmail::new("taken@example.com"),
+                user_email("taken@example.com"),
                 None,
                 PasswordHash::new("stored-hash"),
                 UserRole::User,
@@ -925,7 +903,7 @@ mod tests {
             .change_email(
                 &UserId::new("user-1".to_string()),
                 "correct horse battery".to_string(),
-                UserEmail::new("taken@example.com"),
+                user_email("taken@example.com"),
             )
             .await;
 
@@ -959,7 +937,7 @@ mod tests {
             .change_email(
                 &UserId::new("user-1".to_string()),
                 "correct horse battery".to_string(),
-                UserEmail::new("alice@example.com"),
+                user_email("alice@example.com"),
             )
             .await
             .unwrap();
@@ -1209,7 +1187,7 @@ mod tests {
 
     fn create_user_request(email: &str, role: UserRole) -> CreateUserRequest {
         CreateUserRequest {
-            email: UserEmail::new(email),
+            email: user_email(email),
             username: Some(Username::new("Alice".to_string())),
             password: "correct horse battery".to_string(),
             role,
@@ -1249,7 +1227,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn create_user_rejects_duplicate_and_invalid_emails() {
+    async fn create_user_rejects_duplicate_emails() {
         let mut users = MockUserRepository::new();
         users
             .expect_find_by_email()
@@ -1267,19 +1245,6 @@ mod tests {
             .await;
 
         assert!(matches!(result, Err(CreateUserError::EmailTaken)));
-
-        let service = test_service(
-            MockUserRepository::new(),
-            MockPasswordHasher::new(),
-            MockSessionRepository::new(),
-            SystemTime::now(),
-        );
-
-        let result = service
-            .create_user(create_user_request("not-an-email", UserRole::User))
-            .await;
-
-        assert!(matches!(result, Err(CreateUserError::InvalidEmail)));
     }
 
     #[tokio::test]
@@ -1304,7 +1269,7 @@ mod tests {
         let updated = service
             .change_user_email(
                 &UserId::new("user-1".to_string()),
-                UserEmail::new(" New@Example.com "),
+                user_email(" New@Example.com "),
             )
             .await
             .unwrap();
@@ -1321,7 +1286,7 @@ mod tests {
         users.expect_find_by_email().returning(|_| {
             Ok(Some(AuthUser::new(
                 UserId::new("user-2".to_string()),
-                UserEmail::new("taken@example.com"),
+                user_email("taken@example.com"),
                 None,
                 PasswordHash::new("stored-hash"),
                 UserRole::User,
@@ -1338,7 +1303,7 @@ mod tests {
         let result = service
             .change_user_email(
                 &UserId::new("user-1".to_string()),
-                UserEmail::new("taken@example.com"),
+                user_email("taken@example.com"),
             )
             .await;
 
@@ -1357,7 +1322,7 @@ mod tests {
         let result = service
             .change_user_email(
                 &UserId::new("missing".to_string()),
-                UserEmail::new("new@example.com"),
+                user_email("new@example.com"),
             )
             .await;
 

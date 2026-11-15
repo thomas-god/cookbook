@@ -346,9 +346,13 @@ pub async fn create(cx: &Cx, Form(form): Form<Vec<(String, String)>>) -> Result<
     }
 
     let state = form.state();
+    let Ok(email) = UserEmail::try_new(form.email.clone()) else {
+        return create_page(cx, state, Some(CreateFormError::InvalidEmail)).await;
+    };
+
     let auth: &AppAuthService = app_context(cx);
     let request = CreateUserRequest {
-        email: UserEmail::new(form.email.clone()),
+        email,
         username: form.username.clone().map(Username::new),
         password: form.password,
         role: if form.as_admin {
@@ -360,9 +364,6 @@ pub async fn create(cx: &Cx, Form(form): Form<Vec<(String, String)>>) -> Result<
 
     match auth.create_user(request).await {
         Ok(_) => Err(see_other(href!(page).resolve(cx)).into()),
-        Err(CreateUserError::InvalidEmail) => {
-            create_page(cx, state, Some(CreateFormError::InvalidEmail)).await
-        }
         Err(CreateUserError::EmailTaken) => {
             create_page(cx, state, Some(CreateFormError::EmailTaken)).await
         }
@@ -401,19 +402,17 @@ pub async fn change_email(cx: &Cx, Form(form): Form<Vec<(String, String)>>) -> R
         return edit_view(cx, admin.id().clone(), user, state, None, None).await;
     };
 
+    let Ok(email) = UserEmail::try_new(form.email.clone()) else {
+        let mut state = EditFormState::for_user(&user);
+        state.new_email = form.email;
+        state.email_error = Some(EmailFormError::InvalidEmail);
+        return edit_view(cx, admin.id().clone(), user, state, None, None).await;
+    };
+
     let auth: &AppAuthService = app_context(cx);
 
-    match auth
-        .change_user_email(&id, UserEmail::new(form.email.clone()))
-        .await
-    {
+    match auth.change_user_email(&id, email).await {
         Ok(_) => Err(see_other(edit_url(cx, &id, "updated=email")).into()),
-        Err(ChangeUserEmailError::InvalidEmail) => {
-            let mut state = EditFormState::for_user(&user);
-            state.new_email = form.email;
-            state.email_error = Some(EmailFormError::InvalidEmail);
-            edit_view(cx, admin.id().clone(), user, state, None, None).await
-        }
         Err(ChangeUserEmailError::EmailTaken) => {
             let mut state = EditFormState::for_user(&user);
             state.new_email = form.email;

@@ -128,10 +128,12 @@ fn decode_user(row: &SqliteRow) -> anyhow::Result<AuthUser> {
     let password_hash: String = row.try_get("password_hash")?;
     let role: String = row.try_get("role")?;
     let role = UserRole::parse(&role).ok_or_else(|| anyhow!("unknown user role `{role}`"))?;
+    let email = UserEmail::try_new(email.clone())
+        .map_err(|_| anyhow!("stored user has invalid email `{email}`"))?;
 
     Ok(AuthUser::new(
         UserId::new(id),
-        UserEmail::new(email),
+        email,
         username.map(Username::new),
         PasswordHash::new(password_hash),
         role,
@@ -158,7 +160,7 @@ mod tests {
     fn user() -> AuthUser {
         AuthUser::new(
             UserId::new("user-1".to_string()),
-            UserEmail::new("Alice@Example.com"),
+            UserEmail::try_new("Alice@Example.com").unwrap(),
             None,
             PasswordHash::new("hash"),
             UserRole::User,
@@ -175,7 +177,7 @@ mod tests {
             .await
             .unwrap();
         let by_email = repository
-            .find_by_email(&UserEmail::new("alice@example.com"))
+            .find_by_email(&UserEmail::try_new("alice@example.com").unwrap())
             .await
             .unwrap();
 
@@ -197,7 +199,7 @@ mod tests {
         );
         assert!(
             repository
-                .find_by_email(&UserEmail::new("missing@example.com"))
+                .find_by_email(&UserEmail::try_new("missing@example.com").unwrap())
                 .await
                 .unwrap()
                 .is_none()
@@ -212,7 +214,7 @@ mod tests {
         repository
             .save_user(AuthUser::new(
                 UserId::new("user-1".to_string()),
-                UserEmail::new("new@example.com"),
+                UserEmail::try_new("new@example.com").unwrap(),
                 Some(Username::new("New Name".to_string())),
                 PasswordHash::new("new-hash"),
                 UserRole::Admin,
@@ -250,7 +252,7 @@ mod tests {
             repository
                 .save_user(AuthUser::new(
                     UserId::new(id.to_string()),
-                    UserEmail::new(email),
+                    UserEmail::try_new(email).unwrap(),
                     username.map(|username| Username::new(username.to_string())),
                     PasswordHash::new("hash"),
                     role,
@@ -274,7 +276,7 @@ mod tests {
         let result = repository
             .save_user(AuthUser::new(
                 UserId::new("user-2".to_string()),
-                UserEmail::new("ALICE@example.com"),
+                UserEmail::try_new("ALICE@example.com").unwrap(),
                 None,
                 PasswordHash::new("hash"),
                 UserRole::User,

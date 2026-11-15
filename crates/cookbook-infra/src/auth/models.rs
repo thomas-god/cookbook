@@ -1,19 +1,46 @@
+use std::fmt;
 use std::time::{Duration, SystemTime};
 
 use cookbook_domain::user::models::{UserId, UserRole, Username};
 
+/// A stored, normalized, and valid email address.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct UserEmail(String);
 
 impl UserEmail {
-    pub fn new(value: impl Into<String>) -> Self {
-        Self(value.into().trim().to_lowercase())
+    pub fn try_new(value: impl Into<String>) -> Result<Self, InvalidUserEmail> {
+        let value = value.into().trim().to_lowercase();
+        let Some((local, domain)) = value.split_once('@') else {
+            return Err(InvalidUserEmail);
+        };
+
+        if local.is_empty()
+            || domain.is_empty()
+            || domain.contains('@')
+            || domain.starts_with('.')
+            || domain.ends_with('.')
+        {
+            return Err(InvalidUserEmail);
+        }
+
+        Ok(Self(value))
     }
 
     pub fn as_str(&self) -> &str {
         &self.0
     }
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct InvalidUserEmail;
+
+impl fmt::Display for InvalidUserEmail {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("invalid email address")
+    }
+}
+
+impl std::error::Error for InvalidUserEmail {}
 
 /// A password hash, normally a PHC string produced by Argon2.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -353,5 +380,35 @@ impl SessionRecord {
 
     pub fn expires_at(&self) -> SystemTime {
         self.expires_at
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalizes_valid_emails() {
+        let email = UserEmail::try_new(" Alice@Example.com ").unwrap();
+
+        assert_eq!(email.as_str(), "alice@example.com");
+    }
+
+    #[test]
+    fn rejects_invalid_emails() {
+        for value in [
+            "",
+            "alice",
+            "@example.com",
+            "alice@",
+            "alice@example.com@example.com",
+            "alice@.example.com",
+            "alice@example.com.",
+        ] {
+            assert!(
+                UserEmail::try_new(value).is_err(),
+                "{value} should be invalid"
+            );
+        }
     }
 }

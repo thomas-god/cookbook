@@ -109,14 +109,17 @@ pub async fn change_email(cx: &Cx, Form(form): Form<Vec<(String, String)>>) -> R
         return account_page(cx, state, None).await;
     };
 
+    let Ok(email) = UserEmail::try_new(form.email.clone()) else {
+        let mut state = AccountFormState::for_user(user);
+        state.new_email = form.email;
+        state.email_error = Some(EmailFormError::InvalidEmail);
+        return account_page(cx, state, None).await;
+    };
+
     let auth: &AppAuthService = app_context(cx);
 
     match auth
-        .change_email(
-            user.id(),
-            form.current_password,
-            UserEmail::new(form.email.clone()),
-        )
+        .change_email(user.id(), form.current_password, email)
         .await
     {
         Ok(_) => Err(see_other("/account?updated=email").into()),
@@ -124,12 +127,6 @@ pub async fn change_email(cx: &Cx, Form(form): Form<Vec<(String, String)>>) -> R
             let mut state = AccountFormState::for_user(user);
             state.new_email = form.email;
             state.email_error = Some(EmailFormError::InvalidPassword);
-            account_page(cx, state, None).await
-        }
-        Err(ChangeEmailError::InvalidEmail) => {
-            let mut state = AccountFormState::for_user(user);
-            state.new_email = form.email;
-            state.email_error = Some(EmailFormError::InvalidEmail);
             account_page(cx, state, None).await
         }
         Err(ChangeEmailError::EmailTaken) => {
@@ -574,7 +571,7 @@ mod tests {
     fn form_state_shows_current_values_and_starts_new_values_empty() {
         let user = AuthenticatedUser::new(
             UserId::new("user-1".to_string()),
-            UserEmail::new("Alice@Example.com"),
+            UserEmail::try_new("Alice@Example.com").unwrap(),
             Some(Username::new("Alice".to_string())),
             UserRole::User,
         );

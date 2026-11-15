@@ -73,9 +73,19 @@ pub async fn register(cx: &Cx, Form(form): Form<Vec<(String, String)>>) -> Resul
         .await;
     }
 
+    let Ok(email) = UserEmail::try_new(form.email.clone()) else {
+        return register_form(
+            cx,
+            form.email.clone(),
+            form.username.clone().unwrap_or_default(),
+            Some(RegisterFormError::InvalidEmail),
+        )
+        .await;
+    };
+
     let auth: &AppAuthService = app_context(cx);
     let request = RegisterRequest {
-        email: UserEmail::new(form.email.clone()),
+        email,
         username: form.username.clone().map(Username::new),
         password: form.password,
         role: UserRole::User,
@@ -92,15 +102,6 @@ pub async fn register(cx: &Cx, Form(form): Form<Vec<(String, String)>>) -> Resul
                 form.email.clone(),
                 form.username.clone().unwrap_or_default(),
                 Some(RegisterFormError::EmailTaken),
-            )
-            .await
-        }
-        Err(RegisterError::InvalidEmail) => {
-            register_form(
-                cx,
-                form.email.clone(),
-                form.username.clone().unwrap_or_default(),
-                Some(RegisterFormError::InvalidEmail),
             )
             .await
         }

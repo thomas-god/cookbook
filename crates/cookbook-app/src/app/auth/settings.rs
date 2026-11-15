@@ -87,8 +87,10 @@ impl AuthConfig {
             return Ok(());
         };
 
+        let email = UserEmail::try_new(admin.email.clone())
+            .with_context(|| format!("invalid value for {FIRST_ADMIN_EMAIL_ENV}"))?;
         let request = RegisterRequest {
-            email: UserEmail::new(admin.email.clone()),
+            email,
             username: admin.username.clone().map(Username::new),
             password: admin.password.clone(),
             role: UserRole::Admin,

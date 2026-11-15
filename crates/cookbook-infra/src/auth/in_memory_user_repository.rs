@@ -102,7 +102,7 @@ mod tests {
     fn user() -> AuthUser {
         AuthUser::new(
             UserId::new("user-1".to_string()),
-            UserEmail::new("Alice@Example.com"),
+            UserEmail::try_new("Alice@Example.com").unwrap(),
             None,
             PasswordHash::new("hash"),
             UserRole::User,
@@ -119,7 +119,7 @@ mod tests {
             .await
             .unwrap();
         let by_email = repository
-            .find_by_email(&UserEmail::new("alice@example.com"))
+            .find_by_email(&UserEmail::try_new("alice@example.com").unwrap())
             .await
             .unwrap();
 
@@ -145,7 +145,7 @@ mod tests {
             repository
                 .save_user(AuthUser::new(
                     UserId::new(id.to_string()),
-                    UserEmail::new(email),
+                    UserEmail::try_new(email).unwrap(),
                     username.map(|username| Username::new(username.to_string())),
                     PasswordHash::new("hash"),
                     role,

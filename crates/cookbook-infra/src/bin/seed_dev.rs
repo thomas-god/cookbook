@@ -56,7 +56,7 @@ async fn seed_user(database: &SqliteDatabase) -> anyhow::Result<()> {
         return Ok(());
     }
 
-    let email = UserEmail::new(SEED_USER_EMAIL);
+    let email = UserEmail::try_new(SEED_USER_EMAIL)?;
     if users.find_by_email(&email).await?.is_some() {
         bail!("the seed email `{SEED_USER_EMAIL}` already belongs to a different user");
     }
