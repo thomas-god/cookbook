@@ -265,4 +265,22 @@ mod tests {
         assert_eq!(ids, ["user-2", "user-3", "user-1"]);
         assert_eq!(repository.count_admins().await.unwrap(), 2);
     }
+
+    #[tokio::test]
+    async fn rejects_duplicate_emails_at_the_database_level() {
+        let repository = repository().await;
+        repository.save_user(user()).await.unwrap();
+
+        let result = repository
+            .save_user(AuthUser::new(
+                UserId::new("user-2".to_string()),
+                UserEmail::new("ALICE@example.com"),
+                None,
+                PasswordHash::new("hash"),
+                UserRole::User,
+            ))
+            .await;
+
+        assert!(result.is_err());
+    }
 }
