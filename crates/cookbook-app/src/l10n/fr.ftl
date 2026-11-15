@@ -66,13 +66,10 @@ admin_role_admin = Administrateur
 admin_role_user = Utilisateur
 
 recipe = Recette
-recipe_list = Recettes
 new_recipe = Nouvelle recette
 add_recipe_new_hint = Partir de zéro.
 add_recipe_import = Importer une recette
 add_recipe_import_hint = Depuis des photos ou un PDF.
-recipes_heading = Recettes
-recipes_welcome = Bienvenue dans votre livre de recettes familial.
 recipes_list_heading = Recettes
 recipes_empty = Aucune recette pour le moment.
 recipe_search_placeholder = Titre, ingrédient, étape…

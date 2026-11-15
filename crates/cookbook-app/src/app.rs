@@ -18,10 +18,12 @@ use topcoat::{
     l10n::locale,
     router::{
         Body, BodyLimit, HeaderValue, Next, RouterBuilderDiscoverExt, Slot,
+        error::{SeeOther, see_other},
         header::VARY,
-        href, layer, layout, module_router, page,
+        href, layer, layout, module_router,
         request::{method, uri},
         response::{Response, response_headers},
+        route,
     },
     runtime::RouterBuilderRuntimeExt,
     session::{RouterBuilderSessionExt, SessionConfig},
@@ -41,9 +43,8 @@ use crate::{
         locale::get_locale,
     },
     backup::{self, BackupSettings},
-    components::{
-        base::button::{ButtonSize, ButtonVariant, button},
-        misc::{add_recipe::add_recipe_dialog, locale_select::locale_select, user_menu::user_menu},
+    components::misc::{
+        add_recipe::add_recipe_dialog, locale_select::locale_select, user_menu::user_menu,
     },
     storage::DataConfig,
     t,
@@ -221,21 +222,9 @@ async fn locale_layer(cx: &Cx, body: Body, next: Next<'_>) -> Result<Response> {
     next.run(&cx.with(locale), body).await
 }
 
-#[page]
-pub async fn page(cx: &Cx) -> Result<impl View> {
+#[route(GET)]
+pub async fn page(cx: &Cx) -> Result<SeeOther> {
     auth::require_user(cx)?;
 
-    Ok(view! {
-        <h2 class="mb-2 text-2xl font-semibold">(t!(recipes_heading))</h2>
-        <p class="mb-6 text-sm text-muted-foreground">(t!(recipes_welcome))</p>
-        <div class="flex flex-row gap-2">
-            <a href=(href!(recipes::page))>
-                button(
-                    variant: ButtonVariant::Primary,
-                    size: ButtonSize::Md,
-                    (t!(recipe_list))
-                )
-            </a>
-        </div>
-    })
+    Ok(see_other(href!(recipes::page).resolve(cx)))
 }

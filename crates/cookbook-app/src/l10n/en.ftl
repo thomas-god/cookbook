@@ -66,13 +66,10 @@ admin_role_admin = Administrator
 admin_role_user = User
 
 recipe = Recipe
-recipe_list = Recipes
 new_recipe = New recipe
 add_recipe_new_hint = Start from scratch.
 add_recipe_import = Import recipe
 add_recipe_import_hint = From photos or a PDF.
-recipes_heading = Recipes
-recipes_welcome = Welcome to your family cookbook.
 recipes_list_heading = Recipes
 recipes_empty = No recipes yet.
 recipe_search_placeholder = Title, ingredient, step...
