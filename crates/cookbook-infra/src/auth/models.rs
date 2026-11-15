@@ -107,6 +107,61 @@ impl AuthUser {
     pub fn with_password_hash(self, password_hash: PasswordHash) -> Self {
         Self::new(self.id, self.email, self.username, password_hash, self.role)
     }
+
+    pub fn with_role(self, role: UserRole) -> Self {
+        Self::new(self.id, self.email, self.username, self.password_hash, role)
+    }
+}
+
+/// An administrative view of a user, safe to expose to the application layer.
+#[derive(Debug, Clone)]
+pub struct UserSummary {
+    id: UserId,
+    email: UserEmail,
+    username: Option<Username>,
+    role: UserRole,
+}
+
+impl UserSummary {
+    pub fn new(id: UserId, email: UserEmail, username: Option<Username>, role: UserRole) -> Self {
+        Self {
+            id,
+            email,
+            username,
+            role,
+        }
+    }
+
+    pub fn from_user(user: &AuthUser) -> Self {
+        Self::new(
+            user.id().clone(),
+            user.email().clone(),
+            user.username().cloned(),
+            user.role(),
+        )
+    }
+
+    pub fn id(&self) -> &UserId {
+        &self.id
+    }
+
+    pub fn email(&self) -> &UserEmail {
+        &self.email
+    }
+
+    pub fn username(&self) -> Option<&Username> {
+        self.username.as_ref()
+    }
+
+    pub fn role(&self) -> UserRole {
+        self.role
+    }
+
+    pub fn display_name(&self) -> &str {
+        self.username
+            .as_ref()
+            .map_or(self.email.as_str(), Username::as_str)
+    }
 }
 
 /// An authenticated user, safe to expose to the application layer.

@@ -91,6 +91,34 @@ impl UserRepository for SqliteUserRepository {
             .context("user count does not fit in usize")
             .map_err(UserRepositoryError::Storage)
     }
+
+    async fn list_users(&self) -> Result<Vec<AuthUser>, UserRepositoryError> {
+        let rows = sqlx::query(
+            "SELECT id, email, username, password_hash, role
+             FROM users
+             ORDER BY lower(COALESCE(NULLIF(username, ''), email)), email, id",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(storage_error)?;
+
+        rows.iter()
+            .map(decode_user)
+            .collect::<anyhow::Result<Vec<_>>>()
+            .map_err(UserRepositoryError::Storage)
+    }
+
+    async fn count_admins(&self) -> Result<usize, UserRepositoryError> {
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users WHERE role = ?")
+            .bind(UserRole::Admin.as_str())
+            .fetch_one(&self.pool)
+            .await
+            .map_err(storage_error)?;
+
+        usize::try_from(count)
+            .context("admin count does not fit in usize")
+            .map_err(UserRepositoryError::Storage)
+    }
 }
 
 fn decode_user(row: &SqliteRow) -> anyhow::Result<AuthUser> {
@@ -203,5 +231,38 @@ mod tests {
         assert_eq!(stored.password_hash().as_str(), "new-hash");
         assert_eq!(stored.role(), UserRole::Admin);
         assert_eq!(repository.count_users().await.unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn lists_users_by_display_name_and_counts_admins() {
+        let repository = repository().await;
+
+        for (id, email, username, role) in [
+            ("user-1", "zoe@example.com", Some("Zoe"), UserRole::User),
+            (
+                "user-2",
+                "alice@example.com",
+                Some("Alice"),
+                UserRole::Admin,
+            ),
+            ("user-3", "bob@example.com", None, UserRole::Admin),
+        ] {
+            repository
+                .save_user(AuthUser::new(
+                    UserId::new(id.to_string()),
+                    UserEmail::new(email),
+                    username.map(|username| Username::new(username.to_string())),
+                    PasswordHash::new("hash"),
+                    role,
+                ))
+                .await
+                .unwrap();
+        }
+
+        let users = repository.list_users().await.unwrap();
+        let ids: Vec<_> = users.iter().map(|user| user.id().as_str()).collect();
+
+        assert_eq!(ids, ["user-2", "user-3", "user-1"]);
+        assert_eq!(repository.count_admins().await.unwrap(), 2);
     }
 }

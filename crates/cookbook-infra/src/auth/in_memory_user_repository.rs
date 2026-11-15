@@ -64,11 +64,37 @@ impl UserRepository for InMemoryUserRepository {
 
         Ok(users.len())
     }
+
+    async fn list_users(&self) -> Result<Vec<AuthUser>, UserRepositoryError> {
+        let users = self
+            .users
+            .read()
+            .map_err(|_| storage_error("user store lock poisoned"))?;
+
+        let mut users: Vec<_> = users.values().cloned().collect();
+        users.sort_by(|left, right| {
+            left.display_name()
+                .to_lowercase()
+                .cmp(&right.display_name().to_lowercase())
+                .then_with(|| left.id().as_str().cmp(right.id().as_str()))
+        });
+
+        Ok(users)
+    }
+
+    async fn count_admins(&self) -> Result<usize, UserRepositoryError> {
+        let users = self
+            .users
+            .read()
+            .map_err(|_| storage_error("user store lock poisoned"))?;
+
+        Ok(users.values().filter(|user| user.role().is_admin()).count())
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use cookbook_domain::user::models::{UserId, UserRole};
+    use cookbook_domain::user::models::{UserId, UserRole, Username};
 
     use super::*;
     use crate::auth::models::PasswordHash;
@@ -100,5 +126,38 @@ mod tests {
         assert_eq!(by_id.unwrap().id().as_str(), "user-1");
         assert_eq!(by_email.unwrap().email().as_str(), "alice@example.com");
         assert_eq!(repository.count_users().await.unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn lists_users_by_display_name_and_counts_admins() {
+        let repository = InMemoryUserRepository::new();
+
+        for (id, email, username, role) in [
+            ("user-1", "zoe@example.com", Some("Zoe"), UserRole::User),
+            (
+                "user-2",
+                "alice@example.com",
+                Some("Alice"),
+                UserRole::Admin,
+            ),
+            ("user-3", "bob@example.com", None, UserRole::Admin),
+        ] {
+            repository
+                .save_user(AuthUser::new(
+                    UserId::new(id.to_string()),
+                    UserEmail::new(email),
+                    username.map(|username| Username::new(username.to_string())),
+                    PasswordHash::new("hash"),
+                    role,
+                ))
+                .await
+                .unwrap();
+        }
+
+        let users = repository.list_users().await.unwrap();
+        let ids: Vec<_> = users.iter().map(|user| user.id().as_str()).collect();
+
+        assert_eq!(ids, ["user-2", "user-3", "user-1"]);
+        assert_eq!(repository.count_admins().await.unwrap(), 2);
     }
 }

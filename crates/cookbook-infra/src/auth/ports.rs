@@ -5,7 +5,7 @@ use cookbook_domain::user::models::{UserId, UserRole, Username};
 
 use crate::auth::models::{
     AuthUser, AuthenticatedUser, GeneratedSessionToken, LoginResult, PasswordHash, SessionRecord,
-    SessionTokenHash, UserEmail,
+    SessionTokenHash, UserEmail, UserSummary,
 };
 
 pub trait Clock: Clone + Send + Sync + 'static {
@@ -75,6 +75,46 @@ pub trait AuthService: Clone + Send + Sync + 'static {
     ) -> impl Future<Output = Result<(), DeleteSessionError>> + Send;
 }
 
+/// An inbound (driving) port for administrative user management.
+pub trait UserAdminService: Clone + Send + Sync + 'static {
+    fn list_users(&self) -> impl Future<Output = Result<Vec<UserSummary>, ListUsersError>> + Send;
+
+    fn get_user(
+        &self,
+        id: &UserId,
+    ) -> impl Future<Output = Result<Option<UserSummary>, GetUserError>> + Send;
+
+    fn create_user(
+        &self,
+        request: CreateUserRequest,
+    ) -> impl Future<Output = Result<UserSummary, CreateUserError>> + Send;
+
+    fn change_user_email(
+        &self,
+        id: &UserId,
+        email: UserEmail,
+    ) -> impl Future<Output = Result<UserSummary, ChangeUserEmailError>> + Send;
+
+    fn change_user_username(
+        &self,
+        id: &UserId,
+        username: Option<Username>,
+    ) -> impl Future<Output = Result<UserSummary, ChangeUserUsernameError>> + Send;
+
+    fn reset_user_password(
+        &self,
+        id: &UserId,
+        password: String,
+    ) -> impl Future<Output = Result<(), ResetUserPasswordError>> + Send;
+
+    fn set_user_role(
+        &self,
+        actor: &UserId,
+        target: &UserId,
+        role: UserRole,
+    ) -> impl Future<Output = Result<UserSummary, SetUserRoleError>> + Send;
+}
+
 /// An outbound (driven) port for user persistence.
 pub trait UserRepository: Clone + Send + Sync + 'static {
     fn find_by_id(
@@ -93,6 +133,11 @@ pub trait UserRepository: Clone + Send + Sync + 'static {
     ) -> impl Future<Output = Result<(), UserRepositoryError>> + Send;
 
     fn count_users(&self) -> impl Future<Output = Result<usize, UserRepositoryError>> + Send;
+
+    fn list_users(&self)
+    -> impl Future<Output = Result<Vec<AuthUser>, UserRepositoryError>> + Send;
+
+    fn count_admins(&self) -> impl Future<Output = Result<usize, UserRepositoryError>> + Send;
 }
 
 /// An outbound (driven) port for session persistence.
@@ -129,6 +174,14 @@ pub trait PasswordHasher: Clone + Send + Sync + 'static {
 
 #[derive(Debug, Clone)]
 pub struct RegisterRequest {
+    pub email: UserEmail,
+    pub username: Option<Username>,
+    pub password: String,
+    pub role: UserRole,
+}
+
+#[derive(Debug, Clone)]
+pub struct CreateUserRequest {
     pub email: UserEmail,
     pub username: Option<Username>,
     pub password: String,
@@ -225,6 +278,129 @@ impl fmt::Display for ChangePasswordError {
 }
 
 impl std::error::Error for ChangePasswordError {}
+
+#[derive(Debug)]
+pub enum ListUsersError {
+    Storage(anyhow::Error),
+}
+
+impl fmt::Display for ListUsersError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Storage(reason) => write!(f, "failed to list users: {reason}"),
+        }
+    }
+}
+
+impl std::error::Error for ListUsersError {}
+
+#[derive(Debug)]
+pub enum GetUserError {
+    Storage(anyhow::Error),
+}
+
+impl fmt::Display for GetUserError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Storage(reason) => write!(f, "failed to get user: {reason}"),
+        }
+    }
+}
+
+impl std::error::Error for GetUserError {}
+
+#[derive(Debug)]
+pub enum CreateUserError {
+    InvalidEmail,
+    EmailTaken,
+    Storage(anyhow::Error),
+}
+
+impl fmt::Display for CreateUserError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidEmail => f.write_str("invalid email address"),
+            Self::EmailTaken => f.write_str("an account with this email already exists"),
+            Self::Storage(reason) => write!(f, "failed to create user: {reason}"),
+        }
+    }
+}
+
+impl std::error::Error for CreateUserError {}
+
+#[derive(Debug)]
+pub enum ChangeUserEmailError {
+    NotFound,
+    InvalidEmail,
+    EmailTaken,
+    Storage(anyhow::Error),
+}
+
+impl fmt::Display for ChangeUserEmailError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NotFound => f.write_str("user not found"),
+            Self::InvalidEmail => f.write_str("invalid email address"),
+            Self::EmailTaken => f.write_str("an account with this email already exists"),
+            Self::Storage(reason) => write!(f, "failed to change user email: {reason}"),
+        }
+    }
+}
+
+impl std::error::Error for ChangeUserEmailError {}
+
+#[derive(Debug)]
+pub enum ChangeUserUsernameError {
+    NotFound,
+    Storage(anyhow::Error),
+}
+
+impl fmt::Display for ChangeUserUsernameError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NotFound => f.write_str("user not found"),
+            Self::Storage(reason) => write!(f, "failed to change user username: {reason}"),
+        }
+    }
+}
+
+impl std::error::Error for ChangeUserUsernameError {}
+
+#[derive(Debug)]
+pub enum ResetUserPasswordError {
+    NotFound,
+    Storage(anyhow::Error),
+}
+
+impl fmt::Display for ResetUserPasswordError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NotFound => f.write_str("user not found"),
+            Self::Storage(reason) => write!(f, "failed to reset user password: {reason}"),
+        }
+    }
+}
+
+impl std::error::Error for ResetUserPasswordError {}
+
+#[derive(Debug)]
+pub enum SetUserRoleError {
+    NotFound,
+    LastAdmin,
+    Storage(anyhow::Error),
+}
+
+impl fmt::Display for SetUserRoleError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NotFound => f.write_str("user not found"),
+            Self::LastAdmin => f.write_str("cannot remove the last administrator"),
+            Self::Storage(reason) => write!(f, "failed to change user role: {reason}"),
+        }
+    }
+}
+
+impl std::error::Error for SetUserRoleError {}
 
 #[derive(Debug)]
 pub enum StartSessionError {
@@ -411,6 +587,10 @@ mockall::mock! {
         async fn save_user(&self, user: AuthUser) -> Result<(), UserRepositoryError>;
 
         async fn count_users(&self) -> Result<usize, UserRepositoryError>;
+
+        async fn list_users(&self) -> Result<Vec<AuthUser>, UserRepositoryError>;
+
+        async fn count_admins(&self) -> Result<usize, UserRepositoryError>;
     }
 }
 
