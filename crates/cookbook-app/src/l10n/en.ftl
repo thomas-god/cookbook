@@ -44,6 +44,27 @@ account_updated_email = Your email address was updated.
 account_updated_username = Your username was updated.
 account_updated_password = Your password was updated.
 
+admin_users_link = Users
+admin_users_heading = Users
+admin_users_new = Add user
+admin_users_empty = No users yet.
+admin_users_back = Back to users
+admin_user_created = User created.
+admin_user_updated_role = Role updated.
+admin_user_last_admin = You cannot remove the last administrator.
+admin_user_you = (you)
+admin_user_edit = Edit
+admin_user_promote = Make administrator
+admin_user_demote = Remove administrator
+admin_user_create_heading = Add user
+admin_user_create_as_admin = Create as administrator
+admin_user_create_submit = Create user
+admin_user_edit_heading = Edit user
+admin_user_role_heading = Role
+admin_user_current_role = Current role
+admin_role_admin = Administrator
+admin_role_user = User
+
 recipe_list = Recipes
 new_recipe = New recipe
 recipes_heading = Recipes

@@ -28,6 +28,7 @@ use topcoat::{
     view::{View, view},
 };
 
+pub(crate) mod admin;
 pub(crate) mod auth;
 mod locale;
 pub(crate) mod recipe;

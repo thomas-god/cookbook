@@ -21,6 +21,6 @@ mod session;
 mod settings;
 
 pub use cookie_token_store::ForwardedProtoCookieTokenStore;
-pub use layer::{AuthenticationLayer, current_user, require_user};
+pub use layer::{AuthenticationLayer, current_user, require_admin, require_user};
 pub use session::{stop_user_session, write_issued_session};
 pub use settings::{AuthConfig, AuthSettings};

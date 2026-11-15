@@ -5,7 +5,10 @@ use cookbook_infra::auth::{
 use topcoat::{
     Result,
     context::{Cx, app_context, try_request_context},
-    router::{Body, Layer, LayerFuture, Next, Path, error::see_other},
+    router::{
+        Body, Layer, LayerFuture, Next, Path,
+        error::{forbidden, see_other},
+    },
     session,
 };
 
@@ -18,6 +21,17 @@ pub fn current_user(cx: &Cx) -> Option<&AuthenticatedUser> {
 /// Returns the authenticated user, or redirects to the login page.
 pub fn require_user(cx: &Cx) -> Result<&AuthenticatedUser> {
     current_user(cx).ok_or_else(|| see_other("/login").into())
+}
+
+/// Returns the authenticated admin, or rejects the request.
+pub fn require_admin(cx: &Cx) -> Result<&AuthenticatedUser> {
+    let user = require_user(cx)?;
+
+    if !user.role().is_admin() {
+        return Err(forbidden().into());
+    }
+
+    Ok(user)
 }
 
 #[derive(Debug, Clone, Copy, Default)]
