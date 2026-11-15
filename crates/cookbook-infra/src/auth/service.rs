@@ -1,6 +1,6 @@
 use std::time::SystemTime;
 
-use cookbook_domain::user::models::UserId;
+use cookbook_domain::user::models::{UserId, Username};
 use uuid::Uuid;
 
 use crate::auth::models::{
@@ -8,8 +8,9 @@ use crate::auth::models::{
     SessionTokenHash, UserEmail,
 };
 use crate::auth::ports::{
-    AuthService, AuthenticateSessionError, Clock, DeleteSessionError, LoginError, PasswordHasher,
-    RegisterError, RegisterRequest, RenewSessionError, SessionRepository, SessionTokenGenerator,
+    AuthService, AuthenticateSessionError, ChangeEmailError, ChangePasswordError,
+    ChangeUsernameError, Clock, DeleteSessionError, LoginError, PasswordHasher, RegisterError,
+    RegisterRequest, RenewSessionError, SessionRepository, SessionTokenGenerator,
     StartSessionError, UserRepository,
 };
 
@@ -83,6 +84,104 @@ where
             AuthenticatedUser::from_user(&user),
             session,
         ))
+    }
+
+    async fn change_email(
+        &self,
+        user_id: &UserId,
+        current_password: String,
+        new_email: UserEmail,
+    ) -> Result<AuthenticatedUser, ChangeEmailError> {
+        let user = self
+            .load_user(user_id)
+            .await
+            .map_err(ChangeEmailError::Storage)?;
+
+        let matches = self
+            .passwords
+            .verify_password(&current_password, user.password_hash())
+            .await
+            .map_err(|error| ChangeEmailError::Storage(error.into()))?;
+
+        if !matches {
+            return Err(ChangeEmailError::InvalidPassword);
+        }
+
+        if !valid_email(new_email.as_str()) {
+            return Err(ChangeEmailError::InvalidEmail);
+        }
+
+        if let Some(existing) = self
+            .users
+            .find_by_email(&new_email)
+            .await
+            .map_err(|error| ChangeEmailError::Storage(error.into()))?
+            && existing.id() != user.id()
+        {
+            return Err(ChangeEmailError::EmailTaken);
+        }
+
+        let user = user.with_email(new_email);
+        self.users
+            .save_user(user.clone())
+            .await
+            .map_err(|error| ChangeEmailError::Storage(error.into()))?;
+
+        Ok(AuthenticatedUser::from_user(&user))
+    }
+
+    async fn change_username(
+        &self,
+        user_id: &UserId,
+        username: Option<Username>,
+    ) -> Result<AuthenticatedUser, ChangeUsernameError> {
+        let user = self
+            .load_user(user_id)
+            .await
+            .map_err(ChangeUsernameError::Storage)?;
+
+        let user = user.with_username(username);
+        self.users
+            .save_user(user.clone())
+            .await
+            .map_err(|error| ChangeUsernameError::Storage(error.into()))?;
+
+        Ok(AuthenticatedUser::from_user(&user))
+    }
+
+    async fn change_password(
+        &self,
+        user_id: &UserId,
+        current_password: String,
+        new_password: String,
+    ) -> Result<(), ChangePasswordError> {
+        let user = self
+            .load_user(user_id)
+            .await
+            .map_err(ChangePasswordError::Storage)?;
+
+        let matches = self
+            .passwords
+            .verify_password(&current_password, user.password_hash())
+            .await
+            .map_err(|error| ChangePasswordError::Storage(error.into()))?;
+
+        if !matches {
+            return Err(ChangePasswordError::InvalidPassword);
+        }
+
+        let password_hash = self
+            .passwords
+            .hash_password(&new_password)
+            .await
+            .map_err(|error| ChangePasswordError::Storage(error.into()))?;
+
+        self.users
+            .save_user(user.with_password_hash(password_hash))
+            .await
+            .map_err(|error| ChangePasswordError::Storage(error.into()))?;
+
+        Ok(())
     }
 
     async fn authenticate_session(
@@ -176,6 +275,14 @@ where
     C: Clock,
     G: SessionTokenGenerator,
 {
+    async fn load_user(&self, id: &UserId) -> anyhow::Result<AuthUser> {
+        self.users
+            .find_by_id(id)
+            .await
+            .map_err(anyhow::Error::from)?
+            .ok_or_else(|| anyhow::anyhow!("user `{}` not found", id.as_str()))
+    }
+
     async fn verify_credentials(
         &self,
         email: UserEmail,
@@ -495,6 +602,247 @@ mod tests {
             .await;
 
         assert!(matches!(result, Err(LoginError::InvalidCredentials)));
+    }
+
+    #[tokio::test]
+    async fn change_email_verifies_the_password_and_saves_a_normalized_email() {
+        let mut users = MockUserRepository::new();
+        users
+            .expect_find_by_id()
+            .returning(|_| Ok(Some(user("alice@example.com"))));
+        users.expect_find_by_email().returning(|_| Ok(None));
+        users.expect_save_user().returning(|user| {
+            assert_eq!(user.email().as_str(), "new@example.com");
+            Ok(())
+        });
+
+        let mut passwords = MockPasswordHasher::new();
+        passwords
+            .expect_verify_password()
+            .returning(|_, _| Ok(true));
+
+        let service = test_service(
+            users,
+            passwords,
+            MockSessionRepository::new(),
+            SystemTime::now(),
+        );
+
+        let updated = service
+            .change_email(
+                &UserId::new("user-1".to_string()),
+                "correct horse battery".to_string(),
+                UserEmail::new(" New@Example.com "),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(updated.email().as_str(), "new@example.com");
+    }
+
+    #[tokio::test]
+    async fn change_email_rejects_an_incorrect_current_password() {
+        let mut users = MockUserRepository::new();
+        users
+            .expect_find_by_id()
+            .returning(|_| Ok(Some(user("alice@example.com"))));
+
+        let mut passwords = MockPasswordHasher::new();
+        passwords
+            .expect_verify_password()
+            .returning(|_, _| Ok(false));
+
+        let service = test_service(
+            users,
+            passwords,
+            MockSessionRepository::new(),
+            SystemTime::now(),
+        );
+
+        let result = service
+            .change_email(
+                &UserId::new("user-1".to_string()),
+                "wrong".to_string(),
+                UserEmail::new("new@example.com"),
+            )
+            .await;
+
+        assert!(matches!(result, Err(ChangeEmailError::InvalidPassword)));
+    }
+
+    #[tokio::test]
+    async fn change_email_rejects_an_email_used_by_another_user() {
+        let mut users = MockUserRepository::new();
+        users
+            .expect_find_by_id()
+            .returning(|_| Ok(Some(user("alice@example.com"))));
+        users.expect_find_by_email().returning(|_| {
+            Ok(Some(AuthUser::new(
+                UserId::new("user-2".to_string()),
+                UserEmail::new("taken@example.com"),
+                None,
+                PasswordHash::new("stored-hash"),
+                UserRole::User,
+            )))
+        });
+
+        let mut passwords = MockPasswordHasher::new();
+        passwords
+            .expect_verify_password()
+            .returning(|_, _| Ok(true));
+
+        let service = test_service(
+            users,
+            passwords,
+            MockSessionRepository::new(),
+            SystemTime::now(),
+        );
+
+        let result = service
+            .change_email(
+                &UserId::new("user-1".to_string()),
+                "correct horse battery".to_string(),
+                UserEmail::new("taken@example.com"),
+            )
+            .await;
+
+        assert!(matches!(result, Err(ChangeEmailError::EmailTaken)));
+    }
+
+    #[tokio::test]
+    async fn change_email_allows_keeping_the_same_email() {
+        let mut users = MockUserRepository::new();
+        users
+            .expect_find_by_id()
+            .returning(|_| Ok(Some(user("alice@example.com"))));
+        users
+            .expect_find_by_email()
+            .returning(|_| Ok(Some(user("alice@example.com"))));
+        users.expect_save_user().returning(|_| Ok(()));
+
+        let mut passwords = MockPasswordHasher::new();
+        passwords
+            .expect_verify_password()
+            .returning(|_, _| Ok(true));
+
+        let service = test_service(
+            users,
+            passwords,
+            MockSessionRepository::new(),
+            SystemTime::now(),
+        );
+
+        let updated = service
+            .change_email(
+                &UserId::new("user-1".to_string()),
+                "correct horse battery".to_string(),
+                UserEmail::new("alice@example.com"),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(updated.email().as_str(), "alice@example.com");
+    }
+
+    #[tokio::test]
+    async fn change_username_updates_and_clears_the_username() {
+        let mut users = MockUserRepository::new();
+        users
+            .expect_find_by_id()
+            .times(2)
+            .returning(|_| Ok(Some(user("alice@example.com"))));
+        users.expect_save_user().returning(|_| Ok(()));
+
+        let service = test_service(
+            users,
+            MockPasswordHasher::new(),
+            MockSessionRepository::new(),
+            SystemTime::now(),
+        );
+
+        let updated = service
+            .change_username(
+                &UserId::new("user-1".to_string()),
+                Some(Username::new("New Name".to_string())),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(updated.username().map(Username::as_str), Some("New Name"));
+
+        let cleared = service
+            .change_username(&UserId::new("user-1".to_string()), None)
+            .await
+            .unwrap();
+
+        assert_eq!(cleared.username(), None);
+        assert_eq!(cleared.display_name(), "alice@example.com");
+    }
+
+    #[tokio::test]
+    async fn change_password_verifies_and_hashes_the_new_password() {
+        let mut users = MockUserRepository::new();
+        users
+            .expect_find_by_id()
+            .returning(|_| Ok(Some(user("alice@example.com"))));
+        users.expect_save_user().returning(|user| {
+            assert_eq!(user.password_hash().as_str(), "hash:new password");
+            Ok(())
+        });
+
+        let mut passwords = MockPasswordHasher::new();
+        passwords
+            .expect_verify_password()
+            .returning(|_, _| Ok(true));
+        passwords
+            .expect_hash_password()
+            .returning(|password| Ok(PasswordHash::new(format!("hash:{password}"))));
+
+        let service = test_service(
+            users,
+            passwords,
+            MockSessionRepository::new(),
+            SystemTime::now(),
+        );
+
+        service
+            .change_password(
+                &UserId::new("user-1".to_string()),
+                "correct horse battery".to_string(),
+                "new password".to_string(),
+            )
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn change_password_rejects_an_incorrect_current_password() {
+        let mut users = MockUserRepository::new();
+        users
+            .expect_find_by_id()
+            .returning(|_| Ok(Some(user("alice@example.com"))));
+
+        let mut passwords = MockPasswordHasher::new();
+        passwords
+            .expect_verify_password()
+            .returning(|_, _| Ok(false));
+
+        let service = test_service(
+            users,
+            passwords,
+            MockSessionRepository::new(),
+            SystemTime::now(),
+        );
+
+        let result = service
+            .change_password(
+                &UserId::new("user-1".to_string()),
+                "wrong".to_string(),
+                "new password".to_string(),
+            )
+            .await;
+
+        assert!(matches!(result, Err(ChangePasswordError::InvalidPassword)));
     }
 
     #[tokio::test]

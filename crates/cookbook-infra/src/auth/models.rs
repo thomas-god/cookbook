@@ -95,6 +95,18 @@ impl AuthUser {
             .as_ref()
             .map_or(self.email.as_str(), Username::as_str)
     }
+
+    pub fn with_email(self, email: UserEmail) -> Self {
+        Self::new(self.id, email, self.username, self.password_hash, self.role)
+    }
+
+    pub fn with_username(self, username: Option<Username>) -> Self {
+        Self::new(self.id, self.email, username, self.password_hash, self.role)
+    }
+
+    pub fn with_password_hash(self, password_hash: PasswordHash) -> Self {
+        Self::new(self.id, self.email, self.username, password_hash, self.role)
+    }
 }
 
 /// An authenticated user, safe to expose to the application layer.

@@ -35,6 +35,26 @@ pub trait AuthService: Clone + Send + Sync + 'static {
         password: String,
     ) -> impl Future<Output = Result<LoginResult, LoginError>> + Send;
 
+    fn change_email(
+        &self,
+        user_id: &UserId,
+        current_password: String,
+        new_email: UserEmail,
+    ) -> impl Future<Output = Result<AuthenticatedUser, ChangeEmailError>> + Send;
+
+    fn change_username(
+        &self,
+        user_id: &UserId,
+        username: Option<Username>,
+    ) -> impl Future<Output = Result<AuthenticatedUser, ChangeUsernameError>> + Send;
+
+    fn change_password(
+        &self,
+        user_id: &UserId,
+        current_password: String,
+        new_password: String,
+    ) -> impl Future<Output = Result<(), ChangePasswordError>> + Send;
+
     fn authenticate_session(
         &self,
         token_hash: SessionTokenHash,
@@ -152,6 +172,59 @@ impl fmt::Display for LoginError {
 }
 
 impl std::error::Error for LoginError {}
+
+#[derive(Debug)]
+pub enum ChangeEmailError {
+    InvalidPassword,
+    InvalidEmail,
+    EmailTaken,
+    Storage(anyhow::Error),
+}
+
+impl fmt::Display for ChangeEmailError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidPassword => f.write_str("current password is incorrect"),
+            Self::InvalidEmail => f.write_str("invalid email address"),
+            Self::EmailTaken => f.write_str("an account with this email already exists"),
+            Self::Storage(reason) => write!(f, "failed to change email: {reason}"),
+        }
+    }
+}
+
+impl std::error::Error for ChangeEmailError {}
+
+#[derive(Debug)]
+pub enum ChangeUsernameError {
+    Storage(anyhow::Error),
+}
+
+impl fmt::Display for ChangeUsernameError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Storage(reason) => write!(f, "failed to change username: {reason}"),
+        }
+    }
+}
+
+impl std::error::Error for ChangeUsernameError {}
+
+#[derive(Debug)]
+pub enum ChangePasswordError {
+    InvalidPassword,
+    Storage(anyhow::Error),
+}
+
+impl fmt::Display for ChangePasswordError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidPassword => f.write_str("current password is incorrect"),
+            Self::Storage(reason) => write!(f, "failed to change password: {reason}"),
+        }
+    }
+}
+
+impl std::error::Error for ChangePasswordError {}
 
 #[derive(Debug)]
 pub enum StartSessionError {
@@ -279,6 +352,26 @@ mockall::mock! {
             email: UserEmail,
             password: String,
         ) -> Result<LoginResult, LoginError>;
+
+        async fn change_email(
+            &self,
+            user_id: &UserId,
+            current_password: String,
+            new_email: UserEmail,
+        ) -> Result<AuthenticatedUser, ChangeEmailError>;
+
+        async fn change_username(
+            &self,
+            user_id: &UserId,
+            username: Option<Username>,
+        ) -> Result<AuthenticatedUser, ChangeUsernameError>;
+
+        async fn change_password(
+            &self,
+            user_id: &UserId,
+            current_password: String,
+            new_password: String,
+        ) -> Result<(), ChangePasswordError>;
 
         async fn authenticate_session(
             &self,
