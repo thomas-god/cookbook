@@ -3,6 +3,9 @@ name = "cookbook-infra"
 version.workspace = true
 edition.workspace = true
 
+[features]
+test-support = []
+
 [dependencies]
 anyhow.workspace = true
 argon2.workspace = true

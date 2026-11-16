@@ -566,7 +566,7 @@ mod tests {
 
     #[test]
     fn form_state_shows_current_values_and_starts_new_values_empty() {
-        let user = AuthenticatedUser::new(
+        let user = AuthenticatedUser::for_test(
             UserId::new("user-1".to_string()),
             UserEmail::try_new("Alice@Example.com").unwrap(),
             Some(Username::new("Alice".to_string())),

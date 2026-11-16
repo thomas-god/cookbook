@@ -201,7 +201,12 @@ pub struct AuthenticatedUser {
 }
 
 impl AuthenticatedUser {
-    pub fn new(id: UserId, email: UserEmail, username: Option<Username>, role: UserRole) -> Self {
+    pub(crate) fn new(
+        id: UserId,
+        email: UserEmail,
+        username: Option<Username>,
+        role: UserRole,
+    ) -> Self {
         Self {
             id,
             email,
@@ -210,7 +215,21 @@ impl AuthenticatedUser {
         }
     }
 
-    pub fn from_user(user: &AuthUser) -> Self {
+    /// Creates an authenticated user for tests in other crates.
+    ///
+    /// Production code must obtain an `AuthenticatedUser` from `AuthService`,
+    /// so an `AdminActor` cannot be forged from an arbitrary value.
+    #[cfg(feature = "test-support")]
+    pub fn for_test(
+        id: UserId,
+        email: UserEmail,
+        username: Option<Username>,
+        role: UserRole,
+    ) -> Self {
+        Self::new(id, email, username, role)
+    }
+
+    pub(crate) fn from_user(user: &AuthUser) -> Self {
         Self::new(
             user.id().clone(),
             user.email().clone(),
