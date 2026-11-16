@@ -81,6 +81,20 @@ impl UserRepository for SqliteUserRepository {
         Ok(())
     }
 
+    async fn delete_user(&self, user: &UserId) -> Result<(), UserRepositoryError> {
+        sqlx::query(
+            "
+            DELETE FROM users
+            WHERE id = ?;",
+        )
+        .bind(user.as_str())
+        .execute(&self.pool)
+        .await
+        .map_err(storage_error)?;
+
+        Ok(())
+    }
+
     async fn count_users(&self) -> Result<usize, UserRepositoryError> {
         let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users")
             .fetch_one(&self.pool)
@@ -266,6 +280,38 @@ mod tests {
 
         assert_eq!(ids, ["user-2", "user-3", "user-1"]);
         assert_eq!(repository.count_admins().await.unwrap(), 2);
+    }
+
+    #[tokio::test]
+    async fn deletes_users_by_id() {
+        let repository = repository().await;
+        repository.save_user(user()).await.unwrap();
+
+        repository
+            .delete_user(&UserId::new("user-1".to_string()))
+            .await
+            .unwrap();
+
+        assert!(
+            repository
+                .find_by_id(&UserId::new("user-1".to_string()))
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(repository.count_users().await.unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn deleting_an_unknown_user_is_a_no_op() {
+        let repository = repository().await;
+
+        repository
+            .delete_user(&UserId::new("missing".to_string()))
+            .await
+            .unwrap();
+
+        assert_eq!(repository.count_users().await.unwrap(), 0);
     }
 
     #[tokio::test]

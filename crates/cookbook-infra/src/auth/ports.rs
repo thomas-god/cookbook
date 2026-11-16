@@ -73,6 +73,11 @@ pub trait AuthService: Clone + Send + Sync + 'static {
         &self,
         token_hash: SessionTokenHash,
     ) -> impl Future<Output = Result<(), DeleteSessionError>> + Send;
+
+    fn delete_account(
+        &self,
+        user: &UserId,
+    ) -> impl Future<Output = Result<(), DeleteUserError>> + Send;
 }
 
 /// An inbound (driving) port for administrative user management.
@@ -113,6 +118,12 @@ pub trait UserAdminService: Clone + Send + Sync + 'static {
         target: &UserId,
         role: UserRole,
     ) -> impl Future<Output = Result<UserSummary, SetUserRoleError>> + Send;
+
+    fn delete_user(
+        &self,
+        actor: &UserId,
+        target: &UserId,
+    ) -> impl Future<Output = Result<(), DeleteUserError>> + Send;
 }
 
 /// An outbound (driven) port for user persistence.
@@ -130,6 +141,11 @@ pub trait UserRepository: Clone + Send + Sync + 'static {
     fn save_user(
         &self,
         user: AuthUser,
+    ) -> impl Future<Output = Result<(), UserRepositoryError>> + Send;
+
+    fn delete_user(
+        &self,
+        user: &UserId,
     ) -> impl Future<Output = Result<(), UserRepositoryError>> + Send;
 
     fn count_users(&self) -> impl Future<Output = Result<usize, UserRepositoryError>> + Send;
@@ -376,6 +392,21 @@ impl fmt::Display for ResetUserPasswordError {
 impl std::error::Error for ResetUserPasswordError {}
 
 #[derive(Debug)]
+pub enum DeleteUserError {
+    Storage(anyhow::Error),
+}
+
+impl fmt::Display for DeleteUserError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Storage(reason) => write!(f, "failed to delete user: {reason}"),
+        }
+    }
+}
+
+impl std::error::Error for DeleteUserError {}
+
+#[derive(Debug)]
 pub enum SetUserRoleError {
     NotFound,
     LastAdmin,
@@ -557,6 +588,65 @@ mockall::mock! {
             &self,
             token_hash: SessionTokenHash,
         ) -> Result<(), DeleteSessionError>;
+
+        async fn delete_account(
+            &self,
+            user: &UserId,
+        ) -> Result<(), DeleteUserError>;
+    }
+}
+
+#[cfg(test)]
+mockall::mock! {
+    pub UserAdminService {}
+
+    impl Clone for UserAdminService {
+        fn clone(&self) -> Self;
+    }
+
+    impl UserAdminService for UserAdminService {
+        async fn list_users(&self) -> Result<Vec<UserSummary>, ListUsersError>;
+
+        async fn get_user(
+            &self,
+            id: &UserId,
+        ) -> Result<Option<UserSummary>, GetUserError>;
+
+        async fn create_user(
+            &self,
+            request: CreateUserRequest,
+        ) -> Result<UserSummary, CreateUserError>;
+
+        async fn change_user_email(
+            &self,
+            id: &UserId,
+            email: UserEmail,
+        ) -> Result<UserSummary, ChangeUserEmailError>;
+
+        async fn change_user_username(
+            &self,
+            id: &UserId,
+            username: Option<Username>,
+        ) -> Result<UserSummary, ChangeUserUsernameError>;
+
+        async fn reset_user_password(
+            &self,
+            id: &UserId,
+            password: String,
+        ) -> Result<(), ResetUserPasswordError>;
+
+        async fn set_user_role(
+            &self,
+            actor: &UserId,
+            target: &UserId,
+            role: UserRole,
+        ) -> Result<UserSummary, SetUserRoleError>;
+
+        async fn delete_user(
+            &self,
+            actor: &UserId,
+            target: &UserId,
+        ) -> Result<(), DeleteUserError>;
     }
 }
 
@@ -577,6 +667,8 @@ mockall::mock! {
         ) -> Result<Option<AuthUser>, UserRepositoryError>;
 
         async fn save_user(&self, user: AuthUser) -> Result<(), UserRepositoryError>;
+
+        async fn delete_user(&self, user: &UserId) -> Result<(), UserRepositoryError>;
 
         async fn count_users(&self) -> Result<usize, UserRepositoryError>;
 

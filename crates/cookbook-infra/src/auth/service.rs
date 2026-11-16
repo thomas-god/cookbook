@@ -10,10 +10,10 @@ use crate::auth::models::{
 use crate::auth::ports::{
     AuthService, AuthenticateSessionError, ChangeEmailError, ChangePasswordError,
     ChangeUserEmailError, ChangeUserUsernameError, ChangeUsernameError, Clock, CreateUserError,
-    CreateUserRequest, DeleteSessionError, GetUserError, ListUsersError, LoginError,
-    PasswordHasher, RegisterError, RegisterRequest, RenewSessionError, ResetUserPasswordError,
-    SessionRepository, SessionTokenGenerator, SetUserRoleError, StartSessionError,
-    UserAdminService, UserRepository,
+    CreateUserRequest, DeleteSessionError, DeleteUserError, GetUserError, ListUsersError,
+    LoginError, PasswordHasher, RegisterError, RegisterRequest, RenewSessionError,
+    ResetUserPasswordError, SessionRepository, SessionTokenGenerator, SetUserRoleError,
+    StartSessionError, UserAdminService, UserRepository,
 };
 
 #[derive(Debug, Clone)]
@@ -255,6 +255,13 @@ where
             .await
             .map_err(|error| DeleteSessionError::Storage(error.into()))
     }
+
+    async fn delete_account(&self, user: &UserId) -> Result<(), DeleteUserError> {
+        self.users
+            .delete_user(user)
+            .await
+            .map_err(|err| DeleteUserError::Storage(err.into()))
+    }
 }
 
 impl<U, P, S, C, G> UserAdminService for AuthServiceImpl<U, P, S, C, G>
@@ -395,6 +402,13 @@ where
             .map_err(|error| SetUserRoleError::Storage(error.into()))?;
 
         Ok(UserSummary::from_user(&user))
+    }
+
+    async fn delete_user(&self, _actor: &UserId, target: &UserId) -> Result<(), DeleteUserError> {
+        self.users
+            .delete_user(target)
+            .await
+            .map_err(|err| DeleteUserError::Storage(err.into()))
     }
 }
 
@@ -595,6 +609,7 @@ mod tests {
     use crate::auth::models::{GeneratedSessionToken, PasswordHash};
     use crate::auth::ports::{
         LoginError, MockPasswordHasher, MockSessionRepository, MockUserRepository, RegisterError,
+        UserRepositoryError,
     };
 
     #[derive(Clone)]
@@ -1388,6 +1403,50 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn delete_account_deletes_the_user() {
+        let mut users = MockUserRepository::new();
+        users
+            .expect_delete_user()
+            .withf(|id| id.as_str() == "user-1")
+            .returning(|_| Ok(()));
+
+        let service = test_service(
+            users,
+            MockPasswordHasher::new(),
+            MockSessionRepository::new(),
+            SystemTime::now(),
+        );
+
+        service
+            .delete_account(&UserId::new("user-1".to_string()))
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn delete_account_maps_storage_errors() {
+        let mut users = MockUserRepository::new();
+        users.expect_delete_user().returning(|_| {
+            Err(UserRepositoryError::Storage(anyhow::anyhow!(
+                "database unavailable"
+            )))
+        });
+
+        let service = test_service(
+            users,
+            MockPasswordHasher::new(),
+            MockSessionRepository::new(),
+            SystemTime::now(),
+        );
+
+        let result = service
+            .delete_account(&UserId::new("user-1".to_string()))
+            .await;
+
+        assert!(matches!(result, Err(DeleteUserError::Storage(_))));
+    }
+
+    #[tokio::test]
     async fn set_user_role_promotes_and_demotes_with_another_admin_present() {
         let mut users = MockUserRepository::new();
         users
@@ -1469,6 +1528,56 @@ mod tests {
             .await;
 
         assert!(matches!(result, Err(SetUserRoleError::LastAdmin)));
+    }
+
+    #[tokio::test]
+    async fn delete_user_deletes_the_target_user() {
+        let mut users = MockUserRepository::new();
+        users
+            .expect_delete_user()
+            .withf(|id| id.as_str() == "target-user")
+            .returning(|_| Ok(()));
+
+        let service = test_service(
+            users,
+            MockPasswordHasher::new(),
+            MockSessionRepository::new(),
+            SystemTime::now(),
+        );
+
+        service
+            .delete_user(
+                &UserId::new("admin-user".to_string()),
+                &UserId::new("target-user".to_string()),
+            )
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn delete_user_maps_storage_errors() {
+        let mut users = MockUserRepository::new();
+        users.expect_delete_user().returning(|_| {
+            Err(UserRepositoryError::Storage(anyhow::anyhow!(
+                "database unavailable"
+            )))
+        });
+
+        let service = test_service(
+            users,
+            MockPasswordHasher::new(),
+            MockSessionRepository::new(),
+            SystemTime::now(),
+        );
+
+        let result = service
+            .delete_user(
+                &UserId::new("admin-user".to_string()),
+                &UserId::new("target-user".to_string()),
+            )
+            .await;
+
+        assert!(matches!(result, Err(DeleteUserError::Storage(_))));
     }
 
     #[tokio::test]
