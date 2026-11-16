@@ -8,6 +8,7 @@ default-run = "cookbook-app"
 anyhow.workspace = true
 chrono.workspace = true
 cookbook-domain.workspace = true
+cookbook-export.workspace = true
 cookbook-infra.workspace = true
 cookbook-vision.workspace = true
 cron.workspace = true

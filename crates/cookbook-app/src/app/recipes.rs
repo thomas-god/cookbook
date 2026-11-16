@@ -35,7 +35,7 @@ use topcoat::{
 
 use crate::components::base::icons::{BACK_ARROW, MORE_VERT};
 use crate::{
-    app::{AppRecipeService, AppUserRepository, auth},
+    app::{AppRecipeService, AppUserRepository, auth, recipe::export::export_recipe},
     components::{
         base::{
             button::{ButtonSize, ButtonVariant, button, button_variants},
@@ -568,6 +568,15 @@ pub async fn recipe_menu(
                 >
                     (t!(recipe_history))
                 </a>
+                <a
+                    class=(class!(
+                        button_variants(ButtonVariant::Ghost, ButtonSize::Sm),
+                        "w-full justify-start",
+                    ))
+                    href=(href!(export_recipe, RecipeId(recipe.id().as_str())))
+                >
+                    (t!(recipe_export))
+                </a>
                 if is_author {
                     <form
                         method="post"
@@ -612,7 +621,7 @@ pub async fn cook_recipe(cx: &Cx) -> Result<impl View> {
     })
 }
 
-fn servings_label(cx: &Cx, servings: &Servings) -> String {
+pub(crate) fn servings_label(cx: &Cx, servings: &Servings) -> String {
     match servings {
         Servings::People(count) if *count == 1 => t!(serving_person, count = count.to_string())
             .resolve(cx)
@@ -1237,6 +1246,11 @@ pub async fn recipe_revision(cx: &Cx) -> Result<impl View> {
         RevisionId(revision.id().as_str()),
     )
     .resolve(cx);
+    let export_action = format!(
+        "{}?revision={}",
+        href!(export_recipe, RecipeId(recipe_id.as_str())).resolve(cx),
+        revision.id().as_str(),
+    );
 
     Ok(view! {
         <div class="flex flex-col gap-8">
@@ -1301,12 +1315,15 @@ pub async fn recipe_revision(cx: &Cx) -> Result<impl View> {
                     ": "
                     (author_name)
                 </p>
-                <p class="mt-4 text-sm">
+                <p class="mt-4 flex items-center gap-4 text-sm">
                     <a
                         class="underline underline-offset-4"
                         href=(href!(recipe_detail, RecipeId(recipe_id.as_str())))
                     >
                         (t!(recipe_view_current))
+                    </a>
+                    <a class="underline underline-offset-4" href=(export_action)>
+                        (t!(recipe_export))
                     </a>
                 </p>
                 if can_edit && !is_current {
@@ -1366,7 +1383,7 @@ fn parse_scope_form(pairs: Vec<(String, String)>) -> Result<RecipeScope> {
     RecipeScope::parse(scope.trim()).ok_or_else(|| bad_request("unknown recipe scope").into())
 }
 
-async fn display_name(cx: &Cx, user_id: &UserId) -> Result<String> {
+pub(crate) async fn display_name(cx: &Cx, user_id: &UserId) -> Result<String> {
     let user_repository: &AppUserRepository = app_context(cx);
 
     Ok(match user_repository.find_by_id(user_id).await? {
@@ -1378,7 +1395,7 @@ async fn display_name(cx: &Cx, user_id: &UserId) -> Result<String> {
     })
 }
 
-fn format_timestamp(edited_at: SystemTime) -> String {
+pub(crate) fn format_timestamp(edited_at: SystemTime) -> String {
     let datetime: chrono::DateTime<chrono::Local> = edited_at.into();
 
     datetime.format("%Y-%m-%d %H:%M").to_string()
