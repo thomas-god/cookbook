@@ -1,20 +1,27 @@
 use cookbook_domain::user::models::Username;
 use cookbook_infra::auth::{
     models::{AuthenticatedUser, UserEmail},
-    ports::{AuthService, ChangeEmailError, ChangePasswordError},
+    ports::{AuthService, ChangeEmailError, ChangePasswordError, DeleteUserError},
 };
 use topcoat::{
     Result,
     context::{Cx, app_context},
-    router::{content::Form, error::see_other, page, query_params},
+    router::{
+        content::Form,
+        error::{SeeOther, see_other},
+        href, page, query_params, route,
+    },
     view::{View, attributes, element_id, view},
 };
 
 use crate::{
-    app::{AppAuthService, auth::require_user},
+    app::{
+        AppAuthService,
+        auth::{require_user, stop_user_session},
+    },
     components::{
         base::{
-            button::button,
+            button::{ButtonVariant, button},
             card::{card, card_content, card_header, card_title},
             field::{field, field_error, field_label},
             input::input,
@@ -27,6 +34,7 @@ use crate::{
 #[query_params(error = bad_request)]
 struct AccountQuery {
     updated: Option<String>,
+    error: Option<String>,
 }
 
 #[derive(Clone, Copy)]
@@ -45,6 +53,20 @@ impl AccountQuery {
             _ => None,
         }
     }
+
+    fn error(&self) -> Option<AccountError> {
+        match self.error.as_deref() {
+            Some("delete-confirm") => Some(AccountError::DeleteConfirm),
+            Some("last-admin") => Some(AccountError::LastAdmin),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum AccountError {
+    DeleteConfirm,
+    LastAdmin,
 }
 
 #[derive(Clone, Copy)]
@@ -95,7 +117,13 @@ pub async fn page(cx: &Cx) -> Result<impl View> {
     let user = require_user(cx)?;
     let query = query_params::<AccountQuery>(cx)?;
 
-    account_page(cx, AccountFormState::for_user(user), query.update()).await
+    account_page(
+        cx,
+        AccountFormState::for_user(user),
+        query.update(),
+        query.error(),
+    )
+    .await
 }
 
 #[page(POST "./email")]
@@ -106,14 +134,14 @@ pub async fn change_email(cx: &Cx, Form(form): Form<Vec<(String, String)>>) -> R
         let mut state = AccountFormState::for_user(user);
         state.new_email.clear();
         state.email_error = Some(EmailFormError::InvalidForm);
-        return account_page(cx, state, None).await;
+        return account_page(cx, state, None, None).await;
     };
 
     let Ok(email) = UserEmail::try_new(form.email.clone()) else {
         let mut state = AccountFormState::for_user(user);
         state.new_email = form.email;
         state.email_error = Some(EmailFormError::InvalidEmail);
-        return account_page(cx, state, None).await;
+        return account_page(cx, state, None, None).await;
     };
 
     let auth: &AppAuthService = app_context(cx);
@@ -124,13 +152,13 @@ pub async fn change_email(cx: &Cx, Form(form): Form<Vec<(String, String)>>) -> R
             let mut state = AccountFormState::for_user(user);
             state.new_email = form.email;
             state.email_error = Some(EmailFormError::InvalidPassword);
-            account_page(cx, state, None).await
+            account_page(cx, state, None, None).await
         }
         Err(ChangeEmailError::EmailTaken) => {
             let mut state = AccountFormState::for_user(user);
             state.new_email = form.email;
             state.email_error = Some(EmailFormError::EmailTaken);
-            account_page(cx, state, None).await
+            account_page(cx, state, None, None).await
         }
         Err(error) => Err(error.into()),
     }
@@ -146,7 +174,7 @@ pub async fn change_username(
     let Some(form) = UsernameForm::parse(form) else {
         let mut state = AccountFormState::for_user(user);
         state.username_error = Some(UsernameFormError::InvalidForm);
-        return account_page(cx, state, None).await;
+        return account_page(cx, state, None, None).await;
     };
 
     let auth: &AppAuthService = app_context(cx);
@@ -170,13 +198,13 @@ pub async fn change_password(
     let Some(form) = PasswordForm::parse(form) else {
         let mut state = AccountFormState::for_user(user);
         state.password_error = Some(PasswordFormError::InvalidForm);
-        return account_page(cx, state, None).await;
+        return account_page(cx, state, None, None).await;
     };
 
     if form.password != form.password_confirm {
         let mut state = AccountFormState::for_user(user);
         state.password_error = Some(PasswordFormError::PasswordMismatch);
-        return account_page(cx, state, None).await;
+        return account_page(cx, state, None, None).await;
     }
 
     let auth: &AppAuthService = app_context(cx);
@@ -189,8 +217,36 @@ pub async fn change_password(
         Err(ChangePasswordError::InvalidPassword) => {
             let mut state = AccountFormState::for_user(user);
             state.password_error = Some(PasswordFormError::InvalidPassword);
-            account_page(cx, state, None).await
+            account_page(cx, state, None, None).await
         }
+        Err(error) => Err(error.into()),
+    }
+}
+
+#[route(POST "./delete")]
+pub async fn delete_account(cx: &Cx, Form(form): Form<Vec<(String, String)>>) -> Result<SeeOther> {
+    let user = require_user(cx)?;
+
+    let Some(form) = DeleteAccountForm::parse(form) else {
+        return Ok(see_other("/account?error=delete-confirm"));
+    };
+
+    let Ok(email) = UserEmail::try_new(form.email) else {
+        return Ok(see_other("/account?error=delete-confirm"));
+    };
+
+    if &email != user.email() {
+        return Ok(see_other("/account?error=delete-confirm"));
+    }
+
+    let auth: &AppAuthService = app_context(cx);
+
+    match auth.delete_account(user).await {
+        Ok(()) => {
+            stop_user_session(cx).await?;
+            Ok(see_other("/login"))
+        }
+        Err(DeleteUserError::LastAdmin) => Ok(see_other("/account?error=last-admin")),
         Err(error) => Err(error.into()),
     }
 }
@@ -311,10 +367,40 @@ impl PasswordForm {
     }
 }
 
+struct DeleteAccountForm {
+    email: String,
+}
+
+impl DeleteAccountForm {
+    fn parse(pairs: Vec<(String, String)>) -> Option<Self> {
+        let mut email = None;
+
+        for (key, value) in pairs {
+            match key.as_str() {
+                "email" => {
+                    if email.replace(value).is_some() {
+                        return None;
+                    }
+                }
+                _ => return None,
+            }
+        }
+
+        let email = email?.trim().to_string();
+
+        if email.is_empty() {
+            return None;
+        }
+
+        Some(Self { email })
+    }
+}
+
 async fn account_page(
     cx: &Cx,
     state: AccountFormState,
     updated: Option<AccountUpdate>,
+    error: Option<AccountError>,
 ) -> Result<impl View> {
     let email_id = element_id(cx);
     let email_password_id = element_id(cx);
@@ -322,6 +408,8 @@ async fn account_page(
     let current_password_id = element_id(cx);
     let new_password_id = element_id(cx);
     let confirm_password_id = element_id(cx);
+    let delete_email_id = element_id(cx);
+    let delete_confirm = t!(account_delete_confirm).resolve(cx);
 
     let invalid_email_form = matches!(state.email_error, Some(EmailFormError::InvalidForm));
     let invalid_email_password = matches!(state.email_error, Some(EmailFormError::InvalidPassword));
@@ -357,6 +445,22 @@ async fn account_page(
                 if matches!(updated, AccountUpdate::Password) {
                     (t!(account_updated_password))
                 }
+            </p>
+        }
+        if matches!(error, Some(AccountError::DeleteConfirm)) {
+            <p
+                role="alert"
+                class="mb-6 rounded-lg border border-destructive bg-destructive/10 px-4 py-3 text-sm"
+            >
+                (t!(account_delete_error_email_mismatch))
+            </p>
+        }
+        if matches!(error, Some(AccountError::LastAdmin)) {
+            <p
+                role="alert"
+                class="mb-6 rounded-lg border border-destructive bg-destructive/10 px-4 py-3 text-sm"
+            >
+                (t!(account_delete_error_last_admin))
             </p>
         }
         <div class="flex flex-col gap-6">
@@ -547,6 +651,43 @@ async fn account_page(
                 card_header(card_title((t!(language_label))))
                 card_content(locale_select())
             )
+            card(
+                card_header(card_title((t!(account_danger_heading))))
+                card_content(
+                    <div class="flex flex-col gap-4">
+                        <p class="text-sm text-muted-foreground">
+                            (t!(account_delete_hint))
+                        </p>
+                        <form
+                            method="post"
+                            action=(href!(delete_account))
+                            class="flex flex-col gap-4"
+                            onsubmit=(format!("return confirm({delete_confirm:?})"))
+                        >
+                            field(
+                                field_label(
+                                    attrs: attributes! { for=(&delete_email_id) },
+                                    (t!(account_delete_confirm_label))
+                                )
+                                input(
+                                    attrs: attributes! {
+                                        id=(&delete_email_id)
+                                        name="email"
+                                        type="email"
+                                        autocomplete="off"
+                                        required=""
+                                    }
+                                )
+                            )
+                            button(
+                                variant: ButtonVariant::Destructive,
+                                attrs: attributes! { type="submit" },
+                                (t!(account_delete_submit))
+                            )
+                        </form>
+                    </div>
+                )
+            )
         </div>
     })
 }
@@ -662,15 +803,54 @@ mod tests {
     }
 
     #[test]
+    fn parses_delete_account_confirmation_email() {
+        let form = DeleteAccountForm::parse(pairs(&[("email", " alice@example.com ")])).unwrap();
+        assert_eq!(form.email, "alice@example.com");
+
+        assert!(DeleteAccountForm::parse(pairs(&[("email", "   ")])).is_none());
+        assert!(
+            DeleteAccountForm::parse(pairs(&[
+                ("email", "alice@example.com"),
+                ("email", "bob@example.com"),
+            ]))
+            .is_none()
+        );
+        assert!(DeleteAccountForm::parse(pairs(&[("next", "/recipes")])).is_none());
+    }
+
+    #[test]
     fn maps_success_messages() {
         let query = AccountQuery {
             updated: Some("email".to_string()),
+            error: None,
         };
         assert!(matches!(query.update(), Some(AccountUpdate::Email)));
 
         let query = AccountQuery {
             updated: Some("unknown".to_string()),
+            error: None,
         };
         assert!(query.update().is_none());
+    }
+
+    #[test]
+    fn maps_delete_errors() {
+        let query = AccountQuery {
+            updated: None,
+            error: Some("delete-confirm".to_string()),
+        };
+        assert!(matches!(query.error(), Some(AccountError::DeleteConfirm)));
+
+        let query = AccountQuery {
+            updated: None,
+            error: Some("last-admin".to_string()),
+        };
+        assert!(matches!(query.error(), Some(AccountError::LastAdmin)));
+
+        let query = AccountQuery {
+            updated: None,
+            error: Some("unknown".to_string()),
+        };
+        assert!(query.error().is_none());
     }
 }

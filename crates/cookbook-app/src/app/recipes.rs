@@ -1374,7 +1374,7 @@ async fn display_name(cx: &Cx, user_id: &UserId) -> Result<String> {
             .username()
             .map(|username| username.as_str().to_string())
             .unwrap_or_else(|| user.email().as_str().to_string()),
-        None => user_id.as_str().to_string(),
+        None => t!(user_deleted).resolve(cx).into_owned(),
     })
 }
 

@@ -3,7 +3,7 @@ use cookbook_infra::auth::{
     models::{AdminActor, UserEmail, UserSummary},
     ports::{
         ChangeUserEmailError, ChangeUserUsernameError, CreateUserError, CreateUserRequest,
-        ResetUserPasswordError, SetUserRoleError, UserAdminService,
+        DeleteUserError, ResetUserPasswordError, SetUserRoleError, UserAdminService,
     },
 };
 use topcoat::{
@@ -11,7 +11,7 @@ use topcoat::{
     context::{Cx, app_context},
     router::{
         content::Form,
-        error::{SeeOther, bad_request, not_found, see_other},
+        error::{SeeOther, bad_request, forbidden, not_found, see_other},
         href, page, path_param, query_params, route,
     },
     view::{View, attributes, element_id, view},
@@ -63,6 +63,7 @@ impl EditQuery {
 #[derive(Clone, Copy)]
 enum Update {
     Created,
+    Deleted,
     Email,
     Username,
     Password,
@@ -72,6 +73,7 @@ enum Update {
 fn parse_update(value: Option<&str>) -> Option<Update> {
     match value {
         Some("created") => Some(Update::Created),
+        Some("deleted") => Some(Update::Deleted),
         Some("email") => Some(Update::Email),
         Some("username") => Some(Update::Username),
         Some("password") => Some(Update::Password),
@@ -499,6 +501,24 @@ pub async fn set_role(cx: &Cx, Form(form): Form<Vec<(String, String)>>) -> Resul
     }
 }
 
+#[route(POST "./{user_id}/delete")]
+pub async fn delete_user(cx: &Cx) -> Result<SeeOther> {
+    let admin = require_admin(cx)?;
+    let id = path_user_id(cx);
+    let auth: &AppAuthService = app_context(cx);
+
+    match auth.delete_user(&admin, &id).await {
+        Ok(()) => Ok(see_other(format!(
+            "{}?updated=deleted",
+            href!(page).resolve(cx)
+        ))),
+        Err(DeleteUserError::NotFound) => Err(not_found().into()),
+        Err(DeleteUserError::CannotDeleteSelf) => Err(forbidden().into()),
+        Err(DeleteUserError::LastAdmin) => Ok(see_other(edit_url(cx, &id, "error=last-admin"))),
+        Err(error) => Err(error.into()),
+    }
+}
+
 fn parse_role_form(pairs: Vec<(String, String)>) -> Option<UserRole> {
     let mut role = None;
 
@@ -558,6 +578,9 @@ async fn users_page(
             >
                 if matches!(updated, Update::Created) {
                     (t!(admin_user_created))
+                }
+                if matches!(updated, Update::Deleted) {
+                    (t!(admin_user_deleted))
                 }
             </p>
         }
@@ -760,6 +783,8 @@ async fn edit_view(
         state.password_error,
         Some(PasswordFormError::PasswordMismatch)
     );
+    let delete_action = href!(delete_user, UserId(user.id().as_str())).resolve(cx);
+    let delete_confirm = t!(admin_user_delete_confirm).resolve(cx);
 
     Ok(view! {
         cx =>
@@ -993,6 +1018,29 @@ async fn edit_view(
                     </div>
                 )
             )
+            if user.id() != &admin_id {
+                card(
+                    card_header(card_title((t!(admin_user_danger_heading))))
+                    card_content(
+                        <div class="flex flex-col gap-4">
+                            <p class="text-sm text-muted-foreground">
+                                (t!(admin_user_delete_hint))
+                            </p>
+                            <form
+                                method="post"
+                                action=(delete_action)
+                                onsubmit=(format!("return confirm({delete_confirm:?})"))
+                            >
+                                button(
+                                    variant: ButtonVariant::Destructive,
+                                    attrs: attributes! { type="submit" },
+                                    (t!(admin_user_delete_submit))
+                                )
+                            </form>
+                        </div>
+                    )
+                )
+            }
         </div>
     })
 }
@@ -1092,6 +1140,10 @@ mod tests {
     #[test]
     fn maps_update_and_error_queries() {
         assert!(matches!(parse_update(Some("email")), Some(Update::Email)));
+        assert!(matches!(
+            parse_update(Some("deleted")),
+            Some(Update::Deleted)
+        ));
         assert!(parse_update(Some("unknown")).is_none());
 
         let query = EditQuery {
