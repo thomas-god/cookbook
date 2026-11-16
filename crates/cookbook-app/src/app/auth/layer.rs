@@ -1,5 +1,5 @@
 use cookbook_infra::auth::{
-    models::{AuthenticatedUser, SessionTokenHash},
+    models::{AdminActor, AuthenticatedUser, SessionTokenHash},
     ports::AuthService,
 };
 use topcoat::{
@@ -24,14 +24,10 @@ pub fn require_user(cx: &Cx) -> Result<&AuthenticatedUser> {
 }
 
 /// Returns the authenticated admin, or rejects the request.
-pub fn require_admin(cx: &Cx) -> Result<&AuthenticatedUser> {
+pub fn require_admin(cx: &Cx) -> Result<AdminActor> {
     let user = require_user(cx)?;
 
-    if !user.role().is_admin() {
-        return Err(forbidden().into());
-    }
-
-    Ok(user)
+    AdminActor::try_from(user).map_err(|_| forbidden().into())
 }
 
 #[derive(Debug, Clone, Copy, Default)]

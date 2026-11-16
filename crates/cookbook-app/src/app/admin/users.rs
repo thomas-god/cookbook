@@ -1,6 +1,6 @@
 use cookbook_domain::user::models::{UserId as UserIdValue, UserRole, Username};
 use cookbook_infra::auth::{
-    models::{UserEmail, UserSummary},
+    models::{AdminActor, UserEmail, UserSummary},
     ports::{
         ChangeUserEmailError, ChangeUserUsernameError, CreateUserError, CreateUserRequest,
         ResetUserPasswordError, SetUserRoleError, UserAdminService,
@@ -316,7 +316,7 @@ pub async fn page(cx: &Cx) -> Result<impl View> {
     let query = query_params::<ListQuery>(cx)?;
     let auth: &AppAuthService = app_context(cx);
 
-    let users = auth.list_users().await?;
+    let users = auth.list_users(&admin).await?;
 
     users_page(cx, admin.id().clone(), users, query.update()).await
 }
@@ -330,7 +330,7 @@ pub async fn new_page(cx: &Cx) -> Result<impl View> {
 
 #[page(POST)]
 pub async fn create(cx: &Cx, Form(form): Form<Vec<(String, String)>>) -> Result<impl View> {
-    require_admin(cx)?;
+    let admin = require_admin(cx)?;
 
     let Some(form) = CreateUserForm::parse(form) else {
         return create_page(
@@ -362,7 +362,7 @@ pub async fn create(cx: &Cx, Form(form): Form<Vec<(String, String)>>) -> Result<
         },
     };
 
-    match auth.create_user(request).await {
+    match auth.create_user(&admin, request).await {
         Ok(_) => Err(see_other(href!(page).resolve(cx)).into()),
         Err(CreateUserError::EmailTaken) => {
             create_page(cx, state, Some(CreateFormError::EmailTaken)).await
@@ -375,7 +375,7 @@ pub async fn create(cx: &Cx, Form(form): Form<Vec<(String, String)>>) -> Result<
 pub async fn edit_page(cx: &Cx) -> Result<impl View> {
     let admin = require_admin(cx)?;
     let query = query_params::<EditQuery>(cx)?;
-    let user = load_user(cx, &path_user_id(cx)).await?;
+    let user = load_user(cx, &admin, &path_user_id(cx)).await?;
 
     let state = EditFormState::for_user(&user);
 
@@ -394,7 +394,7 @@ pub async fn edit_page(cx: &Cx) -> Result<impl View> {
 pub async fn change_email(cx: &Cx, Form(form): Form<Vec<(String, String)>>) -> Result<impl View> {
     let admin = require_admin(cx)?;
     let id = path_user_id(cx);
-    let user = load_user(cx, &id).await?;
+    let user = load_user(cx, &admin, &id).await?;
 
     let Some(form) = EmailForm::parse(form) else {
         let mut state = EditFormState::for_user(&user);
@@ -411,7 +411,7 @@ pub async fn change_email(cx: &Cx, Form(form): Form<Vec<(String, String)>>) -> R
 
     let auth: &AppAuthService = app_context(cx);
 
-    match auth.change_user_email(&id, email).await {
+    match auth.change_user_email(&admin, &id, email).await {
         Ok(_) => Err(see_other(edit_url(cx, &id, "updated=email")).into()),
         Err(ChangeUserEmailError::EmailTaken) => {
             let mut state = EditFormState::for_user(&user);
@@ -430,7 +430,7 @@ pub async fn change_username(
 ) -> Result<impl View> {
     let admin = require_admin(cx)?;
     let id = path_user_id(cx);
-    let user = load_user(cx, &id).await?;
+    let user = load_user(cx, &admin, &id).await?;
 
     let Some(form) = UsernameForm::parse(form) else {
         let mut state = EditFormState::for_user(&user);
@@ -441,7 +441,7 @@ pub async fn change_username(
     let auth: &AppAuthService = app_context(cx);
 
     match auth
-        .change_user_username(&id, form.username.map(Username::new))
+        .change_user_username(&admin, &id, form.username.map(Username::new))
         .await
     {
         Ok(_) => Err(see_other(edit_url(cx, &id, "updated=username")).into()),
@@ -457,7 +457,7 @@ pub async fn change_password(
 ) -> Result<impl View> {
     let admin = require_admin(cx)?;
     let id = path_user_id(cx);
-    let user = load_user(cx, &id).await?;
+    let user = load_user(cx, &admin, &id).await?;
 
     let Some(form) = PasswordForm::parse(form) else {
         let mut state = EditFormState::for_user(&user);
@@ -473,7 +473,7 @@ pub async fn change_password(
 
     let auth: &AppAuthService = app_context(cx);
 
-    match auth.reset_user_password(&id, form.password).await {
+    match auth.reset_user_password(&admin, &id, form.password).await {
         Ok(_) => Err(see_other(edit_url(cx, &id, "updated=password")).into()),
         Err(ResetUserPasswordError::NotFound) => Err(not_found().into()),
         Err(error) => Err(error.into()),
@@ -490,7 +490,7 @@ pub async fn set_role(cx: &Cx, Form(form): Form<Vec<(String, String)>>) -> Resul
 
     let auth: &AppAuthService = app_context(cx);
 
-    match auth.set_user_role(admin.id(), &id, role).await {
+    match auth.set_user_role(&admin, &id, role).await {
         Ok(_) if id.as_str() == admin.id().as_str() && role == UserRole::User => Ok(see_other("/")),
         Ok(_) => Ok(see_other(edit_url(cx, &id, "updated=role"))),
         Err(SetUserRoleError::NotFound) => Err(not_found().into()),
@@ -520,10 +520,12 @@ fn path_user_id(cx: &Cx) -> UserIdValue {
     UserIdValue::new(path_param::<UserId>(cx).to_string())
 }
 
-async fn load_user(cx: &Cx, id: &UserIdValue) -> Result<UserSummary> {
+async fn load_user(cx: &Cx, admin: &AdminActor, id: &UserIdValue) -> Result<UserSummary> {
     let auth: &AppAuthService = app_context(cx);
 
-    auth.get_user(id).await?.ok_or_else(|| not_found().into())
+    auth.get_user(admin, id)
+        .await?
+        .ok_or_else(|| not_found().into())
 }
 
 fn edit_url(cx: &Cx, id: &UserIdValue, query: &str) -> String {

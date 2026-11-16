@@ -4,8 +4,8 @@ use cookbook_domain::user::models::{UserId, UserRole, Username};
 use uuid::Uuid;
 
 use crate::auth::models::{
-    AuthUser, AuthenticatedUser, IssuedSession, LoginResult, SessionPolicy, SessionRecord,
-    SessionTokenHash, UserEmail, UserSummary,
+    AdminActor, AuthUser, AuthenticatedUser, IssuedSession, LoginResult, SessionPolicy,
+    SessionRecord, SessionTokenHash, UserEmail, UserSummary,
 };
 use crate::auth::ports::{
     AuthService, AuthenticateSessionError, ChangeEmailError, ChangePasswordError,
@@ -100,12 +100,12 @@ where
 
     async fn change_email(
         &self,
-        user_id: &UserId,
+        actor: &AuthenticatedUser,
         current_password: String,
         new_email: UserEmail,
     ) -> Result<AuthenticatedUser, ChangeEmailError> {
         let user = self
-            .load_user(user_id)
+            .load_user(actor.id())
             .await
             .map_err(ChangeEmailError::Storage)?;
 
@@ -132,11 +132,11 @@ where
 
     async fn change_username(
         &self,
-        user_id: &UserId,
+        actor: &AuthenticatedUser,
         username: Option<Username>,
     ) -> Result<AuthenticatedUser, ChangeUsernameError> {
         let user = self
-            .load_user(user_id)
+            .load_user(actor.id())
             .await
             .map_err(ChangeUsernameError::Storage)?;
 
@@ -150,12 +150,12 @@ where
 
     async fn change_password(
         &self,
-        user_id: &UserId,
+        actor: &AuthenticatedUser,
         current_password: String,
         new_password: String,
     ) -> Result<(), ChangePasswordError> {
         let user = self
-            .load_user(user_id)
+            .load_user(actor.id())
             .await
             .map_err(ChangePasswordError::Storage)?;
 
@@ -256,9 +256,9 @@ where
             .map_err(|error| DeleteSessionError::Storage(error.into()))
     }
 
-    async fn delete_account(&self, user: &UserId) -> Result<(), DeleteUserError> {
+    async fn delete_account(&self, actor: &AuthenticatedUser) -> Result<(), DeleteUserError> {
         self.users
-            .delete_user(user)
+            .delete_user(actor.id())
             .await
             .map_err(|err| DeleteUserError::Storage(err.into()))
     }
@@ -272,7 +272,7 @@ where
     C: Clock,
     G: SessionTokenGenerator,
 {
-    async fn list_users(&self) -> Result<Vec<UserSummary>, ListUsersError> {
+    async fn list_users(&self, _actor: &AdminActor) -> Result<Vec<UserSummary>, ListUsersError> {
         let users = self
             .users
             .list_users()
@@ -282,9 +282,13 @@ where
         Ok(users.iter().map(UserSummary::from_user).collect())
     }
 
-    async fn get_user(&self, id: &UserId) -> Result<Option<UserSummary>, GetUserError> {
+    async fn get_user(
+        &self,
+        _actor: &AdminActor,
+        target: &UserId,
+    ) -> Result<Option<UserSummary>, GetUserError> {
         self.users
-            .find_by_id(id)
+            .find_by_id(target)
             .await
             .map(|user| user.as_ref().map(UserSummary::from_user))
             .map_err(|error| GetUserError::Storage(error.into()))
@@ -292,6 +296,7 @@ where
 
     async fn create_user(
         &self,
+        _actor: &AdminActor,
         request: CreateUserRequest,
     ) -> Result<UserSummary, CreateUserError> {
         let user = self
@@ -312,12 +317,13 @@ where
 
     async fn change_user_email(
         &self,
-        id: &UserId,
+        _actor: &AdminActor,
+        target: &UserId,
         email: UserEmail,
     ) -> Result<UserSummary, ChangeUserEmailError> {
         let user = self
             .users
-            .find_by_id(id)
+            .find_by_id(target)
             .await
             .map_err(|error| ChangeUserEmailError::Storage(error.into()))?
             .ok_or(ChangeUserEmailError::NotFound)?;
@@ -335,12 +341,13 @@ where
 
     async fn change_user_username(
         &self,
-        id: &UserId,
+        _actor: &AdminActor,
+        target: &UserId,
         username: Option<Username>,
     ) -> Result<UserSummary, ChangeUserUsernameError> {
         let user = self
             .users
-            .find_by_id(id)
+            .find_by_id(target)
             .await
             .map_err(|error| ChangeUserUsernameError::Storage(error.into()))?
             .ok_or(ChangeUserUsernameError::NotFound)?;
@@ -355,12 +362,13 @@ where
 
     async fn reset_user_password(
         &self,
-        id: &UserId,
+        _actor: &AdminActor,
+        target: &UserId,
         password: String,
     ) -> Result<(), ResetUserPasswordError> {
         let user = self
             .users
-            .find_by_id(id)
+            .find_by_id(target)
             .await
             .map_err(|error| ResetUserPasswordError::Storage(error.into()))?
             .ok_or(ResetUserPasswordError::NotFound)?;
@@ -372,7 +380,7 @@ where
 
     async fn set_user_role(
         &self,
-        _actor: &UserId,
+        _actor: &AdminActor,
         target: &UserId,
         role: UserRole,
     ) -> Result<UserSummary, SetUserRoleError> {
@@ -404,7 +412,11 @@ where
         Ok(UserSummary::from_user(&user))
     }
 
-    async fn delete_user(&self, _actor: &UserId, target: &UserId) -> Result<(), DeleteUserError> {
+    async fn delete_user(
+        &self,
+        _actor: &AdminActor,
+        target: &UserId,
+    ) -> Result<(), DeleteUserError> {
         self.users
             .delete_user(target)
             .await
@@ -685,6 +697,20 @@ mod tests {
         )
     }
 
+    fn authenticated(email: &str) -> AuthenticatedUser {
+        AuthenticatedUser::from_user(&user(email))
+    }
+
+    fn admin_actor() -> AdminActor {
+        AdminActor::try_from(&AuthenticatedUser::new(
+            UserId::new("admin-1".to_string()),
+            user_email("admin@example.com"),
+            None,
+            UserRole::Admin,
+        ))
+        .unwrap()
+    }
+
     #[tokio::test]
     async fn register_hashes_the_password_and_saves_the_user() {
         let mut users = MockUserRepository::new();
@@ -846,7 +872,7 @@ mod tests {
 
         let updated = service
             .change_email(
-                &UserId::new("user-1".to_string()),
+                &authenticated("alice@example.com"),
                 "correct horse battery".to_string(),
                 user_email(" New@Example.com "),
             )
@@ -877,7 +903,7 @@ mod tests {
 
         let result = service
             .change_email(
-                &UserId::new("user-1".to_string()),
+                &authenticated("alice@example.com"),
                 "wrong".to_string(),
                 user_email("new@example.com"),
             )
@@ -916,7 +942,7 @@ mod tests {
 
         let result = service
             .change_email(
-                &UserId::new("user-1".to_string()),
+                &authenticated("alice@example.com"),
                 "correct horse battery".to_string(),
                 user_email("taken@example.com"),
             )
@@ -950,7 +976,7 @@ mod tests {
 
         let updated = service
             .change_email(
-                &UserId::new("user-1".to_string()),
+                &authenticated("alice@example.com"),
                 "correct horse battery".to_string(),
                 user_email("alice@example.com"),
             )
@@ -976,20 +1002,16 @@ mod tests {
             SystemTime::now(),
         );
 
+        let actor = authenticated("alice@example.com");
+
         let updated = service
-            .change_username(
-                &UserId::new("user-1".to_string()),
-                Some(Username::new("New Name".to_string())),
-            )
+            .change_username(&actor, Some(Username::new("New Name".to_string())))
             .await
             .unwrap();
 
         assert_eq!(updated.username().map(Username::as_str), Some("New Name"));
 
-        let cleared = service
-            .change_username(&UserId::new("user-1".to_string()), None)
-            .await
-            .unwrap();
+        let cleared = service.change_username(&actor, None).await.unwrap();
 
         assert_eq!(cleared.username(), None);
         assert_eq!(cleared.display_name(), "alice@example.com");
@@ -1023,7 +1045,7 @@ mod tests {
 
         service
             .change_password(
-                &UserId::new("user-1".to_string()),
+                &authenticated("alice@example.com"),
                 "correct horse battery".to_string(),
                 "new password".to_string(),
             )
@@ -1052,7 +1074,7 @@ mod tests {
 
         let result = service
             .change_password(
-                &UserId::new("user-1".to_string()),
+                &authenticated("alice@example.com"),
                 "wrong".to_string(),
                 "new password".to_string(),
             )
@@ -1235,7 +1257,7 @@ mod tests {
         let mut request = create_user_request(" New@Example.com ", UserRole::Admin);
         request.password = "secret".to_string();
 
-        let created = service.create_user(request).await.unwrap();
+        let created = service.create_user(&admin_actor(), request).await.unwrap();
 
         assert_eq!(created.email().as_str(), "new@example.com");
         assert_eq!(created.role(), UserRole::Admin);
@@ -1256,7 +1278,10 @@ mod tests {
         );
 
         let result = service
-            .create_user(create_user_request("taken@example.com", UserRole::User))
+            .create_user(
+                &admin_actor(),
+                create_user_request("taken@example.com", UserRole::User),
+            )
             .await;
 
         assert!(matches!(result, Err(CreateUserError::EmailTaken)));
@@ -1283,6 +1308,7 @@ mod tests {
 
         let updated = service
             .change_user_email(
+                &admin_actor(),
                 &UserId::new("user-1".to_string()),
                 user_email(" New@Example.com "),
             )
@@ -1317,6 +1343,7 @@ mod tests {
 
         let result = service
             .change_user_email(
+                &admin_actor(),
                 &UserId::new("user-1".to_string()),
                 user_email("taken@example.com"),
             )
@@ -1336,6 +1363,7 @@ mod tests {
 
         let result = service
             .change_user_email(
+                &admin_actor(),
                 &UserId::new("missing".to_string()),
                 user_email("new@example.com"),
             )
@@ -1363,7 +1391,7 @@ mod tests {
         );
 
         let updated = service
-            .change_user_username(&UserId::new("user-1".to_string()), None)
+            .change_user_username(&admin_actor(), &UserId::new("user-1".to_string()), None)
             .await
             .unwrap();
 
@@ -1395,6 +1423,7 @@ mod tests {
 
         service
             .reset_user_password(
+                &admin_actor(),
                 &UserId::new("user-1".to_string()),
                 "new-password".to_string(),
             )
@@ -1418,7 +1447,7 @@ mod tests {
         );
 
         service
-            .delete_account(&UserId::new("user-1".to_string()))
+            .delete_account(&authenticated("alice@example.com"))
             .await
             .unwrap();
     }
@@ -1440,7 +1469,7 @@ mod tests {
         );
 
         let result = service
-            .delete_account(&UserId::new("user-1".to_string()))
+            .delete_account(&authenticated("alice@example.com"))
             .await;
 
         assert!(matches!(result, Err(DeleteUserError::Storage(_))));
@@ -1466,7 +1495,7 @@ mod tests {
 
         let updated = service
             .set_user_role(
-                &UserId::new("admin-1".to_string()),
+                &admin_actor(),
                 &UserId::new("user-1".to_string()),
                 UserRole::Admin,
             )
@@ -1494,7 +1523,7 @@ mod tests {
 
         let updated = service
             .set_user_role(
-                &UserId::new("admin-1".to_string()),
+                &admin_actor(),
                 &UserId::new("user-1".to_string()),
                 UserRole::User,
             )
@@ -1521,7 +1550,7 @@ mod tests {
 
         let result = service
             .set_user_role(
-                &UserId::new("user-1".to_string()),
+                &admin_actor(),
                 &UserId::new("user-1".to_string()),
                 UserRole::User,
             )
@@ -1546,10 +1575,7 @@ mod tests {
         );
 
         service
-            .delete_user(
-                &UserId::new("admin-user".to_string()),
-                &UserId::new("target-user".to_string()),
-            )
+            .delete_user(&admin_actor(), &UserId::new("target-user".to_string()))
             .await
             .unwrap();
     }
@@ -1571,10 +1597,7 @@ mod tests {
         );
 
         let result = service
-            .delete_user(
-                &UserId::new("admin-user".to_string()),
-                &UserId::new("target-user".to_string()),
-            )
+            .delete_user(&admin_actor(), &UserId::new("target-user".to_string()))
             .await;
 
         assert!(matches!(result, Err(DeleteUserError::Storage(_))));
@@ -1597,7 +1620,7 @@ mod tests {
             SystemTime::now(),
         );
 
-        let summaries = service.list_users().await.unwrap();
+        let summaries = service.list_users(&admin_actor()).await.unwrap();
 
         assert_eq!(summaries.len(), 2);
         assert_eq!(summaries[0].display_name(), "Alice");

@@ -118,10 +118,7 @@ pub async fn change_email(cx: &Cx, Form(form): Form<Vec<(String, String)>>) -> R
 
     let auth: &AppAuthService = app_context(cx);
 
-    match auth
-        .change_email(user.id(), form.current_password, email)
-        .await
-    {
+    match auth.change_email(user, form.current_password, email).await {
         Ok(_) => Err(see_other("/account?updated=email").into()),
         Err(ChangeEmailError::InvalidPassword) => {
             let mut state = AccountFormState::for_user(user);
@@ -155,7 +152,7 @@ pub async fn change_username(
     let auth: &AppAuthService = app_context(cx);
 
     match auth
-        .change_username(user.id(), form.username.map(Username::new))
+        .change_username(user, form.username.map(Username::new))
         .await
     {
         Ok(_) => Err(see_other("/account?updated=username").into()),
@@ -185,7 +182,7 @@ pub async fn change_password(
     let auth: &AppAuthService = app_context(cx);
 
     match auth
-        .change_password(user.id(), form.current_password, form.password)
+        .change_password(user, form.current_password, form.password)
         .await
     {
         Ok(_) => Err(see_other("/account?updated=password").into()),

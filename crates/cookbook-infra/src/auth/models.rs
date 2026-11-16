@@ -242,6 +242,48 @@ impl AuthenticatedUser {
     }
 }
 
+/// An authenticated administrator.
+///
+/// Holding an `AdminActor` is proof that the wrapped user's role was checked
+/// when the actor was resolved.
+#[derive(Debug, Clone)]
+pub struct AdminActor {
+    user: AuthenticatedUser,
+}
+
+impl AdminActor {
+    pub fn id(&self) -> &UserId {
+        self.user.id()
+    }
+
+    pub fn as_authenticated(&self) -> &AuthenticatedUser {
+        &self.user
+    }
+}
+
+impl TryFrom<&AuthenticatedUser> for AdminActor {
+    type Error = NotAdmin;
+
+    fn try_from(user: &AuthenticatedUser) -> Result<Self, Self::Error> {
+        if user.role().is_admin() {
+            Ok(Self { user: user.clone() })
+        } else {
+            Err(NotAdmin)
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NotAdmin;
+
+impl fmt::Display for NotAdmin {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("user is not an administrator")
+    }
+}
+
+impl std::error::Error for NotAdmin {}
+
 /// The result of a successful login.
 #[derive(Debug, Clone)]
 pub struct LoginResult {
@@ -410,5 +452,27 @@ mod tests {
                 "{value} should be invalid"
             );
         }
+    }
+
+    #[test]
+    fn admin_actor_is_only_created_for_admins() {
+        let admin = AuthenticatedUser::new(
+            UserId::new("admin-1".to_string()),
+            UserEmail::try_new("admin@example.com").unwrap(),
+            None,
+            UserRole::Admin,
+        );
+
+        let actor = AdminActor::try_from(&admin).unwrap();
+        assert_eq!(actor.id().as_str(), "admin-1");
+
+        let user = AuthenticatedUser::new(
+            UserId::new("user-1".to_string()),
+            UserEmail::try_new("user@example.com").unwrap(),
+            None,
+            UserRole::User,
+        );
+
+        assert!(matches!(AdminActor::try_from(&user), Err(NotAdmin)));
     }
 }

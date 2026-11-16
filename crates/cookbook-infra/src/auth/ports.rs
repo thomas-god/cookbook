@@ -4,8 +4,8 @@ use std::{fmt, time::SystemTime};
 use cookbook_domain::user::models::{UserId, UserRole, Username};
 
 use crate::auth::models::{
-    AuthUser, AuthenticatedUser, GeneratedSessionToken, LoginResult, PasswordHash, SessionRecord,
-    SessionTokenHash, UserEmail, UserSummary,
+    AdminActor, AuthUser, AuthenticatedUser, GeneratedSessionToken, LoginResult, PasswordHash,
+    SessionRecord, SessionTokenHash, UserEmail, UserSummary,
 };
 
 pub trait Clock: Clone + Send + Sync + 'static {
@@ -37,20 +37,20 @@ pub trait AuthService: Clone + Send + Sync + 'static {
 
     fn change_email(
         &self,
-        user_id: &UserId,
+        actor: &AuthenticatedUser,
         current_password: String,
         new_email: UserEmail,
     ) -> impl Future<Output = Result<AuthenticatedUser, ChangeEmailError>> + Send;
 
     fn change_username(
         &self,
-        user_id: &UserId,
+        actor: &AuthenticatedUser,
         username: Option<Username>,
     ) -> impl Future<Output = Result<AuthenticatedUser, ChangeUsernameError>> + Send;
 
     fn change_password(
         &self,
-        user_id: &UserId,
+        actor: &AuthenticatedUser,
         current_password: String,
         new_password: String,
     ) -> impl Future<Output = Result<(), ChangePasswordError>> + Send;
@@ -76,52 +76,60 @@ pub trait AuthService: Clone + Send + Sync + 'static {
 
     fn delete_account(
         &self,
-        user: &UserId,
+        actor: &AuthenticatedUser,
     ) -> impl Future<Output = Result<(), DeleteUserError>> + Send;
 }
 
 /// An inbound (driving) port for administrative user management.
 pub trait UserAdminService: Clone + Send + Sync + 'static {
-    fn list_users(&self) -> impl Future<Output = Result<Vec<UserSummary>, ListUsersError>> + Send;
+    fn list_users(
+        &self,
+        actor: &AdminActor,
+    ) -> impl Future<Output = Result<Vec<UserSummary>, ListUsersError>> + Send;
 
     fn get_user(
         &self,
-        id: &UserId,
+        actor: &AdminActor,
+        target: &UserId,
     ) -> impl Future<Output = Result<Option<UserSummary>, GetUserError>> + Send;
 
     fn create_user(
         &self,
+        actor: &AdminActor,
         request: CreateUserRequest,
     ) -> impl Future<Output = Result<UserSummary, CreateUserError>> + Send;
 
     fn change_user_email(
         &self,
-        id: &UserId,
+        actor: &AdminActor,
+        target: &UserId,
         email: UserEmail,
     ) -> impl Future<Output = Result<UserSummary, ChangeUserEmailError>> + Send;
 
     fn change_user_username(
         &self,
-        id: &UserId,
+        actor: &AdminActor,
+        target: &UserId,
         username: Option<Username>,
     ) -> impl Future<Output = Result<UserSummary, ChangeUserUsernameError>> + Send;
 
     fn reset_user_password(
         &self,
-        id: &UserId,
+        actor: &AdminActor,
+        target: &UserId,
         password: String,
     ) -> impl Future<Output = Result<(), ResetUserPasswordError>> + Send;
 
     fn set_user_role(
         &self,
-        actor: &UserId,
+        actor: &AdminActor,
         target: &UserId,
         role: UserRole,
     ) -> impl Future<Output = Result<UserSummary, SetUserRoleError>> + Send;
 
     fn delete_user(
         &self,
-        actor: &UserId,
+        actor: &AdminActor,
         target: &UserId,
     ) -> impl Future<Output = Result<(), DeleteUserError>> + Send;
 }
@@ -554,20 +562,20 @@ mockall::mock! {
 
         async fn change_email(
             &self,
-            user_id: &UserId,
+            actor: &AuthenticatedUser,
             current_password: String,
             new_email: UserEmail,
         ) -> Result<AuthenticatedUser, ChangeEmailError>;
 
         async fn change_username(
             &self,
-            user_id: &UserId,
+            actor: &AuthenticatedUser,
             username: Option<Username>,
         ) -> Result<AuthenticatedUser, ChangeUsernameError>;
 
         async fn change_password(
             &self,
-            user_id: &UserId,
+            actor: &AuthenticatedUser,
             current_password: String,
             new_password: String,
         ) -> Result<(), ChangePasswordError>;
@@ -591,7 +599,7 @@ mockall::mock! {
 
         async fn delete_account(
             &self,
-            user: &UserId,
+            actor: &AuthenticatedUser,
         ) -> Result<(), DeleteUserError>;
     }
 }
@@ -605,46 +613,54 @@ mockall::mock! {
     }
 
     impl UserAdminService for UserAdminService {
-        async fn list_users(&self) -> Result<Vec<UserSummary>, ListUsersError>;
+        async fn list_users(
+            &self,
+            actor: &AdminActor,
+        ) -> Result<Vec<UserSummary>, ListUsersError>;
 
         async fn get_user(
             &self,
-            id: &UserId,
+            actor: &AdminActor,
+            target: &UserId,
         ) -> Result<Option<UserSummary>, GetUserError>;
 
         async fn create_user(
             &self,
+            actor: &AdminActor,
             request: CreateUserRequest,
         ) -> Result<UserSummary, CreateUserError>;
 
         async fn change_user_email(
             &self,
-            id: &UserId,
+            actor: &AdminActor,
+            target: &UserId,
             email: UserEmail,
         ) -> Result<UserSummary, ChangeUserEmailError>;
 
         async fn change_user_username(
             &self,
-            id: &UserId,
+            actor: &AdminActor,
+            target: &UserId,
             username: Option<Username>,
         ) -> Result<UserSummary, ChangeUserUsernameError>;
 
         async fn reset_user_password(
             &self,
-            id: &UserId,
+            actor: &AdminActor,
+            target: &UserId,
             password: String,
         ) -> Result<(), ResetUserPasswordError>;
 
         async fn set_user_role(
             &self,
-            actor: &UserId,
+            actor: &AdminActor,
             target: &UserId,
             role: UserRole,
         ) -> Result<UserSummary, SetUserRoleError>;
 
         async fn delete_user(
             &self,
-            actor: &UserId,
+            actor: &AdminActor,
             target: &UserId,
         ) -> Result<(), DeleteUserError>;
     }
