@@ -257,6 +257,18 @@ where
     }
 
     async fn delete_account(&self, actor: &AuthenticatedUser) -> Result<(), DeleteUserError> {
+        if actor.role().is_admin() {
+            let admins = self
+                .users
+                .count_admins()
+                .await
+                .map_err(|error| DeleteUserError::Storage(error.into()))?;
+
+            if admins <= 1 {
+                return Err(DeleteUserError::LastAdmin);
+            }
+        }
+
         self.users
             .delete_user(actor.id())
             .await
@@ -414,9 +426,32 @@ where
 
     async fn delete_user(
         &self,
-        _actor: &AdminActor,
+        actor: &AdminActor,
         target: &UserId,
     ) -> Result<(), DeleteUserError> {
+        if actor.id() == target {
+            return Err(DeleteUserError::CannotDeleteSelf);
+        }
+
+        let user = self
+            .users
+            .find_by_id(target)
+            .await
+            .map_err(|error| DeleteUserError::Storage(error.into()))?
+            .ok_or(DeleteUserError::NotFound)?;
+
+        if user.role().is_admin() {
+            let admins = self
+                .users
+                .count_admins()
+                .await
+                .map_err(|error| DeleteUserError::Storage(error.into()))?;
+
+            if admins <= 1 {
+                return Err(DeleteUserError::LastAdmin);
+            }
+        }
+
         self.users
             .delete_user(target)
             .await
@@ -699,6 +734,10 @@ mod tests {
 
     fn authenticated(email: &str) -> AuthenticatedUser {
         AuthenticatedUser::from_user(&user(email))
+    }
+
+    fn authenticated_admin(email: &str) -> AuthenticatedUser {
+        AuthenticatedUser::from_user(&admin_user(email))
     }
 
     fn admin_actor() -> AdminActor {
@@ -1476,6 +1515,47 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn delete_account_rejects_deleting_the_last_admin() {
+        let mut users = MockUserRepository::new();
+        users.expect_count_admins().returning(|| Ok(1));
+
+        let service = test_service(
+            users,
+            MockPasswordHasher::new(),
+            MockSessionRepository::new(),
+            SystemTime::now(),
+        );
+
+        let result = service
+            .delete_account(&authenticated_admin("admin@example.com"))
+            .await;
+
+        assert!(matches!(result, Err(DeleteUserError::LastAdmin)));
+    }
+
+    #[tokio::test]
+    async fn delete_account_allows_an_admin_when_another_admin_exists() {
+        let mut users = MockUserRepository::new();
+        users.expect_count_admins().returning(|| Ok(2));
+        users
+            .expect_delete_user()
+            .withf(|id| id.as_str() == "user-1")
+            .returning(|_| Ok(()));
+
+        let service = test_service(
+            users,
+            MockPasswordHasher::new(),
+            MockSessionRepository::new(),
+            SystemTime::now(),
+        );
+
+        service
+            .delete_account(&authenticated_admin("admin@example.com"))
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
     async fn set_user_role_promotes_and_demotes_with_another_admin_present() {
         let mut users = MockUserRepository::new();
         users
@@ -1563,6 +1643,9 @@ mod tests {
     async fn delete_user_deletes_the_target_user() {
         let mut users = MockUserRepository::new();
         users
+            .expect_find_by_id()
+            .returning(|_| Ok(Some(user("target@example.com"))));
+        users
             .expect_delete_user()
             .withf(|id| id.as_str() == "target-user")
             .returning(|_| Ok(()));
@@ -1581,8 +1664,67 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn delete_user_rejects_deleting_yourself() {
+        let service = test_service(
+            MockUserRepository::new(),
+            MockPasswordHasher::new(),
+            MockSessionRepository::new(),
+            SystemTime::now(),
+        );
+
+        let actor = admin_actor();
+        let result = service.delete_user(&actor, actor.id()).await;
+
+        assert!(matches!(result, Err(DeleteUserError::CannotDeleteSelf)));
+    }
+
+    #[tokio::test]
+    async fn delete_user_rejects_deleting_the_last_admin() {
+        let mut users = MockUserRepository::new();
+        users
+            .expect_find_by_id()
+            .returning(|_| Ok(Some(admin_user("target@example.com"))));
+        users.expect_count_admins().returning(|| Ok(1));
+
+        let service = test_service(
+            users,
+            MockPasswordHasher::new(),
+            MockSessionRepository::new(),
+            SystemTime::now(),
+        );
+
+        let result = service
+            .delete_user(&admin_actor(), &UserId::new("target-user".to_string()))
+            .await;
+
+        assert!(matches!(result, Err(DeleteUserError::LastAdmin)));
+    }
+
+    #[tokio::test]
+    async fn delete_user_returns_not_found_for_a_missing_target() {
+        let mut users = MockUserRepository::new();
+        users.expect_find_by_id().returning(|_| Ok(None));
+
+        let service = test_service(
+            users,
+            MockPasswordHasher::new(),
+            MockSessionRepository::new(),
+            SystemTime::now(),
+        );
+
+        let result = service
+            .delete_user(&admin_actor(), &UserId::new("missing".to_string()))
+            .await;
+
+        assert!(matches!(result, Err(DeleteUserError::NotFound)));
+    }
+
+    #[tokio::test]
     async fn delete_user_maps_storage_errors() {
         let mut users = MockUserRepository::new();
+        users
+            .expect_find_by_id()
+            .returning(|_| Ok(Some(user("target@example.com"))));
         users.expect_delete_user().returning(|_| {
             Err(UserRepositoryError::Storage(anyhow::anyhow!(
                 "database unavailable"

@@ -401,12 +401,20 @@ impl std::error::Error for ResetUserPasswordError {}
 
 #[derive(Debug)]
 pub enum DeleteUserError {
+    NotFound,
+    CannotDeleteSelf,
+    LastAdmin,
     Storage(anyhow::Error),
 }
 
 impl fmt::Display for DeleteUserError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::NotFound => f.write_str("user not found"),
+            Self::CannotDeleteSelf => {
+                f.write_str("cannot delete your own account from user management")
+            }
+            Self::LastAdmin => f.write_str("cannot delete the last administrator"),
             Self::Storage(reason) => write!(f, "failed to delete user: {reason}"),
         }
     }
