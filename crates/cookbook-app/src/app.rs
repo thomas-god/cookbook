@@ -34,6 +34,7 @@ pub(crate) mod admin;
 pub(crate) mod auth;
 mod locale;
 pub(crate) mod recipe;
+mod recipe_cleanup;
 pub(crate) mod recipes;
 mod vision;
 
@@ -81,6 +82,7 @@ pub async fn router() -> topcoat::router::Router {
     let document_repository = FileRecipeDocumentRepository::new(database.pool().clone(), files);
     let recipe_service =
         AppRecipeService::new(recipe_repository, document_repository, SystemClock::new());
+    recipe_cleanup::spawn(recipe_service.clone());
 
     let auth_config = auth::AuthConfig::from_env().expect("invalid authentication configuration");
     let vision_config = vision::VisionConfig::from_env().expect("invalid vision configuration");

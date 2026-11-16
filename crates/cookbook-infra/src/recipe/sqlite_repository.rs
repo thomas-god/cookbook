@@ -205,6 +205,26 @@ impl RecipeRepository for SqliteRecipeRepository {
             .map_err(list_storage)
     }
 
+    async fn find_orphaned_private_recipe_ids(&self) -> Result<Vec<RecipeId>, ListRecipesError> {
+        let rows = sqlx::query(
+            "
+            SELECT r.id
+            FROM recipes r
+            LEFT JOIN users u ON u.id = r.author_id
+            WHERE u.id IS NULL AND r.scope = ?
+            ORDER BY r.id",
+        )
+        .bind(RecipeScope::Private.as_str())
+        .fetch_all(&self.pool)
+        .await
+        .map_err(list_storage)?;
+
+        rows.iter()
+            .map(|row| row.try_get::<String, _>("id").map(RecipeId::new))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| ListRecipesError::Storage(error.into()))
+    }
+
     async fn search_recipes(
         &self,
         criteria: RecipeSearchCriteria,
@@ -1036,6 +1056,58 @@ mod tests {
             .unwrap();
 
         assert_eq!((images, documents), (0, 0));
+    }
+
+    #[tokio::test]
+    async fn finds_only_private_recipes_whose_author_no_longer_exists() {
+        let repository = repository().await;
+
+        for id in ["user-1", "user-2"] {
+            sqlx::query(
+                "INSERT INTO users (id, email, username, password_hash, role)
+                 VALUES (?, ?, NULL, 'hash', 'user')",
+            )
+            .bind(id)
+            .bind(format!("{id}@example.com"))
+            .execute(repository.pool())
+            .await
+            .unwrap();
+        }
+
+        for (id, author, scope) in [
+            ("orphan-private", "user-3", RecipeScope::Private),
+            ("orphan-viewable", "user-3", RecipeScope::Viewable),
+            ("orphan-editable", "user-3", RecipeScope::Editable),
+            ("owned-private", "user-1", RecipeScope::Private),
+            ("widowed-private", "user-2", RecipeScope::Private),
+        ] {
+            let recipe = Recipe::with_scope(
+                RecipeId::new(id.to_string()),
+                UserId::new(author.to_string()),
+                scope,
+            );
+            save(
+                &repository,
+                recipe.clone(),
+                revision(
+                    &format!("{id}-revision"),
+                    &recipe,
+                    id,
+                    SystemTime::UNIX_EPOCH,
+                ),
+            )
+            .await;
+        }
+
+        sqlx::query("DELETE FROM users WHERE id = 'user-2'")
+            .execute(repository.pool())
+            .await
+            .unwrap();
+
+        let ids = repository.find_orphaned_private_recipe_ids().await.unwrap();
+        let ids: Vec<_> = ids.iter().map(|id| id.as_str()).collect();
+
+        assert_eq!(ids, ["orphan-private", "widowed-private"]);
     }
 
     #[tokio::test]

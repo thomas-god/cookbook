@@ -17,10 +17,10 @@ use crate::recipe::ports::{
     GetRecipeError, GetRecipeHistoryError, GetRecipeImageError, GetRecipeImagesError,
     GetRecipeSourceDocumentError, GetRecipeSourceDocumentsError, GetRecipesError,
     GetSourceDocumentError, ListRecipeImagesError, ListSourceDocumentsError,
-    RecipeDocumentRepository, RecipeRepository, RecipeService, RestoreRecipeRevisionError,
-    RestoreRecipeRevisionRequest, SaveRecipeError, SearchRecipesError, SearchRecipesQuery,
-    SearchRecipesResult, UpdateRecipeError, UpdateRecipeRequest, UpdateRecipeScopeError,
-    UpdateRecipeScopeRequest,
+    PurgeOrphanedRecipesError, RecipeDocumentRepository, RecipeRepository, RecipeService,
+    RestoreRecipeRevisionError, RestoreRecipeRevisionRequest, SaveRecipeError, SearchRecipesError,
+    SearchRecipesQuery, SearchRecipesResult, UpdateRecipeError, UpdateRecipeRequest,
+    UpdateRecipeScopeError, UpdateRecipeScopeRequest,
 };
 use crate::user::models::UserId;
 
@@ -423,6 +423,40 @@ where
         Ok(())
     }
 
+    async fn purge_orphaned_private_recipes(&self) -> Result<usize, PurgeOrphanedRecipesError> {
+        let ids = self
+            .recipe_repository
+            .find_orphaned_private_recipe_ids()
+            .await
+            .map_err(|error| PurgeOrphanedRecipesError::Storage(error.into()))?;
+
+        let mut deleted = 0;
+
+        for id in ids {
+            match self.recipe_repository.delete_recipe(id.clone()).await {
+                Ok(()) => deleted += 1,
+                Err(DeleteRecipeRecordError::NotFound) => continue,
+                Err(DeleteRecipeRecordError::Storage(reason)) => {
+                    return Err(PurgeOrphanedRecipesError::Storage(reason));
+                }
+            }
+
+            if let Err(error) = self
+                .document_repository
+                .delete_recipe_assets(id.clone())
+                .await
+            {
+                tracing::warn!(
+                    recipe_id = id.as_str(),
+                    %error,
+                    "purged orphaned recipe but failed to remove its assets"
+                );
+            }
+        }
+
+        Ok(deleted)
+    }
+
     async fn get_recipes(&self, viewer: UserId) -> Result<Vec<RecipeWithContent>, GetRecipesError> {
         let recipes = self
             .recipe_repository
@@ -738,8 +772,8 @@ mod tests {
     };
     use crate::recipe::ports::{
         AddRecipeImagesError, DeleteRecipeAssetsError, DeleteRecipeRecordError,
-        MockRecipeDocumentRepository, MockRecipeRepository, RecipeSearchCriteria, SaveRecipeError,
-        SearchRecipesQuery, UpdateRecipeRequest,
+        MockRecipeDocumentRepository, MockRecipeRepository, PurgeOrphanedRecipesError,
+        RecipeSearchCriteria, SaveRecipeError, SearchRecipesQuery, UpdateRecipeRequest,
     };
     use crate::user::models::UserId;
 
@@ -2599,5 +2633,99 @@ mod tests {
         let service = RecipeServiceImpl::new(repository, documents, FixedClock::new());
 
         service.delete_recipe(recipe_id(), user_id()).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn purge_orphaned_private_recipes_deletes_every_orphan() {
+        let mut repository = MockRecipeRepository::new();
+        repository
+            .expect_find_orphaned_private_recipe_ids()
+            .times(1)
+            .returning(|| {
+                Ok(vec![
+                    RecipeId::new("soup".to_string()),
+                    RecipeId::new("stew".to_string()),
+                ])
+            });
+        repository
+            .expect_delete_recipe()
+            .times(2)
+            .returning(|_| Ok(()));
+        let mut documents = MockRecipeDocumentRepository::new();
+        documents
+            .expect_delete_recipe_assets()
+            .times(2)
+            .returning(|_| Ok(()));
+
+        let service = RecipeServiceImpl::new(repository, documents, FixedClock::new());
+
+        let deleted = service.purge_orphaned_private_recipes().await.unwrap();
+
+        assert_eq!(deleted, 2);
+    }
+
+    #[tokio::test]
+    async fn purge_orphaned_private_recipes_skips_already_deleted_records() {
+        let mut repository = MockRecipeRepository::new();
+        repository
+            .expect_find_orphaned_private_recipe_ids()
+            .times(1)
+            .returning(|| Ok(vec![RecipeId::new("soup".to_string())]));
+        repository
+            .expect_delete_recipe()
+            .times(1)
+            .returning(|_| Err(DeleteRecipeRecordError::NotFound));
+        let documents = MockRecipeDocumentRepository::new();
+
+        let service = RecipeServiceImpl::new(repository, documents, FixedClock::new());
+
+        let deleted = service.purge_orphaned_private_recipes().await.unwrap();
+
+        assert_eq!(deleted, 0);
+    }
+
+    #[tokio::test]
+    async fn purge_orphaned_private_recipes_tolerates_asset_cleanup_failure() {
+        let mut repository = MockRecipeRepository::new();
+        repository
+            .expect_find_orphaned_private_recipe_ids()
+            .times(1)
+            .returning(|| Ok(vec![RecipeId::new("soup".to_string())]));
+        repository
+            .expect_delete_recipe()
+            .times(1)
+            .returning(|_| Ok(()));
+        let mut documents = MockRecipeDocumentRepository::new();
+        documents
+            .expect_delete_recipe_assets()
+            .times(1)
+            .returning(|_| Err(DeleteRecipeAssetsError::Storage(anyhow!("cleanup failed"))));
+
+        let service = RecipeServiceImpl::new(repository, documents, FixedClock::new());
+
+        let deleted = service.purge_orphaned_private_recipes().await.unwrap();
+
+        assert_eq!(deleted, 1);
+    }
+
+    #[tokio::test]
+    async fn purge_orphaned_private_recipes_propagates_storage_failures() {
+        let mut repository = MockRecipeRepository::new();
+        repository
+            .expect_find_orphaned_private_recipe_ids()
+            .times(1)
+            .returning(|| Ok(vec![RecipeId::new("soup".to_string())]));
+        repository.expect_delete_recipe().times(1).returning(|_| {
+            Err(DeleteRecipeRecordError::Storage(anyhow!(
+                "database unavailable"
+            )))
+        });
+        let documents = MockRecipeDocumentRepository::new();
+
+        let service = RecipeServiceImpl::new(repository, documents, FixedClock::new());
+
+        let result = service.purge_orphaned_private_recipes().await;
+
+        assert!(matches!(result, Err(PurgeOrphanedRecipesError::Storage(_))));
     }
 }

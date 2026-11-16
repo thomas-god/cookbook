@@ -157,6 +157,10 @@ pub trait RecipeService: Clone + Send + Sync + 'static {
         actor: UserId,
     ) -> impl Future<Output = Result<(), DeleteRecipeError>> + Send;
 
+    fn purge_orphaned_private_recipes(
+        &self,
+    ) -> impl Future<Output = Result<usize, PurgeOrphanedRecipesError>> + Send;
+
     fn get_recipes(
         &self,
         viewer: UserId,
@@ -244,6 +248,10 @@ pub trait RecipeRepository: Clone + Send + Sync + 'static {
     fn get_recipes(
         &self,
     ) -> impl Future<Output = Result<Vec<RecipeWithContent>, ListRecipesError>> + Send;
+
+    fn find_orphaned_private_recipe_ids(
+        &self,
+    ) -> impl Future<Output = Result<Vec<RecipeId>, ListRecipesError>> + Send;
 
     fn search_recipes(
         &self,
@@ -416,6 +424,21 @@ impl fmt::Display for DeleteRecipeError {
 }
 
 impl std::error::Error for DeleteRecipeError {}
+
+#[derive(Debug)]
+pub enum PurgeOrphanedRecipesError {
+    Storage(anyhow::Error),
+}
+
+impl fmt::Display for PurgeOrphanedRecipesError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Storage(reason) => write!(f, "failed to purge orphaned recipes: {reason}"),
+        }
+    }
+}
+
+impl std::error::Error for PurgeOrphanedRecipesError {}
 
 #[derive(Debug)]
 pub enum DeleteRecipeRecordError {
@@ -813,6 +836,10 @@ mockall::mock! {
             actor: UserId,
         ) -> Result<(), DeleteRecipeError>;
 
+        async fn purge_orphaned_private_recipes(
+            &self,
+        ) -> Result<usize, PurgeOrphanedRecipesError>;
+
         async fn get_recipes(
             &self,
             viewer: UserId,
@@ -902,6 +929,10 @@ mockall::mock! {
         ) -> Result<Option<RecipeWithContent>, GetRecipeError>;
 
         async fn get_recipes(&self) -> Result<Vec<RecipeWithContent>, ListRecipesError>;
+
+        async fn find_orphaned_private_recipe_ids(
+            &self,
+        ) -> Result<Vec<RecipeId>, ListRecipesError>;
 
         async fn search_recipes(
             &self,
