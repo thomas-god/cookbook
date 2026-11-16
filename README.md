@@ -30,6 +30,44 @@ Session cookie security follows the `X-Forwarded-Proto` header:
 A TLS-terminating reverse proxy must set `X-Forwarded-Proto`. If the app is exposed directly to
 untrusted clients, make sure they cannot spoof that header.
 
+## Account recovery
+
+If the only administrator forgets their password, use the `cookbook-admin` binary from inside the
+container. It can reset a password and promote or demote an existing user:
+
+```sh
+# interactive password prompt (hidden input)
+docker exec -it cookbook /app/cookbook-admin set-password --email admin@example.com
+
+docker exec -it cookbook /app/cookbook-admin promote --email family@example.com
+docker exec -it cookbook /app/cookbook-admin demote --email admin@example.com
+```
+
+Outside Docker:
+
+```sh
+cargo run -p cookbook-infra --bin cookbook-admin -- \
+  set-password --email admin@example.com --data-dir ./data
+```
+
+Select the user with exactly one of `--id <ID>` or `--email <EMAIL>`. For scripts, pass the new
+password on standard input:
+
+```sh
+printf '%s\n' "$NEW_PASSWORD" | \
+  docker exec -i cookbook /app/cookbook-admin set-password --email admin@example.com --password-stdin
+```
+
+`cookbook-admin` operates directly on `cookbook.sqlite3` and does not require an authenticated
+session. Shell access to the container or its data volume is the authorization boundary. The app can
+keep running while it is used. There is deliberately no HTTP endpoint for these operations.
+
+Demoting the last administrator is refused, so at least one admin always remains. The command
+refuses to create a missing database, which protects against a mistyped `--data-dir`.
+
+When using `docker exec`, do not override the container user with `-u root`; the app must be able to
+write the database and its WAL companion files.
+
 ## Persistence
 
 Data is stored under `COOKBOOK_DATA_DIR`, which defaults to `./data`:

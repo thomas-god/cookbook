@@ -134,6 +134,26 @@ pub trait UserAdminService: Clone + Send + Sync + 'static {
     ) -> impl Future<Output = Result<(), DeleteUserError>> + Send;
 }
 
+/// An inbound (driving) port for out-of-band user maintenance.
+///
+/// Unlike [`UserAdminService`], these operations do not take an [`AdminActor`].
+/// The caller is trusted because it already has access to the application's
+/// database, for example through a shell in the container. This port must only
+/// be used by operator tooling and must never be exposed over the network.
+pub trait UserMaintenanceService: Clone + Send + Sync + 'static {
+    fn reset_password(
+        &self,
+        target: &UserId,
+        password: String,
+    ) -> impl Future<Output = Result<(), ResetUserPasswordError>> + Send;
+
+    fn set_role(
+        &self,
+        target: &UserId,
+        role: UserRole,
+    ) -> impl Future<Output = Result<UserSummary, SetUserRoleError>> + Send;
+}
+
 /// An outbound (driven) port for user persistence.
 pub trait UserRepository: Clone + Send + Sync + 'static {
     fn find_by_id(

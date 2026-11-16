@@ -22,6 +22,7 @@ derive_more = { version = "2.1.1", features = ["add", "constructor"] }
 form_urlencoded = "1"
 getrandom = "0.4"
 hayro = { version = "0.9", features = ["embed-fonts"] }
+rpassword = "7.5.5"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 mockall = "0.15"
 schemars = { version = "1", features = ["derive"] }

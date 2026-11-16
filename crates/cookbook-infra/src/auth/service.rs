@@ -13,7 +13,7 @@ use crate::auth::ports::{
     CreateUserRequest, DeleteSessionError, DeleteUserError, GetUserError, ListUsersError,
     LoginError, PasswordHasher, RegisterError, RegisterRequest, RenewSessionError,
     ResetUserPasswordError, SessionRepository, SessionTokenGenerator, SetUserRoleError,
-    StartSessionError, UserAdminService, UserRepository,
+    StartSessionError, UserAdminService, UserMaintenanceService, UserRepository,
 };
 
 #[derive(Debug, Clone)]
@@ -367,7 +367,7 @@ where
         let user = self
             .apply_username(user, username)
             .await
-            .map_err(|error| ChangeUserUsernameError::Storage(error))?;
+            .map_err(ChangeUserUsernameError::Storage)?;
 
         Ok(UserSummary::from_user(&user))
     }
@@ -378,16 +378,7 @@ where
         target: &UserId,
         password: String,
     ) -> Result<(), ResetUserPasswordError> {
-        let user = self
-            .users
-            .find_by_id(target)
-            .await
-            .map_err(|error| ResetUserPasswordError::Storage(error.into()))?
-            .ok_or(ResetUserPasswordError::NotFound)?;
-
-        self.apply_password(user, password)
-            .await
-            .map_err(|error| ResetUserPasswordError::Storage(error))
+        self.reset_password_by_id(target, password).await
     }
 
     async fn set_user_role(
@@ -396,32 +387,7 @@ where
         target: &UserId,
         role: UserRole,
     ) -> Result<UserSummary, SetUserRoleError> {
-        let user = self
-            .users
-            .find_by_id(target)
-            .await
-            .map_err(|error| SetUserRoleError::Storage(error.into()))?
-            .ok_or(SetUserRoleError::NotFound)?;
-
-        if user.role().is_admin() && !role.is_admin() {
-            let admins = self
-                .users
-                .count_admins()
-                .await
-                .map_err(|error| SetUserRoleError::Storage(error.into()))?;
-
-            if admins <= 1 {
-                return Err(SetUserRoleError::LastAdmin);
-            }
-        }
-
-        let user = user.with_role(role);
-        self.users
-            .save_user(user.clone())
-            .await
-            .map_err(|error| SetUserRoleError::Storage(error.into()))?;
-
-        Ok(UserSummary::from_user(&user))
+        self.set_role_by_id(target, role).await
     }
 
     async fn delete_user(
@@ -456,6 +422,87 @@ where
             .delete_user(target)
             .await
             .map_err(|err| DeleteUserError::Storage(err.into()))
+    }
+}
+
+impl<U, P, S, C, G> UserMaintenanceService for AuthServiceImpl<U, P, S, C, G>
+where
+    U: UserRepository,
+    P: PasswordHasher,
+    S: SessionRepository,
+    C: Clock,
+    G: SessionTokenGenerator,
+{
+    async fn reset_password(
+        &self,
+        target: &UserId,
+        password: String,
+    ) -> Result<(), ResetUserPasswordError> {
+        self.reset_password_by_id(target, password).await
+    }
+
+    async fn set_role(
+        &self,
+        target: &UserId,
+        role: UserRole,
+    ) -> Result<UserSummary, SetUserRoleError> {
+        self.set_role_by_id(target, role).await
+    }
+}
+
+impl<U, P, S, C, G> AuthServiceImpl<U, P, S, C, G>
+where
+    U: UserRepository,
+    P: PasswordHasher,
+{
+    async fn reset_password_by_id(
+        &self,
+        target: &UserId,
+        password: String,
+    ) -> Result<(), ResetUserPasswordError> {
+        let user = self
+            .users
+            .find_by_id(target)
+            .await
+            .map_err(|error| ResetUserPasswordError::Storage(error.into()))?
+            .ok_or(ResetUserPasswordError::NotFound)?;
+
+        self.apply_password(user, password)
+            .await
+            .map_err(ResetUserPasswordError::Storage)
+    }
+
+    async fn set_role_by_id(
+        &self,
+        target: &UserId,
+        role: UserRole,
+    ) -> Result<UserSummary, SetUserRoleError> {
+        let user = self
+            .users
+            .find_by_id(target)
+            .await
+            .map_err(|error| SetUserRoleError::Storage(error.into()))?
+            .ok_or(SetUserRoleError::NotFound)?;
+
+        if user.role().is_admin() && !role.is_admin() {
+            let admins = self
+                .users
+                .count_admins()
+                .await
+                .map_err(|error| SetUserRoleError::Storage(error.into()))?;
+
+            if admins <= 1 {
+                return Err(SetUserRoleError::LastAdmin);
+            }
+        }
+
+        let user = user.with_role(role);
+        self.users
+            .save_user(user.clone())
+            .await
+            .map_err(|error| SetUserRoleError::Storage(error.into()))?;
+
+        Ok(UserSummary::from_user(&user))
     }
 }
 
@@ -1468,6 +1515,105 @@ mod tests {
             )
             .await
             .unwrap();
+    }
+
+    #[tokio::test]
+    async fn maintenance_reset_password_hashes_without_verifying_the_current_password() {
+        let mut users = MockUserRepository::new();
+        users
+            .expect_find_by_id()
+            .returning(|_| Ok(Some(user("alice@example.com"))));
+        users.expect_save_user().returning(|user| {
+            assert_eq!(user.password_hash().as_str(), "hash:new-password");
+            Ok(())
+        });
+
+        let mut passwords = MockPasswordHasher::new();
+        passwords
+            .expect_hash_password()
+            .returning(|password| Ok(PasswordHash::new(format!("hash:{password}"))));
+
+        let service = test_service(
+            users,
+            passwords,
+            MockSessionRepository::new(),
+            SystemTime::now(),
+        );
+
+        service
+            .reset_password(
+                &UserId::new("user-1".to_string()),
+                "new-password".to_string(),
+            )
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn maintenance_reset_password_returns_not_found_for_a_missing_user() {
+        let mut users = MockUserRepository::new();
+        users.expect_find_by_id().returning(|_| Ok(None));
+
+        let service = test_service(
+            users,
+            MockPasswordHasher::new(),
+            MockSessionRepository::new(),
+            SystemTime::now(),
+        );
+
+        let result = service
+            .reset_password(&UserId::new("missing".to_string()), "password".to_string())
+            .await;
+
+        assert!(matches!(result, Err(ResetUserPasswordError::NotFound)));
+    }
+
+    #[tokio::test]
+    async fn maintenance_set_role_promotes_a_user() {
+        let mut users = MockUserRepository::new();
+        users
+            .expect_find_by_id()
+            .returning(|_| Ok(Some(user("alice@example.com"))));
+        users.expect_save_user().returning(|user| {
+            assert_eq!(user.role(), UserRole::Admin);
+            Ok(())
+        });
+
+        let service = test_service(
+            users,
+            MockPasswordHasher::new(),
+            MockSessionRepository::new(),
+            SystemTime::now(),
+        );
+
+        let updated = service
+            .set_role(&UserId::new("user-1".to_string()), UserRole::Admin)
+            .await
+            .unwrap();
+
+        assert_eq!(updated.role(), UserRole::Admin);
+    }
+
+    #[tokio::test]
+    async fn maintenance_set_role_refuses_demoting_the_last_admin() {
+        let mut users = MockUserRepository::new();
+        users
+            .expect_find_by_id()
+            .returning(|_| Ok(Some(admin_user("alice@example.com"))));
+        users.expect_count_admins().returning(|| Ok(1));
+
+        let service = test_service(
+            users,
+            MockPasswordHasher::new(),
+            MockSessionRepository::new(),
+            SystemTime::now(),
+        );
+
+        let result = service
+            .set_role(&UserId::new("user-1".to_string()), UserRole::User)
+            .await;
+
+        assert!(matches!(result, Err(SetUserRoleError::LastAdmin)));
     }
 
     #[tokio::test]
