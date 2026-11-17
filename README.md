@@ -202,6 +202,13 @@ COOKBOOK_VLM_BACKUP_TIMEOUT_SECONDS=120
 Model/provider must support
 [structured output](https://lmstudio.ai/docs/developer/openai-compat/structured-output#structured-output).
 
+#### System prompt
+
+If you need to tweak vision import for a specific model and/or sources you can replace the default
+[system prompt](crates/cookbook-vision/prompts/recipe-system.txt) by using a global prompt
+(`COOKBOOK_VLM_SYSTEM_PROMPT_FILE`) or a prompt per provider
+(`COOKBOOK_VLM_PRIMARY_SYSTEM_PROMPT_FILE` and `COOKBOOK_VLM_BACKUP_SYSTEM_PROMPT_FILE`).
+
 ### List of environment variables
 
 The following variables are available to configure the application.
@@ -224,6 +231,9 @@ The following variables are available to configure the application.
 | `COOKBOOK_VLM_BACKUP_MODEL`            | unset                | Model name for the fallback endpoint; required with `COOKBOOK_VLM_BACKUP_URL`     |
 | `COOKBOOK_VLM_BACKUP_API_KEY`          | unset                | API key for the fallback endpoint; optional for endpoints that do not require one |
 | `COOKBOOK_VLM_BACKUP_TIMEOUT_SECONDS`  | `120`                | Request timeout for the fallback endpoint in seconds                              |
+| `COOKBOOK_VLM_SYSTEM_PROMPT`           | unset                | System prompt for every endpoint; replaces the built-in prompt                    |
+| `COOKBOOK_VLM_PRIMARY_SYSTEM_PROMPT`   | unset                | System prompt for the primary endpoint; overrides the global prompt               |
+| `COOKBOOK_VLM_BACKUP_SYSTEM_PROMPT`    | unset                | System prompt for the fallback endpoint; overrides the global prompt              |
 
 #### Loading secrets
 

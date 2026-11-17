@@ -33,10 +33,14 @@ pub mod vision {
     /// Prefix of the fallback OpenAI-compatible endpoint variables.
     pub const BACKUP_PREFIX: &str = "COOKBOOK_VLM_BACKUP";
 
+    /// System prompt used by every endpoint without its own override.
+    pub const SYSTEM_PROMPT: &str = "COOKBOOK_VLM_SYSTEM_PROMPT";
+
     pub const URL_SUFFIX: &str = "URL";
     pub const MODEL_SUFFIX: &str = "MODEL";
     pub const API_KEY_SUFFIX: &str = "API_KEY";
     pub const TIMEOUT_SECONDS_SUFFIX: &str = "TIMEOUT_SECONDS";
+    pub const SYSTEM_PROMPT_SUFFIX: &str = "SYSTEM_PROMPT";
 }
 
 #[cfg(test)]
@@ -54,6 +58,7 @@ mod tests {
             auth::FIRST_ADMIN_EMAIL,
             auth::FIRST_ADMIN_PASSWORD,
             auth::FIRST_ADMIN_USERNAME,
+            vision::SYSTEM_PROMPT,
         ]
         .map(str::to_string)
         .to_vec();
@@ -64,6 +69,7 @@ mod tests {
                 vision::MODEL_SUFFIX,
                 vision::API_KEY_SUFFIX,
                 vision::TIMEOUT_SECONDS_SUFFIX,
+                vision::SYSTEM_PROMPT_SUFFIX,
             ] {
                 names.push(format!("{prefix}_{suffix}"));
             }

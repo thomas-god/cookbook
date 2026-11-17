@@ -7,33 +7,11 @@ use schemars::{JsonSchema, generate::SchemaSettings};
 use serde::Deserialize;
 
 // TODO: test processing multipart recipes
-pub(crate) const SYSTEM_PROMPT: &str = r#"You extract recipes from photos and PDF pages of handwritten, printed, or book pages.
-
-Preserve the recipe's original language and wording for the title, description, ingredient
-names, step titles, and instructions. Do not invent missing information.
-
-Rules for ingredient amounts:
-- Use "amount" plus "unit" for measurable quantities.
-- Prefer these unit names when they fit: gram, kilogram, millilitre, centilitre, litre,
-  piece, teaspoon, tablespoon.
-- Use "piece" for countable items such as eggs, onions, or carrots.
-- Use "amount_text" instead of amount/unit for free-form amounts such as "a pinch" or
-  "to taste".
-- Every ingredient must have either a numeric amount or an amount_text.
-
-Rules for servings:
-- Use "servings_people" for a number of people, such as 4.
-- Use "servings_amount" with an optional "servings_label" for a count of items, such as
-  12 cookies or 8 slices. Keep the label as written in the source when it is present.
-- Leave all three servings fields null when the source does not state a yield.
-- Do not fill both a people count and an item count.
-
-Durations are whole minutes. Use null when a duration is not written in the source.
-
-Rules for category:
-- Choose exactly one of: aperitif, starter, main, side, dessert, breakfast, snack, drink, other.
-- Use "other" when the recipe clearly does not fit any other category.
-- Use null only when the source does not make the category clear enough to choose."#;
+/// The built-in system prompt used when an endpoint has no custom prompt.
+///
+/// Kept in a separate file so deployments can copy it and tune it for their
+/// model or sources.
+pub(crate) const DEFAULT_SYSTEM_PROMPT: &str = include_str!("../prompts/recipe-system.txt");
 
 pub(crate) fn user_prompt(image_count: usize) -> String {
     format!(

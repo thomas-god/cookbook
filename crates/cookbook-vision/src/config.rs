@@ -7,6 +7,7 @@ pub struct VisionEndpoint {
     model: String,
     api_key: Option<String>,
     timeout: Duration,
+    system_prompt: Option<String>,
 }
 
 impl VisionEndpoint {
@@ -21,7 +22,15 @@ impl VisionEndpoint {
             model: model.into(),
             api_key: api_key.filter(|key| !key.trim().is_empty()),
             timeout,
+            system_prompt: None,
         }
+    }
+
+    /// Sets a custom system prompt for this endpoint, replacing the built-in
+    /// one. Blank prompts are treated as unset.
+    pub fn with_system_prompt(mut self, prompt: Option<String>) -> Self {
+        self.system_prompt = prompt.filter(|prompt| !prompt.trim().is_empty());
+        self
     }
 
     pub fn url(&self) -> &str {
@@ -38,6 +47,10 @@ impl VisionEndpoint {
 
     pub fn timeout(&self) -> Duration {
         self.timeout
+    }
+
+    pub fn system_prompt(&self) -> Option<&str> {
+        self.system_prompt.as_deref()
     }
 }
 

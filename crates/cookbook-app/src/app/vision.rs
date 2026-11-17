@@ -25,14 +25,17 @@ pub struct VisionConfig {
 
 impl VisionConfig {
     pub fn from_env() -> anyhow::Result<Self> {
+        let system_prompt = env::optional(names::vision::SYSTEM_PROMPT)?;
         let endpoints = endpoint_from_env(
             names::vision::PRIMARY_PREFIX,
             defaults::VISION_PRIMARY_TIMEOUT_SECONDS,
+            system_prompt.as_deref(),
         )?
         .into_iter()
         .chain(endpoint_from_env(
             names::vision::BACKUP_PREFIX,
             defaults::VISION_BACKUP_TIMEOUT_SECONDS,
+            system_prompt.as_deref(),
         )?)
         .collect::<Vec<_>>();
         let settings = VisionSettings {
@@ -55,6 +58,7 @@ impl VisionConfig {
 fn endpoint_from_env(
     prefix: &str,
     default_timeout_seconds: u64,
+    default_system_prompt: Option<&str>,
 ) -> anyhow::Result<Option<VisionEndpoint>> {
     endpoint_from_values(
         prefix,
@@ -66,6 +70,8 @@ fn endpoint_from_env(
             "{prefix}_{}",
             names::vision::TIMEOUT_SECONDS_SUFFIX
         ))?,
+        env::optional(&format!("{prefix}_{}", names::vision::SYSTEM_PROMPT_SUFFIX))?,
+        default_system_prompt,
     )
 }
 
@@ -76,11 +82,14 @@ fn endpoint_from_values(
     model: Option<String>,
     api_key: Option<String>,
     timeout: Option<String>,
+    system_prompt: Option<String>,
+    default_system_prompt: Option<&str>,
 ) -> anyhow::Result<Option<VisionEndpoint>> {
     let Some(url) = url else {
-        if model.is_some() || api_key.is_some() || timeout.is_some() {
+        if model.is_some() || api_key.is_some() || timeout.is_some() || system_prompt.is_some() {
             bail!(
-                "{prefix}_MODEL, {prefix}_API_KEY and {prefix}_TIMEOUT_SECONDS require {prefix}_URL"
+                "{prefix}_MODEL, {prefix}_API_KEY, {prefix}_TIMEOUT_SECONDS and \
+                 {prefix}_SYSTEM_PROMPT require {prefix}_URL"
             );
         }
 
@@ -103,12 +112,14 @@ fn endpoint_from_values(
         bail!("{prefix}_TIMEOUT_SECONDS must be greater than zero");
     }
 
-    Ok(Some(VisionEndpoint::new(
-        url,
-        model,
-        api_key,
-        Duration::from_secs(timeout_seconds),
-    )))
+    let system_prompt = system_prompt
+        .filter(|prompt| !prompt.trim().is_empty())
+        .or_else(|| default_system_prompt.map(str::to_string));
+
+    Ok(Some(
+        VisionEndpoint::new(url, model, api_key, Duration::from_secs(timeout_seconds))
+            .with_system_prompt(system_prompt),
+    ))
 }
 
 #[cfg(test)]
@@ -127,6 +138,24 @@ mod tests {
             model.map(str::to_string),
             None,
             timeout.map(str::to_string),
+            None,
+            None,
+        )
+    }
+
+    fn endpoint_with_prompts(
+        system_prompt: Option<&str>,
+        default_system_prompt: Option<&str>,
+    ) -> anyhow::Result<Option<VisionEndpoint>> {
+        endpoint_from_values(
+            names::vision::PRIMARY_PREFIX,
+            180,
+            Some("http://localhost:1234/v1/chat/completions".to_string()),
+            Some("qwen-vl".to_string()),
+            None,
+            None,
+            system_prompt.map(str::to_string),
+            default_system_prompt,
         )
     }
 
@@ -138,6 +167,23 @@ mod tests {
     #[test]
     fn a_model_without_a_url_is_rejected() {
         assert!(endpoint(None, Some("qwen-vl"), None).is_err());
+    }
+
+    #[test]
+    fn a_system_prompt_without_a_url_is_rejected() {
+        assert!(
+            endpoint_from_values(
+                names::vision::PRIMARY_PREFIX,
+                180,
+                None,
+                None,
+                None,
+                None,
+                Some("custom prompt".to_string()),
+                None,
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -194,5 +240,39 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn an_endpoint_prompt_overrides_the_global_prompt() {
+        let endpoint = endpoint_with_prompts(Some("endpoint prompt"), Some("global prompt"))
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(endpoint.system_prompt(), Some("endpoint prompt"));
+    }
+
+    #[test]
+    fn the_global_prompt_is_used_as_a_fallback() {
+        let endpoint = endpoint_with_prompts(None, Some("global prompt"))
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(endpoint.system_prompt(), Some("global prompt"));
+    }
+
+    #[test]
+    fn a_blank_endpoint_prompt_falls_back_to_the_global_prompt() {
+        let endpoint = endpoint_with_prompts(Some("   "), Some("global prompt"))
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(endpoint.system_prompt(), Some("global prompt"));
+    }
+
+    #[test]
+    fn no_prompt_uses_the_built_in_default() {
+        let endpoint = endpoint_with_prompts(None, None).unwrap().unwrap();
+
+        assert_eq!(endpoint.system_prompt(), None);
     }
 }

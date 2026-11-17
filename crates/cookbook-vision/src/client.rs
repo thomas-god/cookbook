@@ -7,7 +7,9 @@ use crate::VisionError;
 use crate::VisionRecipe;
 use crate::config::{VisionConfig, VisionEndpoint};
 use crate::image::{PreparedImage, SourceDocument, prepare_sources};
-use crate::recipe_parser::{SYSTEM_PROMPT, parse_recipe_json, response_format, user_prompt};
+use crate::recipe_parser::{
+    DEFAULT_SYSTEM_PROMPT, parse_recipe_json, response_format, user_prompt,
+};
 
 /// An ordered, failover-capable VLM client.
 #[derive(Debug, Clone, Default)]
@@ -152,7 +154,7 @@ fn request_body(endpoint: &VisionEndpoint, images: &[PreparedImage]) -> Value {
         "messages": [
             {
                 "role": "system",
-                "content": SYSTEM_PROMPT,
+                "content": endpoint.system_prompt().unwrap_or(DEFAULT_SYSTEM_PROMPT),
             },
             {
                 "role": "user",
@@ -236,6 +238,22 @@ mod tests {
             parts[2]["image_url"]["url"],
             format!("data:image/png;base64,{}", STANDARD.encode("back"))
         );
+    }
+
+    #[test]
+    fn uses_the_default_system_prompt_without_an_override() {
+        let body = request_body(&endpoint(), &[]);
+
+        assert_eq!(body["messages"][0]["content"], DEFAULT_SYSTEM_PROMPT);
+    }
+
+    #[test]
+    fn uses_a_custom_system_prompt_when_configured() {
+        let endpoint =
+            endpoint().with_system_prompt(Some("Extract only metric units.".to_string()));
+        let body = request_body(&endpoint, &[]);
+
+        assert_eq!(body["messages"][0]["content"], "Extract only metric units.");
     }
 
     #[test]
