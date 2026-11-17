@@ -10,7 +10,7 @@ use topcoat::{
 };
 
 use crate::{
-    app::recipes::{RecipeId, recipe_detail},
+    app::{recipe::view::recipe_detail, recipes::RecipeId},
     components::{
         base::{
             button::{ButtonSize, ButtonVariant, button},

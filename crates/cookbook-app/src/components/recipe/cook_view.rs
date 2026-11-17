@@ -10,9 +10,14 @@ use topcoat::{
 };
 
 use crate::{
-    app::recipes::{ImageId, RecipeId, recipe_detail, recipe_image},
-    components::base::button::{ButtonSize, ButtonVariant, button, button_variants},
-    components::recipe::recipe_view::quantity_label,
+    app::{
+        recipe::view::recipe_detail,
+        recipes::{ImageId, RecipeId, recipe_image},
+    },
+    components::{
+        base::button::{ButtonSize, ButtonVariant, button, button_variants},
+        recipe::recipe_view::quantity_label,
+    },
     t,
 };
 

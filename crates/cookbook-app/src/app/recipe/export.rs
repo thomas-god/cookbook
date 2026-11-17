@@ -25,10 +25,11 @@ use topcoat::{
     view::{View, attributes, view},
 };
 
+use crate::app::recipe::view::recipe_detail;
 use crate::{
     app::{
         AppRecipeService, auth,
-        recipes::{RecipeId, display_name, format_timestamp, recipe_detail, servings_label},
+        recipes::{RecipeId, display_name, format_timestamp, servings_label},
     },
     components::{
         base::{
@@ -148,11 +149,7 @@ pub async fn export_recipe(cx: &Cx) -> Result<impl View> {
                             </p>
                         </div>
                         if let Some(revision) = revision_value {
-                            <input
-                                type="hidden"
-                                name="revision_id"
-                                value=(revision)
-                            >
+                            <input type="hidden" name="revision_id" value=(revision)>
                         }
                         <label class="flex items-center gap-2 text-sm">
                             <input
