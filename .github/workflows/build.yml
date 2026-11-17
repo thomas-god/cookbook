@@ -86,7 +86,7 @@ jobs:
           tags=(--tag "${IMAGE}:sha-${SHA}")
 
           if [ "${GITHUB_REF}" = "refs/heads/main" ]; then
-            tags+=(--tag "${IMAGE}:latest")
+            tags+=(--tag "${IMAGE}:main")
           fi
 
           docker buildx imagetools create "${tags[@]}" \
