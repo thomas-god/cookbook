@@ -2,12 +2,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::Context;
-
-use crate::env;
-
-const DATA_DIR_ENV: &str = "COOKBOOK_DATA_DIR";
-const DEFAULT_DATA_DIR: &str = "data";
-const DATABASE_FILE_NAME: &str = "cookbook.sqlite3";
+use cookbook_config::{defaults, env, names};
 
 /// Startup configuration for the persistent data directory.
 #[derive(Debug, Clone)]
@@ -17,11 +12,17 @@ pub struct DataConfig {
 
 impl DataConfig {
     pub fn from_env() -> anyhow::Result<Self> {
-        let data_dir = env::optional(DATA_DIR_ENV)?
+        let data_dir = env::optional(names::data::DIR)?
             .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from(DEFAULT_DATA_DIR));
+            .unwrap_or_else(|| PathBuf::from(defaults::DATA_DIR));
 
         Ok(Self { data_dir })
+    }
+
+    pub fn new(data_dir: impl Into<PathBuf>) -> Self {
+        Self {
+            data_dir: data_dir.into(),
+        }
     }
 
     pub fn data_dir(&self) -> &Path {
@@ -29,7 +30,11 @@ impl DataConfig {
     }
 
     pub fn database_path(&self) -> PathBuf {
-        self.data_dir.join(DATABASE_FILE_NAME)
+        self.data_dir.join(defaults::DATABASE_FILE_NAME)
+    }
+
+    pub fn backup_dir(&self) -> PathBuf {
+        self.data_dir.join(defaults::BACKUP_DIR_NAME)
     }
 
     pub fn ensure_directory(&self) -> anyhow::Result<()> {
@@ -48,13 +53,18 @@ mod tests {
 
     #[test]
     fn database_path_lives_inside_the_data_directory() {
-        let config = DataConfig {
-            data_dir: PathBuf::from("some/data"),
-        };
+        let config = DataConfig::new("some/data");
 
         assert_eq!(
             config.database_path(),
             PathBuf::from("some/data/cookbook.sqlite3")
         );
+    }
+
+    #[test]
+    fn backup_dir_lives_inside_the_data_directory() {
+        let config = DataConfig::new("some/data");
+
+        assert_eq!(config.backup_dir(), PathBuf::from("some/data/backups"));
     }
 }

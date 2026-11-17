@@ -7,7 +7,7 @@ use cookbook_infra::{
         SqliteSessionRepository, SqliteUserRepository, SystemClock,
     },
     recipe::{FileRecipeDocumentRepository, FileStore, SqliteRecipeRepository},
-    storage::SqliteDatabase,
+    storage::{DataConfig, SqliteDatabase},
 };
 use topcoat::{
     Result,
@@ -47,7 +47,6 @@ use crate::{
     components::misc::{
         add_recipe::add_recipe_dialog, locale_select::locale_select, user_menu::user_menu,
     },
-    storage::DataConfig,
     t,
 };
 

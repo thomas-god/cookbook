@@ -475,6 +475,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "chrono",
+ "cookbook-config",
  "cookbook-domain",
  "cookbook-export",
  "cookbook-infra",
@@ -486,6 +487,13 @@ dependencies = [
  "topcoat",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "cookbook-config"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
 ]
 
 [[package]]
@@ -517,6 +525,7 @@ dependencies = [
  "argon2",
  "base64 0.22.1",
  "chrono",
+ "cookbook-config",
  "cookbook-domain",
  "getrandom 0.4.3",
  "mockall",

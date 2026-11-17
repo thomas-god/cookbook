@@ -267,6 +267,8 @@ mod tests {
     use sqlx::Connection;
     use tempfile::tempdir;
 
+    use cookbook_config::defaults::{self, DATABASE_FILE_NAME};
+
     use super::*;
     use crate::storage::SqliteDatabase;
 
@@ -292,8 +294,8 @@ mod tests {
     #[tokio::test]
     async fn creates_a_valid_backup_with_committed_data() {
         let directory = tempdir().unwrap();
-        let source = directory.path().join("cookbook.sqlite3");
-        let output = directory.path().join("backups");
+        let source = directory.path().join(DATABASE_FILE_NAME);
+        let output = directory.path().join(defaults::BACKUP_DIR_NAME);
 
         let database = create_database(&source).await;
         sqlx::query(
@@ -324,8 +326,8 @@ mod tests {
     #[tokio::test]
     async fn excludes_uncommitted_data_from_the_snapshot() {
         let directory = tempdir().unwrap();
-        let source = directory.path().join("cookbook.sqlite3");
-        let output = directory.path().join("backups");
+        let source = directory.path().join(DATABASE_FILE_NAME);
+        let output = directory.path().join(defaults::BACKUP_DIR_NAME);
 
         let database = create_database(&source).await;
         let mut writer = database.pool().acquire().await.unwrap();
@@ -353,8 +355,8 @@ mod tests {
     #[tokio::test]
     async fn keeps_only_the_newest_backups() {
         let directory = tempdir().unwrap();
-        let source = directory.path().join("cookbook.sqlite3");
-        let output = directory.path().join("backups");
+        let source = directory.path().join(DATABASE_FILE_NAME);
+        let output = directory.path().join(defaults::BACKUP_DIR_NAME);
 
         let database = create_database(&source).await;
         database.pool().close().await;
@@ -394,7 +396,7 @@ mod tests {
     async fn rejects_a_missing_source_database() {
         let directory = tempdir().unwrap();
         let source = directory.path().join("missing.sqlite3");
-        let output = directory.path().join("backups");
+        let output = directory.path().join(defaults::BACKUP_DIR_NAME);
 
         let error = backup_database(&source, &output, 14).await.unwrap_err();
 
@@ -404,8 +406,8 @@ mod tests {
     #[tokio::test]
     async fn rejects_zero_retention() {
         let directory = tempdir().unwrap();
-        let source = directory.path().join("cookbook.sqlite3");
-        let output = directory.path().join("backups");
+        let source = directory.path().join(DATABASE_FILE_NAME);
+        let output = directory.path().join(defaults::BACKUP_DIR_NAME);
 
         let database = create_database(&source).await;
         database.pool().close().await;
@@ -418,8 +420,8 @@ mod tests {
     #[tokio::test]
     async fn removes_the_temporary_file_when_backup_fails() {
         let directory = tempdir().unwrap();
-        let source = directory.path().join("cookbook.sqlite3");
-        let output = directory.path().join("backups");
+        let source = directory.path().join(DATABASE_FILE_NAME);
+        let output = directory.path().join(defaults::BACKUP_DIR_NAME);
 
         let database = create_database(&source).await;
         database.pool().close().await;
@@ -453,8 +455,8 @@ mod tests {
     #[tokio::test]
     async fn backup_uses_a_single_file_without_wal_or_shm() {
         let directory = tempdir().unwrap();
-        let source = directory.path().join("cookbook.sqlite3");
-        let output = directory.path().join("backups");
+        let source = directory.path().join(DATABASE_FILE_NAME);
+        let output = directory.path().join(defaults::BACKUP_DIR_NAME);
 
         let database = create_database(&source).await;
         database.pool().close().await;
@@ -468,8 +470,8 @@ mod tests {
     #[tokio::test]
     async fn a_writer_can_continue_while_the_backup_runs() {
         let directory = tempdir().unwrap();
-        let source = directory.path().join("cookbook.sqlite3");
-        let output = directory.path().join("backups");
+        let source = directory.path().join(DATABASE_FILE_NAME);
+        let output = directory.path().join(defaults::BACKUP_DIR_NAME);
 
         let database = create_database(&source).await;
         let pool = database.pool().clone();

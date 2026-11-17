@@ -8,18 +8,9 @@ use std::str::FromStr;
 
 use anyhow::{Context, bail};
 use chrono::Utc;
-use cookbook_infra::storage::backup_database;
+use cookbook_config::{defaults, env, names, parse_bool};
+use cookbook_infra::storage::{DataConfig, backup_database};
 use cron::Schedule;
-
-use crate::{env, storage::DataConfig};
-
-const ENABLED_ENV: &str = "COOKBOOK_BACKUP_ENABLED";
-const SCHEDULE_ENV: &str = "COOKBOOK_BACKUP_SCHEDULE";
-const OUTPUT_DIR_ENV: &str = "COOKBOOK_BACKUP_DIR";
-const KEEP_ENV: &str = "COOKBOOK_BACKUP_KEEP";
-
-const DEFAULT_SCHEDULE: &str = "0 3 * * *";
-const DEFAULT_KEEP: usize = 14;
 
 /// Configuration for automatic database backups.
 #[derive(Debug, Clone)]
@@ -34,29 +25,29 @@ pub struct BackupSettings {
 
 impl BackupSettings {
     pub fn from_env(data: &DataConfig) -> anyhow::Result<Self> {
-        let enabled = match env::optional(ENABLED_ENV)? {
-            Some(value) => parse_bool(ENABLED_ENV, &value)?,
+        let enabled = match env::optional(names::backup::ENABLED)? {
+            Some(value) => parse_bool(names::backup::ENABLED, &value)?,
             None => true,
         };
 
-        let schedule_text =
-            env::optional(SCHEDULE_ENV)?.unwrap_or_else(|| DEFAULT_SCHEDULE.to_string());
+        let schedule_text = env::optional(names::backup::SCHEDULE)?
+            .unwrap_or_else(|| defaults::BACKUP_SCHEDULE.to_string());
         let schedule = parse_schedule(&schedule_text)?;
 
-        let keep = match env::optional(KEEP_ENV)? {
+        let keep = match env::optional(names::backup::KEEP)? {
             Some(value) => value
                 .parse()
-                .with_context(|| format!("invalid {KEEP_ENV} value `{value}`"))?,
-            None => DEFAULT_KEEP,
+                .with_context(|| format!("invalid {} value `{value}`", names::backup::KEEP))?,
+            None => defaults::BACKUP_KEEP,
         };
 
         if keep == 0 {
-            bail!("{KEEP_ENV} must be at least 1");
+            bail!("{} must be at least 1", names::backup::KEEP);
         }
 
-        let output_dir = match env::optional(OUTPUT_DIR_ENV)? {
+        let output_dir = match env::optional(names::backup::DIR)? {
             Some(value) => PathBuf::from(value),
-            None => data.data_dir().join("backups"),
+            None => data.backup_dir(),
         };
 
         Ok(Self {
@@ -123,23 +114,16 @@ fn parse_schedule(value: &str) -> anyhow::Result<Schedule> {
 
     if fields != 5 {
         bail!(
-            "invalid {SCHEDULE_ENV} value `{value}`: expected 5 fields \
-             (minute hour day-of-month month day-of-week), got {fields}"
+            "invalid {} value `{value}`: expected 5 fields \
+             (minute hour day-of-month month day-of-week), got {fields}",
+            names::backup::SCHEDULE
         );
     }
 
     // The cron crate includes a seconds field; a five-field expression always
     // runs at second zero.
     Schedule::from_str(&format!("0 {value}"))
-        .with_context(|| format!("invalid {SCHEDULE_ENV} value `{value}`"))
-}
-
-fn parse_bool(name: &str, value: &str) -> anyhow::Result<bool> {
-    match value.to_ascii_lowercase().as_str() {
-        "1" | "true" | "yes" | "on" => Ok(true),
-        "0" | "false" | "no" | "off" => Ok(false),
-        _ => bail!("invalid {name} value `{value}`: expected true or false"),
-    }
+        .with_context(|| format!("invalid {} value `{value}`", names::backup::SCHEDULE))
 }
 
 #[cfg(test)]
@@ -160,18 +144,5 @@ mod tests {
             let error = parse_schedule(value).unwrap_err();
             assert!(error.to_string().contains("5 fields"), "{value}: {error}");
         }
-    }
-
-    #[test]
-    fn parses_common_boolean_spellings() {
-        for value in ["1", "true", "TRUE", "yes", "on"] {
-            assert!(parse_bool("FLAG", value).unwrap(), "{value}");
-        }
-
-        for value in ["0", "false", "FALSE", "no", "off"] {
-            assert!(!parse_bool("FLAG", value).unwrap(), "{value}");
-        }
-
-        assert!(parse_bool("FLAG", "maybe").is_err());
     }
 }

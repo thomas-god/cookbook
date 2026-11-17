@@ -84,6 +84,8 @@ mod tests {
     use sqlx::Connection;
     use tempfile::tempdir;
 
+    use cookbook_config::defaults::DATABASE_FILE_NAME;
+
     use super::*;
 
     async fn count_rows(pool: &SqlitePool, table: &str) -> anyhow::Result<i64> {
@@ -146,7 +148,7 @@ mod tests {
     #[tokio::test]
     async fn opens_a_file_database_and_applies_migrations_once() {
         let directory = tempdir().unwrap();
-        let path = directory.path().join("cookbook.sqlite3");
+        let path = directory.path().join(DATABASE_FILE_NAME);
 
         {
             let database = SqliteDatabase::open(&path).await.unwrap();
@@ -289,7 +291,7 @@ mod tests {
     #[tokio::test]
     async fn wal_allows_reads_during_an_open_write_transaction() {
         let directory = tempdir().unwrap();
-        let path = directory.path().join("cookbook.sqlite3");
+        let path = directory.path().join(DATABASE_FILE_NAME);
         let database = SqliteDatabase::open(&path).await.unwrap();
         let pool = database.pool();
 

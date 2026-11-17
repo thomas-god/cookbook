@@ -1,9 +1,9 @@
-use std::env;
 use std::fs;
 use std::path::PathBuf;
 use std::time::SystemTime;
 
 use anyhow::{Context, bail};
+use cookbook_config::{defaults, env, names};
 use cookbook_domain::recipe::models::{
     DurationMinutes, Ingredient, IngredientName, Quantity, Recipe, RecipeBody, RecipeCategory,
     RecipeContent, RecipeDescription, RecipeDurations, RecipeId, RecipePart, RecipePartId,
@@ -31,7 +31,7 @@ async fn main() -> anyhow::Result<()> {
     fs::create_dir_all(&data_dir)
         .with_context(|| format!("failed to create the data directory {}", data_dir.display()))?;
 
-    let database = SqliteDatabase::open(data_dir.join("cookbook.sqlite3")).await?;
+    let database = SqliteDatabase::open(data_dir.join(defaults::DATABASE_FILE_NAME)).await?;
     seed_user(&database).await?;
     let repository = SqliteRecipeRepository::new(database.pool().clone());
 
@@ -89,13 +89,11 @@ async fn seed_user(database: &SqliteDatabase) -> anyhow::Result<()> {
 }
 
 fn parse_data_dir() -> anyhow::Result<PathBuf> {
-    let mut data_dir = env::var("COOKBOOK_DATA_DIR")
-        .ok()
-        .filter(|value| !value.trim().is_empty())
+    let mut data_dir = env::optional(names::data::DIR)?
         .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("data"));
+        .unwrap_or_else(|| PathBuf::from(defaults::DATA_DIR));
 
-    let mut arguments = env::args().skip(1);
+    let mut arguments = std::env::args().skip(1);
 
     while let Some(argument) = arguments.next() {
         match argument.as_str() {
@@ -105,7 +103,11 @@ fn parse_data_dir() -> anyhow::Result<PathBuf> {
             }
             "-h" | "--help" => {
                 println!("Usage: cookbook-seed [--data-dir PATH]");
-                println!("Defaults to COOKBOOK_DATA_DIR or ./data.");
+                println!(
+                    "Defaults to {} or ./{}.",
+                    names::data::DIR,
+                    defaults::DATA_DIR
+                );
                 std::process::exit(0);
             }
             other => bail!("unknown argument `{other}`"),

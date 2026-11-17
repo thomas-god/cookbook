@@ -1,9 +1,7 @@
 mod app;
 mod backup;
 mod components;
-mod env;
 mod logging;
-mod storage;
 
 topcoat::l10n::fluent::messages!("./l10n/{locale}.ftl");
 

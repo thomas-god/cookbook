@@ -1,16 +1,12 @@
 use anyhow::{Context, bail};
+use cookbook_config::{env, names, parse_bool};
 use cookbook_domain::user::models::{UserRole, Username};
 use cookbook_infra::auth::{
     models::UserEmail,
     ports::{AuthService, RegisterRequest},
 };
 
-use crate::{app::AppAuthService, env};
-
-const REGISTRATION_ENABLED_ENV: &str = "COOKBOOK_REGISTRATION_ENABLED";
-const FIRST_ADMIN_EMAIL_ENV: &str = "COOKBOOK_FIRST_ADMIN_EMAIL";
-const FIRST_ADMIN_PASSWORD_ENV: &str = "COOKBOOK_FIRST_ADMIN_PASSWORD";
-const FIRST_ADMIN_USERNAME_ENV: &str = "COOKBOOK_FIRST_ADMIN_USERNAME";
+use crate::app::AppAuthService;
 
 /// Authentication settings exposed to the web layer.
 #[derive(Debug, Clone, Copy)]
@@ -40,21 +36,23 @@ struct BootstrapAdmin {
 
 impl AuthConfig {
     pub fn from_env() -> anyhow::Result<Self> {
-        let registration_enabled = match env::optional(REGISTRATION_ENABLED_ENV)? {
-            Some(value) => parse_bool(&value)
-                .with_context(|| format!("invalid value for {REGISTRATION_ENABLED_ENV}"))?,
+        let registration_enabled = match env::optional(names::auth::REGISTRATION_ENABLED)? {
+            Some(value) => parse_bool(names::auth::REGISTRATION_ENABLED, &value)?,
             None => false,
         };
 
-        let email = env::optional(FIRST_ADMIN_EMAIL_ENV)?;
-        let password = env::optional(FIRST_ADMIN_PASSWORD_ENV)?;
-        let username = env::optional(FIRST_ADMIN_USERNAME_ENV)?;
+        let email = env::optional(names::auth::FIRST_ADMIN_EMAIL)?;
+        let password = env::optional(names::auth::FIRST_ADMIN_PASSWORD)?;
+        let username = env::optional(names::auth::FIRST_ADMIN_USERNAME)?;
 
         let bootstrap_admin = match (email, password) {
             (None, None) => {
                 if username.is_some() {
                     bail!(
-                        "{FIRST_ADMIN_USERNAME_ENV} requires {FIRST_ADMIN_EMAIL_ENV} and {FIRST_ADMIN_PASSWORD_ENV}"
+                        "{} requires {} and {}",
+                        names::auth::FIRST_ADMIN_USERNAME,
+                        names::auth::FIRST_ADMIN_EMAIL,
+                        names::auth::FIRST_ADMIN_PASSWORD
                     );
                 }
                 None
@@ -65,7 +63,9 @@ impl AuthConfig {
                 username,
             }),
             _ => bail!(
-                "{FIRST_ADMIN_EMAIL_ENV} and {FIRST_ADMIN_PASSWORD_ENV} must be set together to create the initial admin"
+                "{} and {} must be set together to create the initial admin",
+                names::auth::FIRST_ADMIN_EMAIL,
+                names::auth::FIRST_ADMIN_PASSWORD
             ),
         };
 
@@ -88,7 +88,7 @@ impl AuthConfig {
         };
 
         let email = UserEmail::try_new(admin.email.clone())
-            .with_context(|| format!("invalid value for {FIRST_ADMIN_EMAIL_ENV}"))?;
+            .with_context(|| format!("invalid {} value", names::auth::FIRST_ADMIN_EMAIL))?;
         let request = RegisterRequest {
             email,
             username: admin.username.clone().map(Username::new),
@@ -101,31 +101,5 @@ impl AuthConfig {
             .context("failed to create the initial admin")?;
 
         Ok(())
-    }
-}
-
-fn parse_bool(value: &str) -> anyhow::Result<bool> {
-    match value.trim().to_ascii_lowercase().as_str() {
-        "1" | "true" | "yes" | "on" => Ok(true),
-        "0" | "false" | "no" | "off" => Ok(false),
-        _ => bail!("expected one of true, false, 1, 0, yes, no, on, off"),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn parses_boolean_values() {
-        for value in ["1", "true", "TRUE", "yes", "on"] {
-            assert!(parse_bool(value).unwrap());
-        }
-
-        for value in ["0", "false", "FALSE", "no", "off"] {
-            assert!(!parse_bool(value).unwrap());
-        }
-
-        assert!(parse_bool("sometimes").is_err());
     }
 }

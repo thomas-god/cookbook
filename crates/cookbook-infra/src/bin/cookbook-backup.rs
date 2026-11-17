@@ -1,16 +1,9 @@
-use std::env;
 use std::path::PathBuf;
 
 use anyhow::{Context, bail};
-use cookbook_infra::storage::backup_database;
+use cookbook_config::{defaults, env, names};
+use cookbook_infra::storage::{DataConfig, backup_database};
 use tracing_subscriber::EnvFilter;
-
-const DATA_DIR_ENV: &str = "COOKBOOK_DATA_DIR";
-const OUTPUT_DIR_ENV: &str = "COOKBOOK_BACKUP_DIR";
-const KEEP_ENV: &str = "COOKBOOK_BACKUP_KEEP";
-const DEFAULT_DATA_DIR: &str = "data";
-const DEFAULT_KEEP: usize = 14;
-const DATABASE_FILE_NAME: &str = "cookbook.sqlite3";
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -21,7 +14,7 @@ async fn main() -> anyhow::Result<()> {
         None => return Ok(()),
     };
 
-    let source = options.data_dir.join(DATABASE_FILE_NAME);
+    let source = options.data_dir.join(defaults::DATABASE_FILE_NAME);
     let outcome = backup_database(&source, &options.output_dir, options.keep).await?;
 
     println!("backup written to {}", outcome.path.display());
@@ -52,11 +45,12 @@ struct Options {
 impl Options {
     /// Returns `None` when `--help` was requested.
     fn from_env_and_args() -> anyhow::Result<Option<Self>> {
-        let mut data_dir = optional_path(DATA_DIR_ENV).unwrap_or_else(default_data_dir);
-        let mut output_dir = optional_path(OUTPUT_DIR_ENV);
-        let mut keep = optional_keep()?.unwrap_or(DEFAULT_KEEP);
+        let mut data_dir =
+            optional_path(names::data::DIR)?.unwrap_or_else(|| PathBuf::from(defaults::DATA_DIR));
+        let mut output_dir = optional_path(names::backup::DIR)?;
+        let mut keep = optional_keep()?.unwrap_or(defaults::BACKUP_KEEP);
 
-        let mut arguments = env::args().skip(1);
+        let mut arguments = std::env::args().skip(1);
 
         while let Some(argument) = arguments.next() {
             match argument.as_str() {
@@ -83,7 +77,7 @@ impl Options {
             }
         }
 
-        let output_dir = output_dir.unwrap_or_else(|| data_dir.join("backups"));
+        let output_dir = output_dir.unwrap_or_else(|| DataConfig::new(&data_dir).backup_dir());
 
         Ok(Some(Self {
             data_dir,
@@ -93,31 +87,19 @@ impl Options {
     }
 }
 
-fn default_data_dir() -> PathBuf {
-    PathBuf::from(DEFAULT_DATA_DIR)
-}
-
-fn optional_path(name: &str) -> Option<PathBuf> {
-    env::var(name)
-        .ok()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
+fn optional_path(name: &str) -> anyhow::Result<Option<PathBuf>> {
+    Ok(env::optional(name)?.map(PathBuf::from))
 }
 
 fn optional_keep() -> anyhow::Result<Option<usize>> {
-    let Some(value) = env::var(KEEP_ENV)
-        .ok()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-    else {
+    let Some(value) = env::optional(names::backup::KEEP)? else {
         return Ok(None);
     };
 
     value
         .parse()
         .map(Some)
-        .with_context(|| format!("invalid {KEEP_ENV} value `{value}`"))
+        .with_context(|| format!("invalid {} value `{value}`", names::backup::KEEP))
 }
 
 fn print_help() {
@@ -127,11 +109,26 @@ fn print_help() {
     println!("The application can keep running while the backup is taken.");
     println!();
     println!("Options:");
-    println!("  --data-dir <PATH>    Data directory containing {DATABASE_FILE_NAME}");
-    println!("                       [env: {DATA_DIR_ENV}] [default: ./{DEFAULT_DATA_DIR}]");
+    println!(
+        "  --data-dir <PATH>    Data directory containing {}",
+        defaults::DATABASE_FILE_NAME
+    );
+    println!(
+        "                       [env: {}] [default: ./{}]",
+        names::data::DIR,
+        defaults::DATA_DIR
+    );
     println!("  --output-dir <PATH>  Directory for backup files");
-    println!("                       [env: {OUTPUT_DIR_ENV}] [default: <data-dir>/backups]");
+    println!(
+        "                       [env: {}] [default: <data-dir>/{}]",
+        names::backup::DIR,
+        defaults::BACKUP_DIR_NAME
+    );
     println!("  --keep <N>           Number of backups to retain");
-    println!("                       [env: {KEEP_ENV}] [default: {DEFAULT_KEEP}]");
+    println!(
+        "                       [env: {}] [default: {}]",
+        names::backup::KEEP,
+        defaults::BACKUP_KEEP
+    );
     println!("  -h, --help           Print help");
 }

@@ -1,8 +1,8 @@
-use std::env;
 use std::io::{BufRead, IsTerminal};
 use std::path::PathBuf;
 
 use anyhow::{Context, bail};
+use cookbook_config::{defaults, env, names};
 use cookbook_domain::user::models::{UserId, UserRole};
 use cookbook_infra::auth::{
     Argon2PasswordHasher, AuthServiceImpl, RandomSessionTokenGenerator, SqliteSessionRepository,
@@ -11,10 +11,6 @@ use cookbook_infra::auth::{
     ports::{UserMaintenanceService, UserRepository},
 };
 use cookbook_infra::storage::SqliteDatabase;
-
-const DATA_DIR_ENV: &str = "COOKBOOK_DATA_DIR";
-const DEFAULT_DATA_DIR: &str = "data";
-const DATABASE_FILE_NAME: &str = "cookbook.sqlite3";
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -26,12 +22,13 @@ async fn main() -> anyhow::Result<()> {
 }
 
 async fn run(options: Options) -> anyhow::Result<()> {
-    let database_path = options.data_dir.join(DATABASE_FILE_NAME);
+    let database_path = options.data_dir.join(defaults::DATABASE_FILE_NAME);
 
     if !database_path.is_file() {
         bail!(
-            "database not found at {}; check `--data-dir` or {DATA_DIR_ENV}",
-            database_path.display()
+            "database not found at {}; check `--data-dir` or {}",
+            database_path.display(),
+            names::data::DIR
         );
     }
 
@@ -199,14 +196,11 @@ impl Selector {
 impl Options {
     /// Returns `None` when `--help` was requested.
     fn from_env_and_args() -> anyhow::Result<Option<Self>> {
-        let data_dir = env::var(DATA_DIR_ENV)
-            .ok()
-            .map(|value| value.trim().to_string())
-            .filter(|value| !value.is_empty())
+        let data_dir = env::optional(names::data::DIR)?
             .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from(DEFAULT_DATA_DIR));
+            .unwrap_or_else(|| PathBuf::from(defaults::DATA_DIR));
 
-        Self::parse(data_dir, env::args().skip(1))
+        Self::parse(data_dir, std::env::args().skip(1))
     }
 
     fn parse(
@@ -315,8 +309,15 @@ fn print_help() {
     println!("  --email <EMAIL>    Select the user by email");
     println!("  --password-stdin   Read the new password from one stdin line");
     println!("                     (set-password only)");
-    println!("  --data-dir <PATH>  Data directory containing {DATABASE_FILE_NAME}");
-    println!("                     [env: {DATA_DIR_ENV}] [default: ./{DEFAULT_DATA_DIR}]");
+    println!(
+        "  --data-dir <PATH>  Data directory containing {}",
+        defaults::DATABASE_FILE_NAME
+    );
+    println!(
+        "                     [env: {}] [default: ./{}]",
+        names::data::DIR,
+        defaults::DATA_DIR
+    );
     println!("  -h, --help         Print help");
 }
 

@@ -1,6 +1,7 @@
 [workspace]
 resolver = "3"
 members = [
+    "crates/cookbook-config",
     "crates/cookbook-domain",
     "crates/cookbook-export",
     "crates/cookbook-infra",
@@ -44,6 +45,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 ureq = { version = "3.5.1", features = ["json"] }
 uuid = { version = "1.29.0", features = ["v4", "v7"] }
 
+cookbook-config = { path = "crates/cookbook-config" }
 cookbook-domain = { path = "crates/cookbook-domain" }
 cookbook-export = { path = "crates/cookbook-export" }
 cookbook-infra = { path = "crates/cookbook-infra" }

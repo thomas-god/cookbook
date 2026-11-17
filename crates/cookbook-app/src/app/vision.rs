@@ -1,12 +1,8 @@
 use std::time::Duration;
 
 use anyhow::{Context, bail};
+use cookbook_config::{defaults, env, names};
 use cookbook_vision::{VisionClient, VisionConfig as ClientVisionConfig, VisionEndpoint};
-
-use crate::env;
-
-const PRIMARY_PREFIX: &str = "COOKBOOK_VLM_PRIMARY";
-const BACKUP_PREFIX: &str = "COOKBOOK_VLM_BACKUP";
 
 /// Vision availability exposed to the web layer.
 #[derive(Debug, Clone, Copy)]
@@ -29,10 +25,16 @@ pub struct VisionConfig {
 
 impl VisionConfig {
     pub fn from_env() -> anyhow::Result<Self> {
-        let endpoints = endpoint_from_env(PRIMARY_PREFIX, 180)?
-            .into_iter()
-            .chain(endpoint_from_env(BACKUP_PREFIX, 120)?)
-            .collect::<Vec<_>>();
+        let endpoints = endpoint_from_env(
+            names::vision::PRIMARY_PREFIX,
+            defaults::VISION_PRIMARY_TIMEOUT_SECONDS,
+        )?
+        .into_iter()
+        .chain(endpoint_from_env(
+            names::vision::BACKUP_PREFIX,
+            defaults::VISION_BACKUP_TIMEOUT_SECONDS,
+        )?)
+        .collect::<Vec<_>>();
         let settings = VisionSettings {
             enabled: !endpoints.is_empty(),
         };
@@ -57,10 +59,13 @@ fn endpoint_from_env(
     endpoint_from_values(
         prefix,
         default_timeout_seconds,
-        env::optional(&format!("{prefix}_URL"))?,
-        env::optional(&format!("{prefix}_MODEL"))?,
-        env::optional(&format!("{prefix}_API_KEY"))?,
-        env::optional(&format!("{prefix}_TIMEOUT_SECONDS"))?,
+        env::optional(&format!("{prefix}_{}", names::vision::URL_SUFFIX))?,
+        env::optional(&format!("{prefix}_{}", names::vision::MODEL_SUFFIX))?,
+        env::optional(&format!("{prefix}_{}", names::vision::API_KEY_SUFFIX))?,
+        env::optional(&format!(
+            "{prefix}_{}",
+            names::vision::TIMEOUT_SECONDS_SUFFIX
+        ))?,
     )
 }
 
@@ -116,7 +121,7 @@ mod tests {
         timeout: Option<&str>,
     ) -> anyhow::Result<Option<VisionEndpoint>> {
         endpoint_from_values(
-            PRIMARY_PREFIX,
+            names::vision::PRIMARY_PREFIX,
             180,
             url.map(str::to_string),
             model.map(str::to_string),

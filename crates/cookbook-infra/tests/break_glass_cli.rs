@@ -2,6 +2,7 @@ use std::io::Write;
 use std::path::Path;
 use std::process::{Command, Output, Stdio};
 
+use cookbook_config::defaults;
 use cookbook_domain::user::models::{UserId, UserRole, Username};
 use cookbook_infra::auth::models::{AuthUser, UserEmail};
 use cookbook_infra::auth::ports::{PasswordHasher, UserRepository};
@@ -9,14 +10,12 @@ use cookbook_infra::auth::{Argon2PasswordHasher, SqliteUserRepository};
 use cookbook_infra::storage::SqliteDatabase;
 use tempfile::tempdir;
 
-const DATABASE_FILE_NAME: &str = "cookbook.sqlite3";
-
 fn binary() -> &'static str {
     env!("CARGO_BIN_EXE_cookbook-admin")
 }
 
 async fn seed_user(directory: &Path, id: &str, email: &str, password: &str, role: UserRole) {
-    let database = SqliteDatabase::open(directory.join(DATABASE_FILE_NAME))
+    let database = SqliteDatabase::open(directory.join(defaults::DATABASE_FILE_NAME))
         .await
         .unwrap();
     let users = SqliteUserRepository::new(database.pool().clone());
@@ -38,7 +37,7 @@ async fn seed_user(directory: &Path, id: &str, email: &str, password: &str, role
 }
 
 async fn load_user(directory: &Path, email: &str) -> AuthUser {
-    let database = SqliteDatabase::open(directory.join(DATABASE_FILE_NAME))
+    let database = SqliteDatabase::open(directory.join(defaults::DATABASE_FILE_NAME))
         .await
         .unwrap();
     let users = SqliteUserRepository::new(database.pool().clone());
@@ -218,7 +217,7 @@ async fn refuses_to_demote_the_last_admin() {
 #[tokio::test]
 async fn rejects_a_missing_database_without_creating_it() {
     let directory = tempdir().unwrap();
-    let database_path = directory.path().join(DATABASE_FILE_NAME);
+    let database_path = directory.path().join(defaults::DATABASE_FILE_NAME);
 
     let output = run(directory.path(), &["promote", "--id", "user-1"], None);
 
