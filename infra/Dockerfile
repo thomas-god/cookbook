@@ -18,9 +18,10 @@ RUN --mount=type=cache,target=/app/target \
     cargo build --release -p cookbook-app \
     && cargo build --release -p cookbook-infra --bin cookbook-backup \
     && cargo build --release -p cookbook-infra --bin cookbook-admin \
+    && cargo build --release -p cookbook-infra --bin cookbook-seed \
     && topcoat asset bundle --release \
     && mkdir -p /app/dist \
-    && cp target/release/cookbook-app target/release/cookbook-backup target/release/cookbook-admin /app/dist/ \
+    && cp target/release/cookbook-app target/release/cookbook-backup target/release/cookbook-admin target/release/cookbook-seed /app/dist/ \
     && cp -r target/release/assets /app/dist/assets
 
 FROM debian:bookworm-slim AS runtime

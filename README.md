@@ -205,7 +205,7 @@ Seed the dev user and sample recipes into the configured data directory:
 ```sh
 ./scripts/seed-dev.sh
 # or
-cargo run -p cookbook-infra --bin seed_dev -- --data-dir ./data
+cargo run -p cookbook-infra --bin cookbook-seed -- --data-dir ./data
 ```
 
 The dev user is `dev@example.com` / `test` and owns the sample recipes. Seeding is idempotent and is

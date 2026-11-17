@@ -117,7 +117,7 @@ restoring only the database restores metadata but not images or source documents
 
 ### Development seeding
 
-A separate `seed_dev` binary inserts a dev user and the sample recipes. It is idempotent, skips
+A separate `cookbook-seed` binary inserts a dev user and the sample recipes. It is idempotent, skips
 existing rows, and is never called by the server. The dev user is `dev@example.com` with password
 `cookbook-dev` and owns the sample recipes.
 
