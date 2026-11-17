@@ -69,16 +69,15 @@ pub async fn recipe_detail(cx: &Cx) -> Result<impl View> {
                             (recipe.title().as_str())
                         </h2>
                     </div>
-                    <div class="hidden sm:flex flex-row items-center gap-3 text-sm">
-                        <a
-                            class=(button_variants(
-                                ButtonVariant::Primary,
-                                ButtonSize::Sm,
-                            ))
-                            href=(href!(cook_recipe, RecipeId(recipe.id().as_str())))
-                        >
-                            (t!(recipe_cook))
-                        </a>
+                    <div class="flex flex-row items-center gap-3 text-sm">
+                        <span class="hidden sm:inline">
+                            <a
+                                class=(class!(button_variants(ButtonVariant::Primary, ButtonSize::Sm)))
+                                href=(href!(cook_recipe, RecipeId(recipe.id().as_str())))
+                            >
+                                (t!(recipe_cook))
+                            </a>
+                        </span>
                         recipe_menu(user: &user, recipe: &recipe)
                     </div>
                 </div>
