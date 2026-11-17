@@ -1,173 +1,231 @@
 # cookbook
 
-Self-hosted family cookbook.
+**Cookbook** is a self-hosted web-application to manage and share your family recipes. Recipes can
+be either created from scratch or imported from images (cookbook pages, handwritten recipes, etc.)
+via an optional VLM-based vision module. The app supports public/private recipes, recipe revisions
+history, a big-picture cook mode, and more.
 
-## Authentication
+## Table of contents
 
-Authentication is email + password. Usernames are optional and only used for display.
+- [Try it locally with Docker](#try-it-locally-with-docker)
+- [Deployment with Docker compose/stack](#deployment-with-docker-composestack)
+  - [Persistence](#persistence)
+  - [Backups](#backups)
+  - [Users registration and authentication](#users-registration-and-authentication)
+  - [Vision module (optional)](#vision-module-optional)
+  - [List of environment variables](#list-of-environment-variables)
+- [Local development](#local-development)
 
-Self-registration is disabled by default. Enable it with:
+## Try it locally with Docker
 
-```sh
-COOKBOOK_REGISTRATION_ENABLED=true
+To quickly test the application try it locally with Docker by running the following command and then
+visiting http://localhost:3000:
+
+```bash
+docker run --rm \
+  --name cookbook_demo
+  -e COOKBOOK_REGISTRATION_ENABLED=true \
+  -v cookbook_data:/data \
+  ghcr.io/thomas-god/cookbook:latest
 ```
 
-To create the first user as an admin, set the following variables before the first start. They are
-ignored once at least one user exists:
+You can seed the application's data with some test recipes by running:
 
-```sh
-COOKBOOK_FIRST_ADMIN_EMAIL=admin@example.com
-COOKBOOK_FIRST_ADMIN_PASSWORD='a-long-password'
-COOKBOOK_FIRST_ADMIN_USERNAME=Admin   # optional
+```bash
+docker exec cookbook_demo /app/cookbook-seed
 ```
 
-Session cookie security follows the `X-Forwarded-Proto` header:
+## Deployment with Docker compose/stack
 
-- `https` → a hardened `__Host-session` cookie with `Secure`
-- anything else → a regular `session` cookie without `Secure`, for trusted networks such as
-  Tailscale or a private LAN
+`Cookbook` is distributed as Docker image for `amd64` and `arm64` architectures. You can use docker
+compose or stack to deploy it.
 
-A TLS-terminating reverse proxy must set `X-Forwarded-Proto`. If the app is exposed directly to
-untrusted clients, make sure they cannot spoof that header.
+```yaml
+services:
+  cookbook:
+    image: ghcr.io/thomas-god/cookbook:latest
+    environment:
+      COOKBOOK_REGISTRATION_ENABLED: "true"
+    volumes:
+      - cookbook_data:/data
 
-## Account recovery
-
-If the only administrator forgets their password, use the `cookbook-admin` binary from inside the
-container. It can reset a password and promote or demote an existing user:
-
-```sh
-# interactive password prompt (hidden input)
-docker exec -it cookbook /app/cookbook-admin set-password --email admin@example.com
-
-docker exec -it cookbook /app/cookbook-admin promote --email family@example.com
-docker exec -it cookbook /app/cookbook-admin demote --email admin@example.com
+volumes:
+  cookbook_data:
 ```
 
-Outside Docker:
+### Persistence
 
-```sh
-cargo run -p cookbook-infra --bin cookbook-admin -- \
-  set-password --email admin@example.com --data-dir ./data
-```
+The application uses `/data` to store its in-container SQLite database (user and recipe data) and
+assets (recipes images). Mount a Docker volume or an host path to this location to persist data
+accros container restarts.
 
-Select the user with exactly one of `--id <ID>` or `--email <EMAIL>`. For scripts, pass the new
-password on standard input:
+### Backups
 
-```sh
-printf '%s\n' "$NEW_PASSWORD" | \
-  docker exec -i cookbook /app/cookbook-admin set-password --email admin@example.com --password-stdin
-```
-
-`cookbook-admin` operates directly on `cookbook.sqlite3` and does not require an authenticated
-session. Shell access to the container or its data volume is the authorization boundary. The app can
-keep running while it is used. There is deliberately no HTTP endpoint for these operations.
-
-Demoting the last administrator is refused, so at least one admin always remains. The command
-refuses to create a missing database, which protects against a mistyped `--data-dir`.
-
-When using `docker exec`, do not override the container user with `-u root`; the app must be able to
-write the database and its WAL companion files.
-
-## Persistence
-
-Data is stored under `COOKBOOK_DATA_DIR`, which defaults to `./data`:
-
-```text
-data/
-  cookbook.sqlite3
-  recipes/
-    <recipe_id>/
-      images/<image_id>
-      documents/<document_id>
-```
-
-SQLite holds users, sessions, recipes, revisions, and asset metadata. Image and source-document
-bytes live in the per-recipe directories. Migrations run automatically at startup.
-
-The Docker image uses `/data` and declares it as a volume. Mount it to keep data across container
-replacements:
-
-```sh
-docker run -v cookbook-data:/data -p 3000:3000 ghcr.io/thomas-god/cookbook
-```
-
-## Backups
-
-Automatic backups are enabled by default. The backup process creates a consistent, compacted SQLite
-snapshot in `$COOKBOOK_DATA_DIR/backups` using `VACUUM INTO`. The application does not need to be
-stopped: WAL mode lets the snapshot run while reads and writes continue, and only committed data is
-included. Backups are scheduled via an in-process cron-like scheduler.
+Automatic background backups are enabled by default: the backup process creates a consistent,
+compacted SQLite snapshot in `/data/backups`. The application does not need to be stopped during
+backups.
 
 | Variable                   | Default              | Meaning                           |
 | -------------------------- | -------------------- | --------------------------------- |
 | `COOKBOOK_BACKUP_ENABLED`  | `true`               | Enable automatic backups          |
 | `COOKBOOK_BACKUP_SCHEDULE` | `0 3 * * *`          | Five-field cron expression in UTC |
 | `COOKBOOK_BACKUP_DIR`      | `<data_dir>/backups` | Backup output directory           |
-| `COOKBOOK_BACKUP_KEEP`     | `14`                 | Number of backups to retain       |
+| `COOKBOOK_BACKUP_KEEP`     | `14`                 | Number of backups files to retain |
 
-Backup files are named `cookbook-YYYYMMDDTHHMMSSZ.sqlite3` and are verified with
-`PRAGMA quick_check`.
+Backup files are named `cookbook-YYYYMMDDTHHMMSSZ.sqlite3` using the time of backup.
 
 The default location is inside the data volume. For protection against losing that volume, mount a
 separate volume and point `COOKBOOK_BACKUP_DIR` at it.
 
+Backups contain only the database. Image and source-document bytes under `data/recipes/` must be
+backed up separately, for example with a filesystem snapshot, `restic`, or `rsync`. Restoring the
+database alone does not restore the asset files.
+
+#### Manual backups
+
 You can create a manual backup at any time using the in-container CLI:
 
 ```sh
-docker exec cookbook /app/cookbook-backup
-docker exec cookbook /app/cookbook-backup --output-dir /backups --keep 30
-
-# outside Docker
-cargo run -p cookbook-infra --bin cookbook-backup -- --data-dir ./data
+docker exec <container_name> /app/cookbook-backup
 ```
 
-Backups contain only the database. Image and source-document bytes under `recipes/` must be backed
-up separately, for example with a filesystem snapshot, `restic`, or `rsync`. Restoring the database
-alone restores metadata but not the asset files.
+#### Backup restoration
 
-To restore a backup, stop the app, remove the live database and its WAL companions, copy the backup
-into place, and start the app:
+To restore a database backup:
 
-```sh
-docker stop cookbook
-docker run --rm -v cookbook-data:/data -v cookbook-backups:/backups debian:bookworm-slim \
-  sh -c 'rm -f /data/cookbook.sqlite3 /data/cookbook.sqlite3-wal /data/cookbook.sqlite3-shm && \
-         cp /backups/cookbook-YYYYMMDDTHHMMSSZ.sqlite3 /data/cookbook.sqlite3'
-docker start cookbook
+- stop the cookbook container,
+- remove or rename the live database and its WAL companions (`/data/cookbook.sqlite3`,
+  `/data/cookbook.sqlite3-wal` and `/data/cookbook.sqlite3-shm`),
+- copy the backup file `cookbook-YYYYMMDDTHHMMSSZ.sqlite3` into `/data`
+- rename the backup file to `cookbook.sqlite3`,
+- restart the container.
+
+### Users registration and authentication
+
+Users can register using an email/password pair. Email addresses are not verified as the app does
+not ship a mailer. User account recovery is made via the [admin role](#admin-role).
+
+Open registration can be disabled via `COOKBOOK_REGISTRATION_ENABLED=false`.
+[Admin users](#admin-role) can still create new users when registration is disabled.
+
+#### Admin role
+
+Admin users can manage other users: create new user, update email and password, promote/demote users
+as admin, and delete user. When you create a new instance it can be initialized with an admin user
+using the following environment variables:
+
+```bash
+COOKBOOK_FIRST_ADMIN_EMAIL=you@example.com
+COOKBOOK_FIRST_ADMIN_PASSWORD='a-long-password'
+COOKBOOK_FIRST_ADMIN_USERNAME=you
 ```
 
-## Vision recipe import
+This is a no-op if the instance already contains some users (admin or not). To avoid having password
+in your config file please refer to this [section](#loading-secrets).
 
-Recipes can be imported from photos or a PDF of an existing recipe using a vision-language model
-(VLM) via an OpenAI-compatible model endpoint. Configure a primary endpoint and an optional
-fallback:
+For emergency recovery the application ships an in-container recovery CLI that can be used to set a
+user's password or promote an user to admin:
 
-```sh
+```bash
+docker exec <container_name> /app/cookbook-admin --help
+```
+
+#### HTTPS is recommended, plain HTTP is still possible on a trusted network
+
+The bundled image only serves plain HTTP and does not terminate TLS by itself. Using a
+TLS-terminating reverse proxy (e.g. [Caddy](https://caddyserver.com/) or
+[Traefik](https://traefik.io/)) is recommended.
+
+Over plain HTTP login works, but then the session cookie travels in clear. Only use HTTP when the
+traffic is already protected by another layer, for example a [WireGuard](https://www.wireguard.com/)
+or [Tailscale](https://tailscale.com/) tunnel.
+
+A minimal `docker-compose.yaml` with Traefik handling TLS looks like:
+
+```yaml
+services:
+  cookbook:
+    image: ghcr.io/thomas-god/cookbook:latest
+    environment:
+      COOKBOOK_REGISTRATION_ENABLED: "true"
+    volumes:
+      - cookbook_data:/data
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.cookbook.rule=Host(`your.domain`)"
+      - "traefik.http.routers.cookbook.entrypoints=websecure"
+      - "traefik.http.routers.cookbook.tls.certresolver=letsencrypt"
+      - "traefik.http.services.cookbook.loadbalancer.server.port=3000"
+
+  traefik:
+    image: traefik:v3.2
+    command:
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.websecure.address=:443"
+      - "--certificatesresolvers.letsencrypt.acme.httpchallenge=true"
+      - "--certificatesresolvers.letsencrypt.acme.httpchallenge.entrypoint=web"
+      - "--certificatesresolvers.letsencrypt.acme.email=you@your.domain"
+      - "--certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json"
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - traefik_letsencrypt:/letsencrypt
+
+volumes:
+  cookbook_data:
+  traefik_letsencrypt:
+```
+
+### Vision module (optional)
+
+`Cookbook` has an optional vision module that can import recipes from images and documents (jpeg,
+png and pdf) using any vision-language model (VLM) model via OpenAI-compatible model endpoint. You
+can configure a primary provider (e.g. a local instance) and an optional fallback one (e.g.
+OpenRouter). If no provider is setup the vision-module is disabled.
+
+```bash
 COOKBOOK_VLM_PRIMARY_URL=http://localhost:1234/v1/chat/completions
-COOKBOOK_VLM_PRIMARY_MODEL=qwen2.5-vl-7b-instruct
+COOKBOOK_VLM_PRIMARY_MODEL=mistralai/ministral-3b-2512
 COOKBOOK_VLM_PRIMARY_API_KEY=        # optional for local endpoints
 COOKBOOK_VLM_PRIMARY_TIMEOUT_SECONDS=180
 
 COOKBOOK_VLM_BACKUP_URL=https://openrouter.ai/api/v1/chat/completions
-COOKBOOK_VLM_BACKUP_MODEL=qwen/qwen2.5-vl-72b-instruct
+COOKBOOK_VLM_BACKUP_MODEL=mistralai/ministral-3b-2512
 COOKBOOK_VLM_BACKUP_API_KEY=sk-or-...
 COOKBOOK_VLM_BACKUP_TIMEOUT_SECONDS=120
 ```
 
-- No endpoint configured disables the import feature and hides it from the UI.
-- The backup endpoint can be configured without a primary endpoint.
-- The app tries endpoints in order: primary first, then backup.
-- URLs are full chat-completions URLs, not just base URLs.
-- Requests use structured output (`response_format.json_schema`).
-- Uploaded originals are kept as recipe source documents. A resized copy is generated only for the
-  vision request.
-- A PDF is imported as a single recipe and may contain at most 10 pages. Each page is rendered to an
-  image for the vision request only; the original PDF is stored unchanged and linked from the
-  recipe.
-- A PDF cannot be imported together with photos or another PDF.
-- Password-protected PDFs are not supported.
+Model/provider must support
+[structured output](https://lmstudio.ai/docs/developer/openai-compat/structured-output#structured-output).
 
-## Secrets
+### List of environment variables
+
+The following variables are available to configure the application.
+
+| Variable                               | Default              | Description                                                                       |
+| -------------------------------------- | -------------------- | --------------------------------------------------------------------------------- |
+| `COOKBOOK_REGISTRATION_ENABLED`        | `false`              | Allow public user registration                                                    |
+| `COOKBOOK_FIRST_ADMIN_EMAIL`           | unset                | Email of the initial admin; requires `COOKBOOK_FIRST_ADMIN_PASSWORD`              |
+| `COOKBOOK_FIRST_ADMIN_PASSWORD`        | unset                | Password of the initial admin; requires `COOKBOOK_FIRST_ADMIN_EMAIL`              |
+| `COOKBOOK_FIRST_ADMIN_USERNAME`        | unset                | Optional display name for the initial admin; requires email and password          |
+| `COOKBOOK_BACKUP_ENABLED`              | `true`               | Enable automatic database backups                                                 |
+| `COOKBOOK_BACKUP_SCHEDULE`             | `0 3 * * *`          | Five-field cron expression in UTC                                                 |
+| `COOKBOOK_BACKUP_DIR`                  | `<data_dir>/backups` | Backup output directory                                                           |
+| `COOKBOOK_BACKUP_KEEP`                 | `14`                 | Number of backup files to retain (at least 1)                                     |
+| `COOKBOOK_VLM_PRIMARY_URL`             | unset                | OpenAI-compatible primary endpoint; setting it enables the primary provider       |
+| `COOKBOOK_VLM_PRIMARY_MODEL`           | unset                | Model name for the primary endpoint; required with `COOKBOOK_VLM_PRIMARY_URL`     |
+| `COOKBOOK_VLM_PRIMARY_API_KEY`         | unset                | API key for the primary endpoint; optional for local endpoints                    |
+| `COOKBOOK_VLM_PRIMARY_TIMEOUT_SECONDS` | `180`                | Request timeout for the primary endpoint in seconds                               |
+| `COOKBOOK_VLM_BACKUP_URL`              | unset                | OpenAI-compatible fallback endpoint; setting it enables the backup provider       |
+| `COOKBOOK_VLM_BACKUP_MODEL`            | unset                | Model name for the fallback endpoint; required with `COOKBOOK_VLM_BACKUP_URL`     |
+| `COOKBOOK_VLM_BACKUP_API_KEY`          | unset                | API key for the fallback endpoint; optional for endpoints that do not require one |
+| `COOKBOOK_VLM_BACKUP_TIMEOUT_SECONDS`  | `120`                | Request timeout for the fallback endpoint in seconds                              |
+
+#### Loading secrets
 
 Every environment variable `NAME` can also be read from a file by setting `NAME_FILE` to the file
 path. This works with
@@ -179,11 +237,10 @@ COOKBOOK_FIRST_ADMIN_PASSWORD_FILE=/run/secrets/admin_password
 COOKBOOK_VLM_PRIMARY_API_KEY_FILE=/run/secrets/vlm_api_key
 ```
 
-The file takes precedence over the direct variable. Surrounding whitespace, including the trailing
-newline added by many secret stores, is trimmed. If `NAME_FILE` is set but the file cannot be read,
-startup fails instead of silently falling back.
+The file takes precedence over the direct variable. If `NAME_FILE` is set but the file cannot be
+read, startup fails instead of silently falling back.
 
-## Development
+## Local development
 
 Run the app with the Topcoat development server:
 
@@ -208,8 +265,7 @@ Seed the dev user and sample recipes into the configured data directory:
 cargo run -p cookbook-infra --bin cookbook-seed -- --data-dir ./data
 ```
 
-The dev user is `dev@example.com` / `test` and owns the sample recipes. Seeding is idempotent and is
-never run automatically by the server.
+The dev user is `test@example.com` / `test` and owns the sample recipes. Seeding is idempotent.
 
 ### Persisted JSON fixtures
 
