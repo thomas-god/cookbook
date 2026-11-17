@@ -318,3 +318,7 @@ header, and falls back to English. To add a language, add its `.ftl` file, add i
 cd crates/cookbook-app
 topcoat l10n check
 ```
+
+### ADRs
+
+A list of key design decisions can be found [here](adr/README.md);
