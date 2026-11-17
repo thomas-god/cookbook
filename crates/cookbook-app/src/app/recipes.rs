@@ -319,34 +319,31 @@ async fn recipe_search_results(
                 <p class="mt-8 text-sm text-muted-foreground">(t!(recipes_empty))</p>
             }
         } else {
-            <ul class="mt-3 flex flex-col gap-2">
+            <div class="mt-3 flex flex-col gap-2">
                 for recipe in &result.recipes {
-                    <li
-                        class="rounded-lg border border-border bg-card px-4 py-3 text-sm shadow-sm"
-                    >
-                        <a
-                            class="font-medium underline-offset-4 hover:underline"
-                            href=(href!(recipe_detail, RecipeId(recipe.id().as_str())))
+                    <a href=(href!(recipe_detail, RecipeId(recipe.id().as_str())))>
+                        <div
+                            class="flex flex-row flex-wrap gap-2 rounded-lg border border-border bg-card px-4 py-3 text-sm hover:shadow-md"
                         >
-                            (recipe.title().as_str())
-                        </a>
-                        if let Some(category) = recipe.category() {
-                            <span
-                                class="ml-2 inline-flex items-center rounded-full border border-border px-2 py-0.5 text-xs font-medium text-muted-foreground"
-                            >
-                                (category_label(cx, category))
-                            </span>
-                        }
-                        if recipe.needs_review() {
-                            <span
-                                class="ml-2 inline-flex items-center rounded-full border border-warning/40 bg-warning/10 px-2 py-0.5 text-xs font-medium text-warning-foreground"
-                            >
-                                (t!(recipe_needs_review))
-                            </span>
-                        }
-                    </li>
+                            <span clas="font-medium">(recipe.title().as_str())</span>
+                            if let Some(category) = recipe.category() {
+                                <span
+                                    class="inline-flex items-center rounded-full border border-border px-2 py-0.5 text-xs font-medium text-muted-foreground"
+                                >
+                                    (category_label(cx, category))
+                                </span>
+                            }
+                            if recipe.needs_review() {
+                                <span
+                                    class="inline-flex items-center rounded-full border border-warning/40 bg-warning/10 px-2 py-0.5 text-xs font-medium text-warning-foreground"
+                                >
+                                    (t!(recipe_needs_review))
+                                </span>
+                            }
+                        </div>
+                    </a>
                 }
-            </ul>
+            </div>
         }
 
         if total_pages > 1 {
