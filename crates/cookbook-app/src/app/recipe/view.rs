@@ -68,15 +68,8 @@ pub async fn recipe_detail(cx: &Cx) -> Result<impl View> {
                         <h2 class="text-3xl font-semibold">
                             (recipe.title().as_str())
                         </h2>
-                        if let Some(category) = recipe.category() {
-                            <span
-                                class="inline-flex items-center rounded-full border border-border px-2.5 py-0.5 text-sm font-medium text-muted-foreground"
-                            >
-                                (category_label(cx, category))
-                            </span>
-                        }
                     </div>
-                    <div class="flex flex-row items-center gap-3 text-sm">
+                    <div class="hidden sm:flex flex-row items-center gap-3 text-sm">
                         <a
                             class=(button_variants(
                                 ButtonVariant::Primary,
@@ -99,7 +92,7 @@ pub async fn recipe_detail(cx: &Cx) -> Result<impl View> {
                     </p>
                 }
                 <div
-                    class="flex flex-row gap-2 items-center mt-2 text-sm text-muted-foreground"
+                    class="flex flex-row flex-wrap gap-2 items-center mt-2 text-sm text-muted-foreground"
                 >
                     <span>
                         (t!(recipe_author))
@@ -124,9 +117,17 @@ pub async fn recipe_detail(cx: &Cx) -> Result<impl View> {
                             (servings_label(cx, servings))
                         </p>
                     }
+                    if let Some(category) = recipe.category() {
+                        <span>" · "</span>
+                        <span
+                            class="inline-flex items-center rounded-full border border-border px-2.5 py-0.5 text-sm font-medium text-muted-foreground"
+                        >
+                            (category_label(cx, category))
+                        </span>
+                    }
                 </div>
                 if let Some(description) = recipe.description() {
-                    <p class="mt-3 pl-3 text-md text-foreground">
+                    <p class="mt-3 sm:pl-3 text-md text-foreground">
                         (description.as_str())
                     </p>
                 }
@@ -187,6 +188,15 @@ pub async fn recipe_menu(
             <div
                 class="absolute right-0 z-10 mt-2 flex w-48 flex-col gap-1 rounded-lg border border-border bg-card p-1 shadow-md"
             >
+                <a
+                    class=(class!(
+                        button_variants(ButtonVariant::Ghost, ButtonSize::Sm),
+                        "w-full justify-start",
+                    ))
+                    href=(href!(cook_recipe, RecipeId(recipe.id().as_str())))
+                >
+                    (t!(recipe_cook))
+                </a>
                 if can_edit {
                     <a
                         class=(class!(
