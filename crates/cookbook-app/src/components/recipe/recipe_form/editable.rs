@@ -3,11 +3,18 @@
 use topcoat::{
     Result,
     context::Cx,
+    icon::icon,
     runtime::{Event, Signal, signal},
     view::{Attributes, Child, View, component, element_id, view},
 };
 
-use crate::{components::recipe::recipe_form::view::TEXTAREA_CLASS, t};
+use crate::{
+    components::{
+        base::icons::{CHECK, DELETE, EDIT},
+        recipe::recipe_form::view::TEXTAREA_CLASS,
+    },
+    t,
+};
 
 /// A visually distinct group of related form fields.
 #[component]
@@ -30,35 +37,8 @@ pub(super) async fn form_section(
 #[component]
 async fn edit_toggle_icons(editing: Signal<bool>) -> Result<impl View> {
     Ok(view! {
-        <span :hidden=$(editing.get()) aria-hidden="true">
-            <svg
-                xmlns="http://www.w3.org/2000/svg"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="1.5"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                class="size-4"
-            >
-                <path d="M12 20h9"></path>
-                <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"></path>
-            </svg>
-        </span>
-        <span :hidden=$(!editing.get()) aria-hidden="true">
-            <svg
-                xmlns="http://www.w3.org/2000/svg"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                class="size-4"
-            >
-                <path d="m5 12 5 5L20 7"></path>
-            </svg>
-        </span>
+        <span :hidden=$(editing.get())>icon(data: EDIT, size: 16)</span>
+        <span :hidden=$(!editing.get())>icon(data: CHECK, size: 16)</span>
     })
 }
 
@@ -110,23 +90,7 @@ pub(super) async fn delete_button(
             class="inline-flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
             (attrs)
         >
-            <svg
-                xmlns="http://www.w3.org/2000/svg"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="1.5"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                aria-hidden="true"
-                class="size-4"
-            >
-                <path d="M3 6h18"></path>
-                <path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2"></path>
-                <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path>
-                <path d="M10 11v6"></path>
-                <path d="M14 11v6"></path>
-            </svg>
+            icon(data: DELETE, size: 16)
         </button>
     })
 }

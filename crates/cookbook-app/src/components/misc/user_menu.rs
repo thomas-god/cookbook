@@ -11,7 +11,7 @@ use crate::{
     app::{admin, auth::account},
     components::base::{
         button::{ButtonSize, ButtonVariant, button, button_variants},
-        icons::MORE_VERT,
+        icons::SETTINGS,
     },
     t,
 };
@@ -29,7 +29,7 @@ pub async fn user_menu(cx: &Cx, user: &AuthenticatedUser) -> Result<impl View> {
                 aria-label=(t!(account_menu_label))
             >
                 (user.display_name())
-                icon(data: MORE_VERT)
+                icon(data: SETTINGS)
             </summary>
             <div
                 class="absolute right-0 z-10 mt-1 flex w-48 flex-col gap-1 rounded-lg border border-border bg-card p-1 shadow-md"

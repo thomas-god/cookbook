@@ -4,6 +4,7 @@ use cookbook_domain::recipe::models::RecipeCategory;
 use topcoat::{
     Result,
     context::Cx,
+    icon::icon,
     router::href,
     runtime::{Event, Signal, procedure, signal},
     view::{View, attributes, component, element_id, view},
@@ -15,6 +16,7 @@ use crate::{
         base::{
             button::{ButtonSize, ButtonVariant, button},
             field::{field, field_description, field_label},
+            icons::COPY,
             image_upload::image_upload,
             input::input,
         },
@@ -1319,6 +1321,8 @@ async fn step_row(
                     size: ButtonSize::Sm,
                     attrs: attributes! {
                         type="button"
+                        aria-label=(t!(form_split_step))
+                        title=(t!(form_split_step))
                         @click=$(async |_e: Event| {
                             let new_key = next_key.get();
                             next_key.increment();
@@ -1330,7 +1334,7 @@ async fn step_row(
                             order.set(next);
                         })
                     },
-                    (t!(form_split_step))
+                    icon(data: COPY, size: 16)
                 )
                 delete_button(
                     label: step_remove_label,

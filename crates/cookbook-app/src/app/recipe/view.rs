@@ -3,7 +3,7 @@ use cookbook_domain::recipe::ports::RecipeService;
 use cookbook_infra::auth::models::AuthenticatedUser;
 use topcoat::icon::icon;
 use topcoat::router::{href, page, path_param};
-use topcoat::view::component;
+use topcoat::view::{Length, component};
 use topcoat::{
     Result,
     context::{Cx, app_context},
@@ -182,7 +182,7 @@ pub async fn recipe_menu(
                 aria-label=(t!(recipe_actions))
                 title=(t!(recipe_actions))
             >
-                icon(data: MORE_VERT)
+                icon(data: MORE_VERT, size: Length::em(1.5))
             </summary>
             <div
                 class="absolute right-0 z-10 mt-2 flex w-48 flex-col gap-1 rounded-lg border border-border bg-card p-1 shadow-md"

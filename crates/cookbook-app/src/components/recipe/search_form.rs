@@ -1,20 +1,15 @@
 use topcoat::{
     Result,
     context::Cx,
-    icon::{IconData, icon},
+    icon::icon,
     runtime::{Event, Signal},
-    view::{View, attributes, component, svg::ViewBox, view},
+    view::{View, attributes, component, view},
 };
 
 use crate::{
-    components::base::{field::field, input::input},
+    components::base::{field::field, icons::SEARCH, input::input},
     t,
 };
-
-const SEARCH: IconData = IconData::unescaped_unchecked(
-    ViewBox::new(0.0, 0.0, 24.0, 24.0),
-    r#"<g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></g>"#,
-);
 
 #[component]
 pub async fn recipe_search_form(

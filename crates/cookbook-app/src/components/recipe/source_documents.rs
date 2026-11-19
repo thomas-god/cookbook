@@ -2,6 +2,7 @@ use cookbook_domain::recipe::models::RecipeSourceDocumentSummary;
 use topcoat::{
     Result,
     context::Cx,
+    icon::icon,
     router::href,
     view::{View, attributes, component, element_id, view},
 };
@@ -15,6 +16,7 @@ use crate::{
         base::{
             button::{ButtonSize, ButtonVariant, button},
             field::{field, field_description, field_label},
+            icons::DOCUMENT,
             image_upload::document_upload,
         },
         recipe::image_thumbnail::{IMAGE_GRID_CLASS, image_thumbnail},
@@ -210,22 +212,11 @@ async fn pdf_document_link(cx: &Cx, url: String, alt: String) -> Result<impl Vie
             rel="noreferrer"
             class="flex aspect-square w-full flex-col items-center justify-center gap-2 rounded-lg border border-border bg-muted/40 px-3 text-center"
         >
-            <svg
-                xmlns="http://www.w3.org/2000/svg"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="1.5"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                aria-hidden="true"
-                class="size-8 text-muted-foreground"
-            >
-                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
-                <path d="M14 2v6h6"></path>
-                <path d="M8 13h8"></path>
-                <path d="M8 17h8"></path>
-            </svg>
+            icon(
+                data: DOCUMENT,
+                size: 32,
+                attrs: attributes! { class="text-muted-foreground" }
+            )
             <span class="text-xs font-medium break-all">(alt)</span>
             <span class="text-xs text-muted-foreground">
                 (t!(source_document_pdf_open))
