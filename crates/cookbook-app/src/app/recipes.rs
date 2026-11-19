@@ -7,10 +7,11 @@ use cookbook_domain::recipe::models::{
     RevisionVerification, Servings,
 };
 use cookbook_domain::recipe::ports::{
-    AddRecipeSourceDocumentsError, AddRecipeSourceDocumentsRequest, ConvertRecipeStructureRequest,
-    DeleteRecipeError, DeleteRecipeSourceDocumentError, RecipeSearchCriteria, RecipeService,
-    RecipeSort, RestoreRecipeRevisionError, RestoreRecipeRevisionRequest, SearchRecipesQuery,
-    SortDirection, UpdateRecipeError, UpdateRecipeScopeError, UpdateRecipeScopeRequest,
+    AddRecipeSourceDocumentsError, AddRecipeSourceDocumentsRequest, CategorySelection,
+    ConvertRecipeStructureRequest, DeleteRecipeError, DeleteRecipeSourceDocumentError,
+    RecipeSearchCriteria, RecipeService, RecipeSort, RestoreRecipeRevisionError,
+    RestoreRecipeRevisionRequest, SearchRecipesQuery, SortDirection, UpdateRecipeError,
+    UpdateRecipeScopeError, UpdateRecipeScopeRequest,
 };
 use cookbook_domain::user::models::UserId;
 use cookbook_infra::auth::ports::UserRepository;
@@ -104,6 +105,7 @@ struct RecipeListQuery {
     sort: Option<String>,
     page: Option<usize>,
     exclude_needs_review: Option<bool>,
+    favorites_only: Option<bool>,
     category_aperitif: Option<bool>,
     category_starter: Option<bool>,
     category_main: Option<bool>,
@@ -151,6 +153,10 @@ impl RecipeListQuery {
         self.exclude_needs_review.unwrap_or(false)
     }
 
+    fn favorites_only(&self) -> bool {
+        self.favorites_only.unwrap_or(false)
+    }
+
     fn sort_choice(&self) -> Result<SortChoice> {
         SortChoice::parse(self.sort.as_deref())
             .ok_or_else(|| bad_request("unknown recipe sort").into())
@@ -165,6 +171,7 @@ impl RecipeListQuery {
             pattern: self.pattern(),
             categories: self.categories(),
             exclude_needs_review: self.exclude_needs_review(),
+            favorites_only: self.favorites_only(),
             sort: self.sort_choice()?,
             page: self.page_number(),
         })
@@ -176,21 +183,32 @@ struct SearchParams {
     pattern: Option<String>,
     categories: Vec<RecipeCategory>,
     exclude_needs_review: bool,
+    favorites_only: bool,
     sort: SortChoice,
     page: usize,
 }
 
 impl SearchParams {
     fn has_filters(&self) -> bool {
-        self.pattern.is_some() || !self.categories.is_empty() || self.exclude_needs_review
+        self.pattern.is_some()
+            || !self.categories.is_empty()
+            || self.exclude_needs_review
+            || self.favorites_only
     }
 
     fn search_query(&self, page_number: usize) -> SearchRecipesQuery {
+        let categories = if self.categories.is_empty() {
+            CategorySelection::All
+        } else {
+            CategorySelection::Only(self.categories.clone())
+        };
+
         SearchRecipesQuery {
             criteria: RecipeSearchCriteria {
                 pattern: self.pattern.clone(),
-                categories: self.categories.clone(),
+                categories,
                 exclude_needs_review: self.exclude_needs_review,
+                favorites_only: self.favorites_only,
                 sort: self.sort.to_domain(),
             },
             offset: (page_number - 1) * RECIPE_PAGE_SIZE,
@@ -212,6 +230,10 @@ impl SearchParams {
 
         if self.exclude_needs_review {
             serializer.append_pair("exclude_needs_review", "true");
+        }
+
+        if self.favorites_only {
+            serializer.append_pair("favorites_only", "true");
         }
 
         if self.sort != SortChoice::default() {
@@ -257,6 +279,7 @@ pub async fn page(cx: &Cx) -> Result<impl View> {
             query: $(query.get()),
             categories: category_names,
             exclude_needs_review: params.exclude_needs_review,
+            favorites_only: params.favorites_only,
             sort: sort,
             page_number: $(current_page.get())
         )
@@ -269,6 +292,7 @@ async fn recipe_search_results(
     query: String,
     categories: Vec<String>,
     exclude_needs_review: bool,
+    favorites_only: bool,
     sort: String,
     page_number: String,
 ) -> Result<impl View> {
@@ -280,6 +304,7 @@ async fn recipe_search_results(
             .filter_map(|category| RecipeCategory::parse(category))
             .collect(),
         exclude_needs_review,
+        favorites_only,
         sort: SortChoice::parse(Some(&sort)).unwrap_or_default(),
         page: page_number.parse().unwrap_or(1).max(1),
     };
@@ -1197,6 +1222,7 @@ mod tests {
             sort: None,
             page: None,
             exclude_needs_review: None,
+            favorites_only: None,
             category_aperitif: None,
             category_starter: None,
             category_main: None,
@@ -1280,12 +1306,35 @@ mod tests {
     }
 
     #[test]
+    fn search_query_maps_categories_and_favorites_only() {
+        let params = list_query().params().unwrap();
+        assert_eq!(
+            params.search_query(1).criteria.categories,
+            CategorySelection::All
+        );
+
+        let mut query = list_query();
+        query.category_main = Some(true);
+        query.favorites_only = Some(true);
+        let params = query.params().unwrap();
+        assert!(params.has_filters());
+
+        let criteria = params.search_query(1).criteria;
+        assert_eq!(
+            criteria.categories,
+            CategorySelection::Only(vec![RecipeCategory::Main])
+        );
+        assert!(criteria.favorites_only);
+    }
+
+    #[test]
     fn page_href_preserves_filters_sort_and_page() {
         let mut query = list_query();
         query.q = Some("soupe à l'oignon".to_string());
         query.category_main = Some(true);
         query.category_dessert = Some(true);
         query.exclude_needs_review = Some(true);
+        query.favorites_only = Some(true);
         query.sort = Some("title-asc".to_string());
 
         let href = query.params().unwrap().page_href("/recipes", 2);
@@ -1295,6 +1344,7 @@ mod tests {
         assert!(href.contains("category_main=true"));
         assert!(href.contains("category_dessert=true"));
         assert!(href.contains("exclude_needs_review=true"));
+        assert!(href.contains("favorites_only=true"));
         assert!(href.contains("sort=title-asc"));
         assert!(href.contains("page=2"));
     }

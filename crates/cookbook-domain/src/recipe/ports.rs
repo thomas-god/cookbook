@@ -61,11 +61,23 @@ pub struct RestoreRecipeRevisionRequest {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CategorySelection {
+    All,
+    Only(Vec<RecipeCategory>),
+}
+
+impl Default for CategorySelection {
+    fn default() -> Self {
+        Self::All
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RecipeSearchCriteria {
     pub pattern: Option<String>,
-    /// An empty list means no category filter.
-    pub categories: Vec<RecipeCategory>,
+    pub categories: CategorySelection,
     pub exclude_needs_review: bool,
+    pub favorites_only: bool,
     pub sort: RecipeSort,
 }
 
@@ -73,8 +85,9 @@ impl Default for RecipeSearchCriteria {
     fn default() -> Self {
         Self {
             pattern: None,
-            categories: Vec::new(),
+            categories: CategorySelection::default(),
             exclude_needs_review: false,
+            favorites_only: false,
             sort: RecipeSort::default(),
         }
     }
@@ -271,7 +284,8 @@ pub trait RecipeRepository: Clone + Send + Sync + 'static {
     fn search_recipes(
         &self,
         criteria: RecipeSearchCriteria,
-    ) -> impl Future<Output = Result<Vec<RecipeWithContent>, SearchRecipesError>> + Send;
+        viewer: UserId,
+    ) -> impl Future<Output = Result<Vec<RecipeForViewer>, SearchRecipesError>> + Send;
 
     fn get_recipe_revisions(
         &self,
@@ -301,11 +315,6 @@ pub trait RecipeRepository: Clone + Send + Sync + 'static {
         recipe_id: RecipeId,
         user_id: UserId,
     ) -> impl Future<Output = Result<bool, GetFavoriteError>> + Send;
-
-    fn list_favorite_recipe_ids(
-        &self,
-        user_id: UserId,
-    ) -> impl Future<Output = Result<Vec<RecipeId>, ListFavoritesError>> + Send;
 }
 
 /// Outbound (driven) port for recipe documents (images, source) persistence.
@@ -678,21 +687,6 @@ impl fmt::Display for GetFavoriteError {
 }
 
 impl std::error::Error for GetFavoriteError {}
-
-#[derive(Debug)]
-pub enum ListFavoritesError {
-    Storage(anyhow::Error),
-}
-
-impl fmt::Display for ListFavoritesError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Storage(reason) => write!(f, "failed to list recipe favorites: {reason}"),
-        }
-    }
-}
-
-impl std::error::Error for ListFavoritesError {}
 
 #[derive(Debug)]
 pub enum ListRecipesError {
@@ -1081,7 +1075,8 @@ mockall::mock! {
         async fn search_recipes(
             &self,
             criteria: RecipeSearchCriteria,
-        ) -> Result<Vec<RecipeWithContent>, SearchRecipesError>;
+            viewer: UserId,
+        ) -> Result<Vec<RecipeForViewer>, SearchRecipesError>;
 
         async fn get_recipe_revisions(
             &self,
@@ -1112,10 +1107,6 @@ mockall::mock! {
             user_id: UserId,
         ) -> Result<bool, GetFavoriteError>;
 
-        async fn list_favorite_recipe_ids(
-            &self,
-            user_id: UserId,
-        ) -> Result<Vec<RecipeId>, ListFavoritesError>;
 
     }
 }

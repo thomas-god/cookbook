@@ -2,14 +2,13 @@ use std::time::SystemTime;
 
 use anyhow::{Context, anyhow, bail};
 use cookbook_domain::recipe::models::{
-    Recipe, RecipeCategory, RecipeId, RecipeRevision, RecipeRevisionId, RecipeScope,
-    RecipeWithContent, RevisionOrigin, RevisionVerification,
+    Recipe, RecipeCategory, RecipeForViewer, RecipeId, RecipeRevision, RecipeRevisionId,
+    RecipeScope, RecipeWithContent, RevisionOrigin, RevisionVerification,
 };
 use cookbook_domain::recipe::ports::{
-    AddFavoriteError, DeleteRecipeRecordError, GetFavoriteError, GetRecipeError,
-    ListFavoritesError, ListRecipeRevisionsError, ListRecipesError, RecipeRepository,
-    RecipeSearchCriteria, RecipeSort, RemoveFavoriteError, SaveRecipeError, SearchRecipesError,
-    SortDirection,
+    AddFavoriteError, CategorySelection, DeleteRecipeRecordError, GetFavoriteError, GetRecipeError,
+    ListRecipeRevisionsError, ListRecipesError, RecipeRepository, RecipeSearchCriteria, RecipeSort,
+    RemoveFavoriteError, SaveRecipeError, SearchRecipesError, SortDirection,
 };
 use cookbook_domain::user::models::UserId;
 use sqlx::sqlite::{Sqlite, SqlitePool, SqliteRow};
@@ -44,7 +43,13 @@ const SELECT_CURRENT_SEARCH: &str = "
     SELECT r.id AS recipe_id, r.author_id, r.scope,
            rev.id AS revision_id, rev.recipe_id AS revision_recipe_id,
            rev.editor_id, rev.edited_at_ms, rev.origin, rev.verification,
-           rev.content_version, rev.content
+           rev.content_version, rev.content,
+           EXISTS (
+               SELECT 1 FROM recipe_favorites f
+               WHERE f.recipe_id = r.id AND f.user_id = ";
+
+const SEARCH_FROM_CURRENT: &str = "
+           ) AS is_favorite
     FROM recipes r
     JOIN recipe_revisions rev ON rev.seq = (
         SELECT MAX(seq) FROM recipe_revisions WHERE recipe_id = r.id
@@ -231,7 +236,8 @@ impl RecipeRepository for SqliteRecipeRepository {
     async fn search_recipes(
         &self,
         criteria: RecipeSearchCriteria,
-    ) -> Result<Vec<RecipeWithContent>, SearchRecipesError> {
+        viewer: UserId,
+    ) -> Result<Vec<RecipeForViewer>, SearchRecipesError> {
         let pattern = criteria
             .pattern
             .as_deref()
@@ -240,6 +246,7 @@ impl RecipeRepository for SqliteRecipeRepository {
             .map(str::to_lowercase);
 
         let mut builder = QueryBuilder::<Sqlite>::new(SELECT_CURRENT_SEARCH);
+        builder.push_bind(viewer.as_str()).push(SEARCH_FROM_CURRENT);
 
         if let Some(pattern) = &pattern {
             builder
@@ -248,19 +255,36 @@ impl RecipeRepository for SqliteRecipeRepository {
                 .push(") > 0");
         }
 
-        if !criteria.categories.is_empty() {
-            builder.push(" AND rev.category IN (");
-            let mut separated = builder.separated(", ");
-            for category in &criteria.categories {
-                separated.push_bind(category.as_str());
+        match &criteria.categories {
+            CategorySelection::All => {}
+            CategorySelection::Only(categories) if categories.is_empty() => {
+                builder.push(" AND 0");
             }
-            separated.push_unseparated(")");
+            CategorySelection::Only(categories) => {
+                builder.push(" AND rev.category IN (");
+                let mut separated = builder.separated(", ");
+                for category in categories {
+                    separated.push_bind(category.as_str());
+                }
+                separated.push_unseparated(")");
+            }
         }
 
         if criteria.exclude_needs_review {
             builder
                 .push(" AND rev.verification <> ")
                 .push_bind(RevisionVerification::NeedsReview.as_str());
+        }
+
+        if criteria.favorites_only {
+            builder
+                .push(
+                    " AND EXISTS (
+                        SELECT 1 FROM recipe_favorites f
+                        WHERE f.recipe_id = r.id AND f.user_id = ",
+                )
+                .push_bind(viewer.as_str())
+                .push(")");
         }
 
         match criteria.sort {
@@ -285,7 +309,7 @@ impl RecipeRepository for SqliteRecipeRepository {
             .map_err(search_storage)?;
 
         rows.iter()
-            .map(decode_current)
+            .map(decode_for_viewer)
             .collect::<anyhow::Result<Vec<_>>>()
             .map_err(search_storage)
     }
@@ -375,23 +399,6 @@ impl RecipeRepository for SqliteRecipeRepository {
 
         Ok(exists)
     }
-
-    async fn list_favorite_recipe_ids(
-        &self,
-        user_id: UserId,
-    ) -> Result<Vec<RecipeId>, ListFavoritesError> {
-        let ids: Vec<String> = sqlx::query_scalar(
-            "SELECT recipe_id FROM recipe_favorites
-             WHERE user_id = ?
-             ORDER BY created_at_ms DESC, recipe_id ASC",
-        )
-        .bind(user_id.as_str())
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|error| ListFavoritesError::Storage(error.into()))?;
-
-        Ok(ids.into_iter().map(RecipeId::new).collect())
-    }
 }
 
 fn decode_current(row: &SqliteRow) -> anyhow::Result<RecipeWithContent> {
@@ -405,6 +412,13 @@ fn decode_current(row: &SqliteRow) -> anyhow::Result<RecipeWithContent> {
     let revision = decode_revision(row)?;
 
     RecipeWithContent::new(recipe, revision).map_err(Into::into)
+}
+
+fn decode_for_viewer(row: &SqliteRow) -> anyhow::Result<RecipeForViewer> {
+    let recipe = decode_current(row)?;
+    let is_favorite: bool = row.try_get("is_favorite")?;
+
+    Ok(RecipeForViewer::new(recipe, is_favorite))
 }
 
 fn decode_revision(row: &SqliteRow) -> anyhow::Result<RecipeRevision> {
@@ -489,6 +503,10 @@ mod tests {
             RecipeId::new(id.to_string()),
             UserId::new("user-1".to_string()),
         )
+    }
+
+    fn viewer() -> UserId {
+        UserId::new("user-1".to_string())
     }
 
     fn content(title: &str) -> RecipeContent {
@@ -588,10 +606,10 @@ mod tests {
         save(repository, recipe, revision).await;
     }
 
-    fn titles(recipes: &[RecipeWithContent]) -> Vec<&str> {
+    fn titles(recipes: &[RecipeForViewer]) -> Vec<&str> {
         recipes
             .iter()
-            .map(|recipe| recipe.title().as_str())
+            .map(|recipe| recipe.recipe().title().as_str())
             .collect()
     }
 
@@ -834,7 +852,7 @@ mod tests {
         }
 
         let results = repository
-            .search_recipes(RecipeSearchCriteria::default())
+            .search_recipes(RecipeSearchCriteria::default(), viewer())
             .await
             .unwrap();
 
@@ -867,10 +885,13 @@ mod tests {
 
         for pattern in ["tomato", "BASIL", "simmer"] {
             let results = repository
-                .search_recipes(RecipeSearchCriteria {
-                    pattern: Some(pattern.to_string()),
-                    ..Default::default()
-                })
+                .search_recipes(
+                    RecipeSearchCriteria {
+                        pattern: Some(pattern.to_string()),
+                        ..Default::default()
+                    },
+                    viewer(),
+                )
                 .await
                 .unwrap();
 
@@ -878,10 +899,13 @@ mod tests {
         }
 
         let results = repository
-            .search_recipes(RecipeSearchCriteria {
-                pattern: Some("missing".to_string()),
-                ..Default::default()
-            })
+            .search_recipes(
+                RecipeSearchCriteria {
+                    pattern: Some("missing".to_string()),
+                    ..Default::default()
+                },
+                viewer(),
+            )
             .await
             .unwrap();
 
@@ -905,10 +929,13 @@ mod tests {
         .await;
 
         let results = repository
-            .search_recipes(RecipeSearchCriteria {
-                pattern: Some("   ".to_string()),
-                ..Default::default()
-            })
+            .search_recipes(
+                RecipeSearchCriteria {
+                    pattern: Some("   ".to_string()),
+                    ..Default::default()
+                },
+                viewer(),
+            )
             .await
             .unwrap();
 
@@ -938,14 +965,111 @@ mod tests {
         }
 
         let results = repository
-            .search_recipes(RecipeSearchCriteria {
-                categories: vec![RecipeCategory::Main],
-                ..Default::default()
-            })
+            .search_recipes(
+                RecipeSearchCriteria {
+                    categories: CategorySelection::Only(vec![RecipeCategory::Main]),
+                    ..Default::default()
+                },
+                viewer(),
+            )
             .await
             .unwrap();
 
         assert_eq!(titles(&results), ["Soup"]);
+    }
+
+    #[tokio::test]
+    async fn search_with_an_empty_category_selection_matches_nothing() {
+        let repository = repository().await;
+
+        save_searchable(
+            &repository,
+            "soup",
+            "Soup",
+            Some(RecipeCategory::Main),
+            RevisionVerification::Verified,
+            SystemTime::UNIX_EPOCH,
+            Vec::new(),
+            Vec::new(),
+        )
+        .await;
+
+        let results = repository
+            .search_recipes(
+                RecipeSearchCriteria {
+                    categories: CategorySelection::Only(Vec::new()),
+                    ..Default::default()
+                },
+                viewer(),
+            )
+            .await
+            .unwrap();
+
+        assert!(results.is_empty());
+    }
+
+    #[tokio::test]
+    async fn search_reports_and_filters_favorites_for_the_viewer() {
+        let repository = repository().await;
+        insert_user(&repository, "user-1").await;
+        insert_user(&repository, "user-2").await;
+
+        for (id, title) in [("soup", "Soup"), ("cake", "Cake")] {
+            save_searchable(
+                &repository,
+                id,
+                title,
+                None,
+                RevisionVerification::Verified,
+                SystemTime::UNIX_EPOCH,
+                Vec::new(),
+                Vec::new(),
+            )
+            .await;
+        }
+
+        repository
+            .add_favorite(
+                RecipeId::new("soup".to_string()),
+                UserId::new("user-1".to_string()),
+                SystemTime::UNIX_EPOCH,
+            )
+            .await
+            .unwrap();
+
+        let results = repository
+            .search_recipes(RecipeSearchCriteria::default(), viewer())
+            .await
+            .unwrap();
+        let states: Vec<_> = results
+            .iter()
+            .map(|recipe| (recipe.recipe().title().as_str(), recipe.is_favorite()))
+            .collect();
+        assert_eq!(states, [("Cake", false), ("Soup", true)]);
+
+        let favorites = repository
+            .search_recipes(
+                RecipeSearchCriteria {
+                    favorites_only: true,
+                    ..Default::default()
+                },
+                viewer(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(titles(&favorites), ["Soup"]);
+
+        let other_viewer = repository
+            .search_recipes(
+                RecipeSearchCriteria {
+                    favorites_only: true,
+                    ..Default::default()
+                },
+                UserId::new("user-2".to_string()),
+            )
+            .await
+            .unwrap();
+        assert!(other_viewer.is_empty());
     }
 
     #[tokio::test]
@@ -976,14 +1100,17 @@ mod tests {
         .await;
 
         let all = repository
-            .search_recipes(RecipeSearchCriteria::default())
+            .search_recipes(RecipeSearchCriteria::default(), viewer())
             .await
             .unwrap();
         let verified = repository
-            .search_recipes(RecipeSearchCriteria {
-                exclude_needs_review: true,
-                ..Default::default()
-            })
+            .search_recipes(
+                RecipeSearchCriteria {
+                    exclude_needs_review: true,
+                    ..Default::default()
+                },
+                viewer(),
+            )
             .await
             .unwrap();
 
@@ -1012,17 +1139,23 @@ mod tests {
         }
 
         let newest_first = repository
-            .search_recipes(RecipeSearchCriteria {
-                sort: RecipeSort::LastEdited(SortDirection::Descending),
-                ..Default::default()
-            })
+            .search_recipes(
+                RecipeSearchCriteria {
+                    sort: RecipeSort::LastEdited(SortDirection::Descending),
+                    ..Default::default()
+                },
+                viewer(),
+            )
             .await
             .unwrap();
         let oldest_first = repository
-            .search_recipes(RecipeSearchCriteria {
-                sort: RecipeSort::LastEdited(SortDirection::Ascending),
-                ..Default::default()
-            })
+            .search_recipes(
+                RecipeSearchCriteria {
+                    sort: RecipeSort::LastEdited(SortDirection::Ascending),
+                    ..Default::default()
+                },
+                viewer(),
+            )
             .await
             .unwrap();
 
@@ -1049,17 +1182,23 @@ mod tests {
         }
 
         let ascending = repository
-            .search_recipes(RecipeSearchCriteria {
-                sort: RecipeSort::Title(SortDirection::Ascending),
-                ..Default::default()
-            })
+            .search_recipes(
+                RecipeSearchCriteria {
+                    sort: RecipeSort::Title(SortDirection::Ascending),
+                    ..Default::default()
+                },
+                viewer(),
+            )
             .await
             .unwrap();
         let descending = repository
-            .search_recipes(RecipeSearchCriteria {
-                sort: RecipeSort::Title(SortDirection::Descending),
-                ..Default::default()
-            })
+            .search_recipes(
+                RecipeSearchCriteria {
+                    sort: RecipeSort::Title(SortDirection::Descending),
+                    ..Default::default()
+                },
+                viewer(),
+            )
             .await
             .unwrap();
 
@@ -1237,13 +1376,6 @@ mod tests {
                 .await
                 .unwrap()
         );
-        assert_eq!(
-            repository
-                .list_favorite_recipe_ids(UserId::new("user-1".to_string()))
-                .await
-                .unwrap(),
-            vec![recipe.id().clone()]
-        );
 
         repository
             .remove_favorite(recipe.id().clone(), UserId::new("user-1".to_string()))
@@ -1256,17 +1388,10 @@ mod tests {
                 .await
                 .unwrap()
         );
-        assert!(
-            repository
-                .list_favorite_recipe_ids(UserId::new("user-1".to_string()))
-                .await
-                .unwrap()
-                .is_empty()
-        );
     }
 
     #[tokio::test]
-    async fn favouriting_the_same_recipe_twice_keeps_one_row() {
+    async fn favoriting_the_same_recipe_twice_keeps_one_row() {
         let repository = repository().await;
         insert_user(&repository, "user-1").await;
         let recipe = recipe("soup");
@@ -1319,13 +1444,13 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(
-            repository
-                .list_favorite_recipe_ids(UserId::new("user-2".to_string()))
+        let count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM recipe_favorites WHERE user_id = ?;")
+                .bind(UserId::new("user-2".to_string()).as_str())
+                .fetch_one(repository.pool())
                 .await
-                .unwrap()
-                .is_empty()
-        );
+                .unwrap();
+        assert_eq!(count, 0);
     }
 
     #[tokio::test]
@@ -1365,13 +1490,13 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(
-            repository
-                .list_favorite_recipe_ids(UserId::new("user-1".to_string()))
+        let count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM recipe_favorites WHERE user_id = ?;")
+                .bind(UserId::new("user-1".to_string()).as_str())
+                .fetch_one(repository.pool())
                 .await
-                .unwrap()
-                .is_empty()
-        );
+                .unwrap();
+        assert_eq!(count, 0);
 
         sqlx::query("DELETE FROM users WHERE id = 'user-2'")
             .execute(repository.pool())

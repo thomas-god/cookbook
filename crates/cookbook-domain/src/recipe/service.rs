@@ -481,28 +481,20 @@ where
             limit,
         } = query;
 
-        let recipes = self.recipe_repository.search_recipes(criteria).await?;
+        let recipes = self
+            .recipe_repository
+            .search_recipes(criteria, viewer.clone())
+            .await?;
 
         let visible: Vec<_> = recipes
             .into_iter()
-            .filter(|recipe| recipe.can_view(&viewer))
+            .filter(|recipe| recipe.recipe().can_view(&viewer))
             .collect();
         let total = visible.len();
-        let favorites: HashSet<_> = self
-            .recipe_repository
-            .list_favorite_recipe_ids(viewer)
-            .await
-            .map_err(|error| SearchRecipesError::Storage(error.into()))?
-            .into_iter()
-            .collect();
         let recipes = visible
             .into_iter()
             .skip(offset)
             .take(limit.unwrap_or(usize::MAX))
-            .map(|recipe| {
-                let is_favorite = favorites.contains(recipe.id());
-                RecipeForViewer::new(recipe, is_favorite)
-            })
             .collect();
 
         Ok(SearchRecipesResult { recipes, total })
@@ -833,7 +825,7 @@ mod tests {
         RecipeScope, RecipeStep, RecipeStepId, RecipeTitle, RevisionMessage,
     };
     use crate::recipe::ports::{
-        AddRecipeImagesError, DeleteRecipeAssetsError, DeleteRecipeRecordError,
+        AddRecipeImagesError, CategorySelection, DeleteRecipeAssetsError, DeleteRecipeRecordError,
         MockRecipeDocumentRepository, MockRecipeRepository, PurgeOrphanedRecipesError,
         RecipeSearchCriteria, SaveRecipeError, SearchRecipesQuery, UpdateRecipeRequest,
     };
@@ -2049,27 +2041,40 @@ mod tests {
     #[tokio::test]
     async fn search_recipes_filters_visibility_and_paginates() {
         let mut repository = MockRecipeRepository::new();
-        repository.expect_search_recipes().times(1).returning(|_| {
-            Ok(vec![
-                current_recipe_with_scope("private", "Private", "author-1", RecipeScope::Private),
-                current_recipe_with_scope(
-                    "viewable",
-                    "Viewable",
-                    "author-1",
-                    RecipeScope::Viewable,
-                ),
-                current_recipe_with_scope(
-                    "editable",
-                    "Editable",
-                    "author-1",
-                    RecipeScope::Editable,
-                ),
-            ])
-        });
         repository
-            .expect_list_favorite_recipe_ids()
+            .expect_search_recipes()
             .times(1)
-            .returning(|_| Ok(vec![RecipeId::new("editable".to_string())]));
+            .returning(|_, _| {
+                Ok(vec![
+                    RecipeForViewer::new(
+                        current_recipe_with_scope(
+                            "private",
+                            "Private",
+                            "author-1",
+                            RecipeScope::Private,
+                        ),
+                        false,
+                    ),
+                    RecipeForViewer::new(
+                        current_recipe_with_scope(
+                            "viewable",
+                            "Viewable",
+                            "author-1",
+                            RecipeScope::Viewable,
+                        ),
+                        false,
+                    ),
+                    RecipeForViewer::new(
+                        current_recipe_with_scope(
+                            "editable",
+                            "Editable",
+                            "author-1",
+                            RecipeScope::Editable,
+                        ),
+                        true,
+                    ),
+                ])
+            });
         let documents = MockRecipeDocumentRepository::new();
 
         let service = RecipeServiceImpl::new(repository, documents, FixedClock::new());
@@ -2096,21 +2101,68 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn search_recipes_preserves_repository_favorite_state() {
+        let mut repository = MockRecipeRepository::new();
+        repository
+            .expect_search_recipes()
+            .times(1)
+            .returning(|_, _| {
+                Ok(vec![
+                    RecipeForViewer::new(
+                        current_recipe_with_scope(
+                            "soup",
+                            "Soup",
+                            "author-1",
+                            RecipeScope::Viewable,
+                        ),
+                        false,
+                    ),
+                    RecipeForViewer::new(
+                        current_recipe_with_scope(
+                            "cake",
+                            "Cake",
+                            "author-1",
+                            RecipeScope::Viewable,
+                        ),
+                        true,
+                    ),
+                ])
+            });
+        let documents = MockRecipeDocumentRepository::new();
+
+        let service = RecipeServiceImpl::new(repository, documents, FixedClock::new());
+        let result = service
+            .search_recipes(SearchRecipesQuery::default(), user_id())
+            .await
+            .unwrap();
+
+        assert_eq!(result.total, 2);
+        assert!(!result.recipes[0].is_favorite());
+        assert!(result.recipes[1].is_favorite());
+    }
+
+    #[tokio::test]
     async fn search_recipes_forwards_criteria_and_maps_failures() {
         let mut repository = MockRecipeRepository::new();
         repository
             .expect_search_recipes()
             .times(1)
-            .withf(|criteria: &RecipeSearchCriteria| {
-                criteria.categories == vec![RecipeCategory::Main] && criteria.exclude_needs_review
+            .withf(|criteria: &RecipeSearchCriteria, viewer: &UserId| {
+                matches!(
+                    &criteria.categories,
+                    CategorySelection::Only(categories) if categories == &vec![RecipeCategory::Main]
+                ) && criteria.exclude_needs_review
+                    && criteria.favorites_only
+                    && viewer == &user_id()
             })
-            .returning(|_| Err(SearchRecipesError::Storage(anyhow!("boom"))));
+            .returning(|_, _| Err(SearchRecipesError::Storage(anyhow!("boom"))));
         let documents = MockRecipeDocumentRepository::new();
 
         let service = RecipeServiceImpl::new(repository, documents, FixedClock::new());
         let mut query = SearchRecipesQuery::default();
-        query.criteria.categories = vec![RecipeCategory::Main];
+        query.criteria.categories = CategorySelection::Only(vec![RecipeCategory::Main]);
         query.criteria.exclude_needs_review = true;
+        query.criteria.favorites_only = true;
 
         let result = service.search_recipes(query, user_id()).await;
 
