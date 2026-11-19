@@ -115,10 +115,7 @@ pub async fn recipe_view(
                 </nav>
             }
             for (index, part) in parts.iter().enumerate() {
-                <section
-                    id=(part_anchor_id(index))
-                    class="flex flex-col gap-4"
-                >
+                <section id=(part_anchor_id(index)) class="flex flex-col gap-4">
                     <div>
                         <h3 class="text-xl font-semibold">(part.title().as_str())</h3>
                         if let Some(description) = part.description() {

@@ -902,9 +902,10 @@ pub async fn recipe_history(cx: &Cx) -> Result<impl View> {
     Ok(view! {
         <div class="flex flex-col gap-6">
             <a
-                class="text-sm text-muted-foreground underline-offset-4 hover:underline"
+                class="text-sm text-muted-foreground underline-offset-4 hover:underline italic opacity-80 flex items-center gap-1.5"
                 href=(href!(recipe_detail, RecipeId(recipe_id.as_str())))
             >
+                icon(data: BACK_ARROW)
                 (t!(recipe_back_to_recipe))
             </a>
             <h2 class="text-2xl font-semibold">

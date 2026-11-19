@@ -359,15 +359,27 @@ pub async fn cook_recipe_view(
                                         >
                                             (part.title.as_str())
                                             " · "
-                                            (t!(cook_part_progress, current = part.part_index, total = part.part_count))
+                                            (t!(
+                                                cook_part_progress,
+                                                current = part.part_index,
+                                                total = part.part_count,
+                                            ))
                                         </p>
                                     }
                                     <div class="flex flex-wrap items-baseline gap-x-3 gap-y-1">
                                         <span class="text-sm text-muted-foreground">
                                             if let Some(part) = &step.part {
-                                                (t!(cook_step_progress, current = part.step_index, total = part.step_count))
+                                                (t!(
+                                                    cook_step_progress,
+                                                    current = part.step_index,
+                                                    total = part.step_count,
+                                                ))
                                             } else {
-                                                (t!(cook_step_progress, current = step_index.get() + 1, total = total_steps))
+                                                (t!(
+                                                    cook_step_progress,
+                                                    current = step_index.get() + 1,
+                                                    total = total_steps,
+                                                ))
                                             }
                                         </span>
                                         if let Some(title) = &step.title {

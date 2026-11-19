@@ -13,12 +13,12 @@ use topcoat::{
 
 use crate::app::recipe::cook::cook_recipe;
 use crate::app::recipe::export::export_recipe;
+use crate::app::recipe::scope::recipe_scope;
 use crate::app::recipes::{
     RecipeId, delete_recipe, display_name, edit_recipe, recipe_history, servings_label,
 };
 use crate::components::base::button::{ButtonSize, ButtonVariant, button_variants};
 use crate::components::base::icons::{BACK_ARROW, MORE_VERT};
-use crate::components::recipe::recipe_scope_form::recipe_scope_form;
 use crate::components::recipe::source_documents::source_document_gallery;
 use crate::{
     app::{AppRecipeService, auth},
@@ -48,8 +48,6 @@ pub async fn recipe_detail(cx: &Cx) -> Result<impl View> {
         .get_recipe_images(recipe.id().clone(), user.id().clone())
         .await?;
 
-    let is_author = recipe.author() == user.id();
-    let scope = recipe.scope();
     let author_name = display_name(cx, recipe.author()).await?;
     let total_minutes = recipe.durations().total_duration().as_minutes();
 
@@ -148,15 +146,6 @@ pub async fn recipe_detail(cx: &Cx) -> Result<impl View> {
                 recipe_id: recipe.id().as_str(),
                 documents: &source_documents
             )
-            if is_author {
-                <section class="rounded-lg border border-border bg-card p-4">
-                    <h3 class="mb-3 text-lg font-semibold">(t!(scope_heading))</h3>
-                    recipe_scope_form(
-                        recipe_id: recipe.id().as_str().to_string(),
-                        scope: scope
-                    )
-                </section>
-            }
         </div>
     })
 }
@@ -230,6 +219,15 @@ pub async fn recipe_menu(
                     (t!(recipe_export))
                 </a>
                 if is_author {
+                    <a
+                        class=(class!(
+                            button_variants(ButtonVariant::Ghost, ButtonSize::Sm),
+                            "w-full justify-start",
+                        ))
+                        href=(href!(recipe_scope, RecipeId(recipe.id().as_str())))
+                    >
+                        (t!(scope_heading))
+                    </a>
                     <form
                         method="post"
                         action=(delete_action)
