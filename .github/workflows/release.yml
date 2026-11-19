@@ -3,6 +3,11 @@ name: Release
 on:
   release:
     types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
 
 jobs:
   build-docker-image:
@@ -41,7 +46,7 @@ jobs:
         uses: docker/build-push-action@v7
         with:
           context: "{{defaultContext}}"
-          file: ./infra/docker/Dockerfile
+          file: ./infra/Dockerfile
           platforms: ${{ matrix.platform }}
           push: true
           tags: |
