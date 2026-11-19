@@ -28,7 +28,7 @@ use topcoat::{
         response::Response,
         route,
     },
-    runtime::{shard, signal},
+    runtime::{record, shard, signal},
     view::{View, attributes, view},
 };
 
@@ -95,6 +95,40 @@ impl SortChoice {
             Self::TitleAsc => RecipeSort::Title(SortDirection::Ascending),
             Self::TitleDesc => RecipeSort::Title(SortDirection::Descending),
         }
+    }
+}
+
+/// The category toggles sent to the live results shard.
+#[record]
+#[derive(Clone, Debug)]
+struct RecipeCategoryFlags {
+    aperitif: bool,
+    starter: bool,
+    main: bool,
+    side: bool,
+    dessert: bool,
+    breakfast: bool,
+    snack: bool,
+    drink: bool,
+    other: bool,
+}
+
+impl RecipeCategoryFlags {
+    fn selected(&self) -> Vec<RecipeCategory> {
+        [
+            (RecipeCategory::Aperitif, self.aperitif),
+            (RecipeCategory::Starter, self.starter),
+            (RecipeCategory::Main, self.main),
+            (RecipeCategory::Side, self.side),
+            (RecipeCategory::Dessert, self.dessert),
+            (RecipeCategory::Breakfast, self.breakfast),
+            (RecipeCategory::Snack, self.snack),
+            (RecipeCategory::Drink, self.drink),
+            (RecipeCategory::Other, self.other),
+        ]
+        .into_iter()
+        .filter_map(|(category, selected)| selected.then_some(category))
+        .collect()
     }
 }
 
@@ -266,6 +300,49 @@ pub async fn page(cx: &Cx) -> Result<impl View> {
         .iter()
         .map(|category| category.as_str().to_string())
         .collect::<Vec<_>>();
+    let filters_open = signal(cx, || {
+        !category_names.is_empty() || params.exclude_needs_review || params.favorites_only
+    });
+    let category_aperitif = signal(&cx.keyed(RecipeCategory::Aperitif.as_str()), || {
+        list_query.category_is_selected(RecipeCategory::Aperitif)
+    });
+    let category_starter = signal(&cx.keyed(RecipeCategory::Starter.as_str()), || {
+        list_query.category_is_selected(RecipeCategory::Starter)
+    });
+    let category_main = signal(&cx.keyed(RecipeCategory::Main.as_str()), || {
+        list_query.category_is_selected(RecipeCategory::Main)
+    });
+    let category_side = signal(&cx.keyed(RecipeCategory::Side.as_str()), || {
+        list_query.category_is_selected(RecipeCategory::Side)
+    });
+    let category_dessert = signal(&cx.keyed(RecipeCategory::Dessert.as_str()), || {
+        list_query.category_is_selected(RecipeCategory::Dessert)
+    });
+    let category_breakfast = signal(&cx.keyed(RecipeCategory::Breakfast.as_str()), || {
+        list_query.category_is_selected(RecipeCategory::Breakfast)
+    });
+    let category_snack = signal(&cx.keyed(RecipeCategory::Snack.as_str()), || {
+        list_query.category_is_selected(RecipeCategory::Snack)
+    });
+    let category_drink = signal(&cx.keyed(RecipeCategory::Drink.as_str()), || {
+        list_query.category_is_selected(RecipeCategory::Drink)
+    });
+    let category_other = signal(&cx.keyed(RecipeCategory::Other.as_str()), || {
+        list_query.category_is_selected(RecipeCategory::Other)
+    });
+    let category_filters = vec![
+        (RecipeCategory::Aperitif, category_aperitif.clone()),
+        (RecipeCategory::Starter, category_starter.clone()),
+        (RecipeCategory::Main, category_main.clone()),
+        (RecipeCategory::Side, category_side.clone()),
+        (RecipeCategory::Dessert, category_dessert.clone()),
+        (RecipeCategory::Breakfast, category_breakfast.clone()),
+        (RecipeCategory::Snack, category_snack.clone()),
+        (RecipeCategory::Drink, category_drink.clone()),
+        (RecipeCategory::Other, category_other.clone()),
+    ];
+    let exclude_needs_review = signal(cx, || params.exclude_needs_review);
+    let favorites_only = signal(cx, || params.favorites_only);
     let sort = params.sort.as_str().to_string();
     let current_page = signal(cx, || params.page.to_string());
 
@@ -273,13 +350,31 @@ pub async fn page(cx: &Cx) -> Result<impl View> {
         cx =>
         <h2 class="mb-4 text-2xl font-semibold">(t!(recipes_list_heading))</h2>
 
-        recipe_search_form(query: query.clone(), page: current_page.clone())
-
+        recipe_search_form(
+            query: query.clone(),
+            page: current_page.clone(),
+            filters_open: filters_open.clone(),
+            categories: category_filters,
+            exclude_needs_review: exclude_needs_review.clone(),
+            favorites_only: favorites_only.clone()
+        )
         recipe_search_results(
             query: $(query.get()),
-            categories: category_names,
-            exclude_needs_review: params.exclude_needs_review,
-            favorites_only: params.favorites_only,
+            category_flags: $({
+                RecipeCategoryFlags {
+                    aperitif: category_aperitif.get(),
+                    starter: category_starter.get(),
+                    main: category_main.get(),
+                    side: category_side.get(),
+                    dessert: category_dessert.get(),
+                    breakfast: category_breakfast.get(),
+                    snack: category_snack.get(),
+                    drink: category_drink.get(),
+                    other: category_other.get(),
+                }
+            }),
+            exclude_needs_review: $(exclude_needs_review.get()),
+            favorites_only: $(favorites_only.get()),
             sort: sort,
             page_number: $(current_page.get())
         )
@@ -290,7 +385,7 @@ pub async fn page(cx: &Cx) -> Result<impl View> {
 async fn recipe_search_results(
     cx: &Cx,
     query: String,
-    categories: Vec<String>,
+    category_flags: RecipeCategoryFlags,
     exclude_needs_review: bool,
     favorites_only: bool,
     sort: String,
@@ -299,10 +394,7 @@ async fn recipe_search_results(
     let user = auth::require_user(cx)?;
     let params = SearchParams {
         pattern: Some(query.trim().to_string()).filter(|pattern| !pattern.is_empty()),
-        categories: categories
-            .iter()
-            .filter_map(|category| RecipeCategory::parse(category))
-            .collect(),
+        categories: category_flags.selected(),
         exclude_needs_review,
         favorites_only,
         sort: SortChoice::parse(Some(&sort)).unwrap_or_default(),
