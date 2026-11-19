@@ -36,8 +36,18 @@ struct CookStepImage {
     alt: String,
 }
 
+/// Position of a step within its part, used to show part-level progress in
+/// multipart recipes.
+struct CookPartProgress {
+    title: String,
+    part_index: usize,
+    part_count: usize,
+    step_index: usize,
+    step_count: usize,
+}
+
 struct CookStep {
-    part_title: Option<String>,
+    part: Option<CookPartProgress>,
     title: Option<String>,
     instruction: String,
     images: Vec<CookStepImage>,
@@ -61,7 +71,7 @@ fn ingredient_group(cx: &Cx, title: Option<String>, body: &RecipeBody) -> CookIn
 fn cook_step(
     cx: &Cx,
     recipe_id: &str,
-    part_title: Option<String>,
+    part: Option<CookPartProgress>,
     step: &RecipeStep,
     images_by_id: &HashMap<&str, &RecipeImageMetadata>,
     fallback_alt: &str,
@@ -82,7 +92,7 @@ fn cook_step(
         .collect();
 
     CookStep {
-        part_title,
+        part,
         title: step.title().map(str::to_string),
         instruction: step.instruction().to_string(),
         images,
@@ -120,14 +130,24 @@ pub async fn cook_recipe_view(
                 .map(|step| cook_step(cx, recipe_id, None, step, &images_by_id, &fallback_alt)),
         );
     } else {
-        for part in content.parts() {
+        let parts = content.parts();
+
+        for (part_index, part) in parts.iter().enumerate() {
             let part_title = part.title().as_str().to_string();
+            let part_steps = part.body().steps();
+
             ingredient_groups.push(ingredient_group(cx, Some(part_title.clone()), part.body()));
-            steps.extend(part.body().steps().iter().map(|step| {
+            steps.extend(part_steps.iter().enumerate().map(|(step_index, step)| {
                 cook_step(
                     cx,
                     recipe_id,
-                    Some(part_title.clone()),
+                    Some(CookPartProgress {
+                        title: part_title.clone(),
+                        part_index: part_index + 1,
+                        part_count: parts.len(),
+                        step_index: step_index + 1,
+                        step_count: part_steps.len(),
+                    }),
                     step,
                     &images_by_id,
                     &fallback_alt,
@@ -333,20 +353,22 @@ pub async fn cook_recipe_view(
                                     :hidden=$(step_index.get() != index)
                                     class="flex flex-col gap-5"
                                 >
-                                    if let Some(part_title) = &step.part_title {
+                                    if let Some(part) = &step.part {
                                         <p
                                             class="text-xs font-medium uppercase tracking-wide text-muted-foreground"
                                         >
-                                            (part_title)
+                                            (part.title.as_str())
+                                            " · "
+                                            (t!(cook_part_progress, current = part.part_index, total = part.part_count))
                                         </p>
                                     }
                                     <div class="flex flex-wrap items-baseline gap-x-3 gap-y-1">
                                         <span class="text-sm text-muted-foreground">
-                                            (t!(recipe_step))
-                                            " "
-                                            $(step_index.get() + 1)
-                                            " / "
-                                            (total_steps)
+                                            if let Some(part) = &step.part {
+                                                (t!(cook_step_progress, current = part.step_index, total = part.step_count))
+                                            } else {
+                                                (t!(cook_step_progress, current = step_index.get() + 1, total = total_steps))
+                                            }
                                         </span>
                                         if let Some(title) = &step.title {
                                             <h2
@@ -467,7 +489,7 @@ mod tests {
     use super::*;
     use cookbook_domain::recipe::models::{
         Ingredient, IngredientName, Quantity, RecipeDurations, RecipeImageId, RecipePart,
-        RecipePartId, RecipePartTitle, RecipeStepId, Unit,
+        RecipePartId, RecipePartTitle, RecipeStepId, RecipeTitle, Unit,
     };
 
     fn ingredient(name: &str, quantity: Quantity) -> Ingredient {
@@ -514,10 +536,10 @@ mod tests {
     }
 
     #[test]
-    fn flattens_multipart_bodies_and_keeps_part_titles_on_steps() {
+    fn keeps_part_and_within_part_step_progress_for_multipart_bodies() {
         let cx = Cx::default();
         let content = RecipeContent::new_multipart(
-            cookbook_domain::recipe::models::RecipeTitle::new("Cake".to_string()),
+            RecipeTitle::new("Cake".to_string()),
             None,
             None,
             None,
@@ -526,7 +548,7 @@ mod tests {
                     RecipePartId::generate(),
                     RecipePartTitle::new("Sponge".to_string()),
                     None,
-                    body(Vec::new(), vec![step("Whisk.")]),
+                    body(Vec::new(), vec![step("Whisk."), step("Bake.")]),
                 ),
                 RecipePart::new(
                     RecipePartId::generate(),
@@ -538,14 +560,22 @@ mod tests {
         )
         .unwrap();
 
+        let parts = content.parts();
         let mut steps = Vec::new();
-        for part in content.parts() {
+        for (part_index, part) in parts.iter().enumerate() {
             let part_title = part.title().as_str().to_string();
-            steps.extend(part.body().steps().iter().map(|step| {
+            let part_steps = part.body().steps();
+            steps.extend(part_steps.iter().enumerate().map(|(step_index, step)| {
                 cook_step(
                     &cx,
                     "cake",
-                    Some(part_title.clone()),
+                    Some(CookPartProgress {
+                        title: part_title.clone(),
+                        part_index: part_index + 1,
+                        part_count: parts.len(),
+                        step_index: step_index + 1,
+                        step_count: part_steps.len(),
+                    }),
                     step,
                     &HashMap::new(),
                     "",
@@ -553,11 +583,47 @@ mod tests {
             }));
         }
 
-        assert_eq!(steps.len(), 2);
-        assert_eq!(steps[0].part_title.as_deref(), Some("Sponge"));
+        assert_eq!(steps.len(), 3);
+
+        let sponge_first = steps[0].part.as_ref().expect("multipart step");
+        assert_eq!(sponge_first.title, "Sponge");
+        assert_eq!(
+            (
+                sponge_first.part_index,
+                sponge_first.part_count,
+                sponge_first.step_index,
+                sponge_first.step_count,
+            ),
+            (1, 2, 1, 2)
+        );
+
+        let sponge_second = steps[1].part.as_ref().expect("multipart step");
+        assert_eq!(sponge_second.title, "Sponge");
+        assert_eq!(
+            (
+                sponge_second.part_index,
+                sponge_second.part_count,
+                sponge_second.step_index,
+                sponge_second.step_count,
+            ),
+            (1, 2, 2, 2)
+        );
+
+        let filling = steps[2].part.as_ref().expect("multipart step");
+        assert_eq!(filling.title, "Filling");
+        assert_eq!(
+            (
+                filling.part_index,
+                filling.part_count,
+                filling.step_index,
+                filling.step_count,
+            ),
+            (2, 2, 1, 1)
+        );
+
         assert_eq!(steps[0].instruction, "Whisk.");
-        assert_eq!(steps[1].part_title.as_deref(), Some("Filling"));
-        assert_eq!(steps[1].instruction, "Whip.");
+        assert_eq!(steps[1].instruction, "Bake.");
+        assert_eq!(steps[2].instruction, "Whip.");
     }
 
     #[test]
