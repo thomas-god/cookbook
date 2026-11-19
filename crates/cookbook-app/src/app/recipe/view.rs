@@ -1,13 +1,13 @@
 use cookbook_domain::recipe::models::{RecipeId as RecipeIdValue, RecipeWithContent};
-use cookbook_domain::recipe::ports::RecipeService;
+use cookbook_domain::recipe::ports::{RecipeService, SetRecipeFavoriteError};
 use cookbook_infra::auth::models::AuthenticatedUser;
 use topcoat::icon::icon;
-use topcoat::router::{href, page, path_param};
+use topcoat::router::error::{RouterErrorExt, SeeOther, not_found, see_other};
+use topcoat::router::{href, page, path_param, route};
 use topcoat::view::{Length, component};
 use topcoat::{
     Result,
     context::{Cx, app_context},
-    router::error::RouterErrorExt,
     view::{View, attributes, class, view},
 };
 
@@ -18,7 +18,7 @@ use crate::app::recipes::{
     RecipeId, delete_recipe, display_name, edit_recipe, recipe_history, servings_label,
 };
 use crate::components::base::button::{ButtonSize, ButtonVariant, button_variants};
-use crate::components::base::icons::{BACK_ARROW, MORE_VERT};
+use crate::components::base::icons::{BACK_ARROW, MORE_VERT, STAR_FILL, STAR_LINE};
 use crate::components::recipe::source_documents::source_document_gallery;
 use crate::{
     app::{AppRecipeService, auth},
@@ -37,10 +37,11 @@ pub async fn recipe_detail(cx: &Cx) -> Result<impl View> {
 
     let recipe_id = path_param::<RecipeId>(cx).to_string();
     let recipe_service: &AppRecipeService = app_context(cx);
-    let recipe = recipe_service
-        .get_recipe(RecipeIdValue::new(recipe_id), user.id().clone())
+    let recipe_for_viewer = recipe_service
+        .get_recipe_for_viewer(RecipeIdValue::new(recipe_id), user.id().clone())
         .await?
         .ok_or_not_found()?;
+    let (recipe, is_favorite) = recipe_for_viewer.into_parts();
     let source_documents = recipe_service
         .get_source_documents(recipe.id().clone(), user.id().clone())
         .await?;
@@ -50,6 +51,16 @@ pub async fn recipe_detail(cx: &Cx) -> Result<impl View> {
 
     let author_name = display_name(cx, recipe.author()).await?;
     let total_minutes = recipe.durations().total_duration().as_minutes();
+    let favorite_action = if is_favorite {
+        href!(remove_recipe_favorite, RecipeId(recipe.id().as_str())).resolve(cx)
+    } else {
+        href!(add_recipe_favorite, RecipeId(recipe.id().as_str())).resolve(cx)
+    };
+    let favorite_label = if is_favorite {
+        t!(recipe_favorite_remove).resolve(cx).into_owned()
+    } else {
+        t!(recipe_favorite_add).resolve(cx).into_owned()
+    };
 
     Ok(view! {
         <div class="flex flex-col gap-8">
@@ -68,6 +79,21 @@ pub async fn recipe_detail(cx: &Cx) -> Result<impl View> {
                         </h2>
                     </div>
                     <div class="flex flex-row items-center gap-3 text-sm">
+                        <form method="post" action=(favorite_action)>
+                            <button
+                                type="submit"
+                                class=(class!(button_variants(ButtonVariant::Ghost, ButtonSize::Icon)))
+                                aria-label=(favorite_label.clone())
+                                title=(favorite_label)
+                                aria-pressed=(if is_favorite { "true" } else { "false" })
+                            >
+                                if is_favorite {
+                                    icon(data: STAR_FILL, size: Length::em(1.3))
+                                } else {
+                                    icon(data: STAR_LINE, size: Length::em(1.3))
+                                }
+                            </button>
+                        </form>
                         <span class="hidden sm:inline">
                             <a
                                 class=(class!(button_variants(ButtonVariant::Primary, ButtonSize::Sm)))
@@ -148,6 +174,37 @@ pub async fn recipe_detail(cx: &Cx) -> Result<impl View> {
             )
         </div>
     })
+}
+
+#[route(POST "/recipe/{recipe_id}/favorite")]
+pub async fn add_recipe_favorite(cx: &Cx) -> Result<SeeOther> {
+    set_recipe_favorite(cx, true).await
+}
+
+#[route(POST "/recipe/{recipe_id}/unfavorite")]
+pub async fn remove_recipe_favorite(cx: &Cx) -> Result<SeeOther> {
+    set_recipe_favorite(cx, false).await
+}
+
+async fn set_recipe_favorite(cx: &Cx, favorite: bool) -> Result<SeeOther> {
+    let user = auth::require_user(cx)?;
+    let recipe_id = path_param::<RecipeId>(cx).to_string();
+    let recipe_service: &AppRecipeService = app_context(cx);
+
+    match recipe_service
+        .set_recipe_favorite(
+            RecipeIdValue::new(recipe_id.clone()),
+            user.id().clone(),
+            favorite,
+        )
+        .await
+    {
+        Ok(()) => Ok(see_other(
+            href!(recipe_detail, RecipeId(recipe_id.as_str())).resolve(cx),
+        )),
+        Err(SetRecipeFavoriteError::NotFound) => Err(not_found().into()),
+        Err(error) => Err(error.into()),
+    }
 }
 
 #[component]

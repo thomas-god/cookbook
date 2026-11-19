@@ -1,11 +1,14 @@
+use std::time::SystemTime;
+
 use anyhow::{Context, anyhow, bail};
 use cookbook_domain::recipe::models::{
     Recipe, RecipeCategory, RecipeId, RecipeRevision, RecipeRevisionId, RecipeScope,
     RecipeWithContent, RevisionOrigin, RevisionVerification,
 };
 use cookbook_domain::recipe::ports::{
-    DeleteRecipeRecordError, GetRecipeError, ListRecipeRevisionsError, ListRecipesError,
-    RecipeRepository, RecipeSearchCriteria, RecipeSort, SaveRecipeError, SearchRecipesError,
+    AddFavoriteError, DeleteRecipeRecordError, GetFavoriteError, GetRecipeError,
+    ListFavoritesError, ListRecipeRevisionsError, ListRecipesError, RecipeRepository,
+    RecipeSearchCriteria, RecipeSort, RemoveFavoriteError, SaveRecipeError, SearchRecipesError,
     SortDirection,
 };
 use cookbook_domain::user::models::UserId;
@@ -315,6 +318,79 @@ impl RecipeRepository for SqliteRecipeRepository {
         }
 
         Ok(())
+    }
+
+    async fn add_favorite(
+        &self,
+        recipe_id: RecipeId,
+        user_id: UserId,
+        created_at: SystemTime,
+    ) -> Result<(), AddFavoriteError> {
+        let created_at_ms = time::to_millis(created_at).map_err(AddFavoriteError::Storage)?;
+
+        sqlx::query(
+            "INSERT OR IGNORE INTO recipe_favorites (user_id, recipe_id, created_at_ms)
+             VALUES (?, ?, ?)",
+        )
+        .bind(user_id.as_str())
+        .bind(recipe_id.as_str())
+        .bind(created_at_ms)
+        .execute(&self.pool)
+        .await
+        .map_err(|error| AddFavoriteError::Storage(error.into()))?;
+
+        Ok(())
+    }
+
+    async fn remove_favorite(
+        &self,
+        recipe_id: RecipeId,
+        user_id: UserId,
+    ) -> Result<(), RemoveFavoriteError> {
+        sqlx::query("DELETE FROM recipe_favorites WHERE user_id = ? AND recipe_id = ?")
+            .bind(user_id.as_str())
+            .bind(recipe_id.as_str())
+            .execute(&self.pool)
+            .await
+            .map_err(|error| RemoveFavoriteError::Storage(error.into()))?;
+
+        Ok(())
+    }
+
+    async fn is_favorite(
+        &self,
+        recipe_id: RecipeId,
+        user_id: UserId,
+    ) -> Result<bool, GetFavoriteError> {
+        let exists: bool = sqlx::query_scalar(
+            "SELECT EXISTS(
+                SELECT 1 FROM recipe_favorites WHERE user_id = ? AND recipe_id = ?
+             )",
+        )
+        .bind(user_id.as_str())
+        .bind(recipe_id.as_str())
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|error| GetFavoriteError::Storage(error.into()))?;
+
+        Ok(exists)
+    }
+
+    async fn list_favorite_recipe_ids(
+        &self,
+        user_id: UserId,
+    ) -> Result<Vec<RecipeId>, ListFavoritesError> {
+        let ids: Vec<String> = sqlx::query_scalar(
+            "SELECT recipe_id FROM recipe_favorites
+             WHERE user_id = ?
+             ORDER BY created_at_ms DESC, recipe_id ASC",
+        )
+        .bind(user_id.as_str())
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|error| ListFavoritesError::Storage(error.into()))?;
+
+        Ok(ids.into_iter().map(RecipeId::new).collect())
     }
 }
 
@@ -1119,5 +1195,194 @@ mod tests {
             .await;
 
         assert!(matches!(result, Err(DeleteRecipeRecordError::NotFound)));
+    }
+
+    async fn insert_user(repository: &SqliteRecipeRepository, id: &str) {
+        sqlx::query(
+            "INSERT INTO users (id, email, username, password_hash, role)
+             VALUES (?, ?, NULL, 'hash', 'user')",
+        )
+        .bind(id)
+        .bind(format!("{id}@example.com"))
+        .execute(repository.pool())
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn adds_lists_and_removes_favorites() {
+        let repository = repository().await;
+        insert_user(&repository, "user-1").await;
+        let recipe = recipe("soup");
+        save(
+            &repository,
+            recipe.clone(),
+            revision("revision-1", &recipe, "Soup", SystemTime::UNIX_EPOCH),
+        )
+        .await;
+
+        let created_at = SystemTime::UNIX_EPOCH + Duration::from_secs(10);
+        repository
+            .add_favorite(
+                recipe.id().clone(),
+                UserId::new("user-1".to_string()),
+                created_at,
+            )
+            .await
+            .unwrap();
+
+        assert!(
+            repository
+                .is_favorite(recipe.id().clone(), UserId::new("user-1".to_string()))
+                .await
+                .unwrap()
+        );
+        assert_eq!(
+            repository
+                .list_favorite_recipe_ids(UserId::new("user-1".to_string()))
+                .await
+                .unwrap(),
+            vec![recipe.id().clone()]
+        );
+
+        repository
+            .remove_favorite(recipe.id().clone(), UserId::new("user-1".to_string()))
+            .await
+            .unwrap();
+
+        assert!(
+            !repository
+                .is_favorite(recipe.id().clone(), UserId::new("user-1".to_string()))
+                .await
+                .unwrap()
+        );
+        assert!(
+            repository
+                .list_favorite_recipe_ids(UserId::new("user-1".to_string()))
+                .await
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn favouriting_the_same_recipe_twice_keeps_one_row() {
+        let repository = repository().await;
+        insert_user(&repository, "user-1").await;
+        let recipe = recipe("soup");
+        save(
+            &repository,
+            recipe.clone(),
+            revision("revision-1", &recipe, "Soup", SystemTime::UNIX_EPOCH),
+        )
+        .await;
+
+        for seconds in [1, 2] {
+            repository
+                .add_favorite(
+                    recipe.id().clone(),
+                    UserId::new("user-1".to_string()),
+                    SystemTime::UNIX_EPOCH + Duration::from_secs(seconds),
+                )
+                .await
+                .unwrap();
+        }
+
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM recipe_favorites")
+            .fetch_one(repository.pool())
+            .await
+            .unwrap();
+
+        assert_eq!(count, 1);
+    }
+
+    #[tokio::test]
+    async fn favorites_are_isolated_per_user() {
+        let repository = repository().await;
+        for id in ["user-1", "user-2"] {
+            insert_user(&repository, id).await;
+        }
+        let recipe = recipe("soup");
+        save(
+            &repository,
+            recipe.clone(),
+            revision("revision-1", &recipe, "Soup", SystemTime::UNIX_EPOCH),
+        )
+        .await;
+
+        repository
+            .add_favorite(
+                recipe.id().clone(),
+                UserId::new("user-1".to_string()),
+                SystemTime::UNIX_EPOCH,
+            )
+            .await
+            .unwrap();
+
+        assert!(
+            repository
+                .list_favorite_recipe_ids(UserId::new("user-2".to_string()))
+                .await
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn deleting_a_recipe_or_user_cascades_its_favorites() {
+        let repository = repository().await;
+        for id in ["user-1", "user-2"] {
+            insert_user(&repository, id).await;
+        }
+        for id in ["soup", "pie"] {
+            let recipe = recipe(id);
+            save(
+                &repository,
+                recipe.clone(),
+                revision(
+                    &format!("{id}-revision"),
+                    &recipe,
+                    id,
+                    SystemTime::UNIX_EPOCH,
+                ),
+            )
+            .await;
+        }
+
+        for (recipe_id, user_id) in [("soup", "user-1"), ("pie", "user-2")] {
+            repository
+                .add_favorite(
+                    RecipeId::new(recipe_id.to_string()),
+                    UserId::new(user_id.to_string()),
+                    SystemTime::UNIX_EPOCH,
+                )
+                .await
+                .unwrap();
+        }
+
+        repository
+            .delete_recipe(RecipeId::new("soup".to_string()))
+            .await
+            .unwrap();
+
+        assert!(
+            repository
+                .list_favorite_recipe_ids(UserId::new("user-1".to_string()))
+                .await
+                .unwrap()
+                .is_empty()
+        );
+
+        sqlx::query("DELETE FROM users WHERE id = 'user-2'")
+            .execute(repository.pool())
+            .await
+            .unwrap();
+
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM recipe_favorites")
+            .fetch_one(repository.pool())
+            .await
+            .unwrap();
+
+        assert_eq!(count, 0);
     }
 }

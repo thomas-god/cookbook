@@ -232,6 +232,26 @@ impl RecipeWithContent {
     }
 }
 
+#[derive(Debug, Clone, Constructor)]
+pub struct RecipeForViewer {
+    recipe: RecipeWithContent,
+    is_favorite: bool,
+}
+
+impl RecipeForViewer {
+    pub fn recipe(&self) -> &RecipeWithContent {
+        &self.recipe
+    }
+
+    pub fn is_favorite(&self) -> bool {
+        self.is_favorite
+    }
+
+    pub fn into_parts(self) -> (RecipeWithContent, bool) {
+        (self.recipe, self.is_favorite)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RecipeRevisionMismatch;
 

@@ -9,3 +9,5 @@ pub const EDIT: IconData = iconify_icon!("si:edit-simple-line");
 pub const MORE_VERT: IconData = iconify_icon!("si:align-justify-line");
 pub const SEARCH: IconData = iconify_icon!("si:search-line");
 pub const SETTINGS: IconData = iconify_icon!("si:settings-cute-line");
+pub const STAR_FILL: IconData = iconify_icon!("si:star-fill");
+pub const STAR_LINE: IconData = iconify_icon!("si:star-line");

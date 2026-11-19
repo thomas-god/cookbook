@@ -32,7 +32,7 @@ use topcoat::{
 };
 
 use crate::app::recipe::view::recipe_detail;
-use crate::components::base::icons::BACK_ARROW;
+use crate::components::base::icons::{BACK_ARROW, STAR_FILL};
 use crate::{
     app::{AppRecipeService, AppUserRepository, auth, recipe::export::export_recipe},
     components::{
@@ -321,19 +321,35 @@ async fn recipe_search_results(
         } else {
             <div class="mt-3 flex flex-col gap-2">
                 for recipe in &result.recipes {
-                    <a href=(href!(recipe_detail, RecipeId(recipe.id().as_str())))>
+                    <a
+                        href=(href!(
+                            recipe_detail,
+                            RecipeId(recipe.recipe().id().as_str()),
+                        ))
+                    >
                         <div
                             class="flex flex-row flex-wrap gap-2 rounded-lg border border-border bg-card px-4 py-3 text-sm hover:shadow-md"
                         >
-                            <span clas="font-medium">(recipe.title().as_str())</span>
-                            if let Some(category) = recipe.category() {
+                            if recipe.is_favorite() {
+                                <span
+                                    class="inline-flex items-center text-amber-500"
+                                    aria-label=(t!(recipe_favorite_marker))
+                                    title=(t!(recipe_favorite_marker))
+                                >
+                                    icon(data: STAR_FILL, size: 14)
+                                </span>
+                            }
+                            <span clas="font-medium">
+                                (recipe.recipe().title().as_str())
+                            </span>
+                            if let Some(category) = recipe.recipe().category() {
                                 <span
                                     class="inline-flex items-center rounded-full border border-border px-2 py-0.5 text-xs font-medium text-muted-foreground"
                                 >
                                     (category_label(cx, category))
                                 </span>
                             }
-                            if recipe.needs_review() {
+                            if recipe.recipe().needs_review() {
                                 <span
                                     class="inline-flex items-center rounded-full border border-warning/40 bg-warning/10 px-2 py-0.5 text-xs font-medium text-warning-foreground"
                                 >

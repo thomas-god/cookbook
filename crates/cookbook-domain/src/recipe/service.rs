@@ -5,22 +5,22 @@ use uuid::Uuid;
 
 use crate::clock::Clock;
 use crate::recipe::models::{
-    NewRecipeImage, NewRecipeSourceDocument, Recipe, RecipeContent, RecipeId, RecipeImage,
-    RecipeImageId, RecipeImageMetadata, RecipeRevision, RecipeRevisionId, RecipeSourceDocument,
-    RecipeSourceDocumentId, RecipeSourceDocumentSummary, RecipeStructureKind, RecipeWithContent,
-    RevisionOrigin, RevisionVerification,
+    NewRecipeImage, NewRecipeSourceDocument, Recipe, RecipeContent, RecipeForViewer, RecipeId,
+    RecipeImage, RecipeImageId, RecipeImageMetadata, RecipeRevision, RecipeRevisionId,
+    RecipeSourceDocument, RecipeSourceDocumentId, RecipeSourceDocumentSummary, RecipeStructureKind,
+    RecipeWithContent, RevisionOrigin, RevisionVerification,
 };
 use crate::recipe::ports::{
     AddRecipeSourceDocumentsError, AddRecipeSourceDocumentsRequest, AddSourceDocumentsError,
     ConvertRecipeStructureRequest, CreateRecipeError, CreateRecipeRequest, DeleteRecipeError,
     DeleteRecipeRecordError, DeleteRecipeSourceDocumentError, DeleteSourceDocumentError,
-    GetRecipeError, GetRecipeHistoryError, GetRecipeImageError, GetRecipeImagesError,
-    GetRecipeSourceDocumentError, GetRecipeSourceDocumentsError, GetRecipesError,
-    GetSourceDocumentError, ListRecipeImagesError, ListSourceDocumentsError,
+    GetRecipeError, GetRecipeForViewerError, GetRecipeHistoryError, GetRecipeImageError,
+    GetRecipeImagesError, GetRecipeSourceDocumentError, GetRecipeSourceDocumentsError,
+    GetRecipesError, GetSourceDocumentError, ListRecipeImagesError, ListSourceDocumentsError,
     PurgeOrphanedRecipesError, RecipeDocumentRepository, RecipeRepository, RecipeService,
     RestoreRecipeRevisionError, RestoreRecipeRevisionRequest, SaveRecipeError, SearchRecipesError,
-    SearchRecipesQuery, SearchRecipesResult, UpdateRecipeError, UpdateRecipeRequest,
-    UpdateRecipeScopeError, UpdateRecipeScopeRequest,
+    SearchRecipesQuery, SearchRecipesResult, SetRecipeFavoriteError, UpdateRecipeError,
+    UpdateRecipeRequest, UpdateRecipeScopeError, UpdateRecipeScopeRequest,
 };
 use crate::user::models::UserId;
 
@@ -488,10 +488,21 @@ where
             .filter(|recipe| recipe.can_view(&viewer))
             .collect();
         let total = visible.len();
+        let favorites: HashSet<_> = self
+            .recipe_repository
+            .list_favorite_recipe_ids(viewer)
+            .await
+            .map_err(|error| SearchRecipesError::Storage(error.into()))?
+            .into_iter()
+            .collect();
         let recipes = visible
             .into_iter()
             .skip(offset)
             .take(limit.unwrap_or(usize::MAX))
+            .map(|recipe| {
+                let is_favorite = favorites.contains(recipe.id());
+                RecipeForViewer::new(recipe, is_favorite)
+            })
             .collect();
 
         Ok(SearchRecipesResult { recipes, total })
@@ -509,6 +520,57 @@ where
             .map_err(|error| GetRecipeError::Storage(error.into()))?;
 
         Ok(recipe.filter(|recipe| recipe.can_view(&viewer)))
+    }
+
+    async fn get_recipe_for_viewer(
+        &self,
+        id: RecipeId,
+        viewer: UserId,
+    ) -> Result<Option<RecipeForViewer>, GetRecipeForViewerError> {
+        let recipe = self
+            .recipe_repository
+            .get_recipe(id.clone())
+            .await
+            .map_err(|error| GetRecipeForViewerError::Storage(error.into()))?
+            .filter(|recipe| recipe.can_view(&viewer));
+
+        let Some(recipe) = recipe else {
+            return Ok(None);
+        };
+
+        let is_favorite = self
+            .recipe_repository
+            .is_favorite(id, viewer)
+            .await
+            .map_err(|error| GetRecipeForViewerError::Storage(error.into()))?;
+
+        Ok(Some(RecipeForViewer::new(recipe, is_favorite)))
+    }
+
+    async fn set_recipe_favorite(
+        &self,
+        id: RecipeId,
+        viewer: UserId,
+        favorite: bool,
+    ) -> Result<(), SetRecipeFavoriteError> {
+        self.recipe_repository
+            .get_recipe(id.clone())
+            .await
+            .map_err(|error| SetRecipeFavoriteError::Storage(error.into()))?
+            .filter(|recipe| recipe.can_view(&viewer))
+            .ok_or(SetRecipeFavoriteError::NotFound)?;
+
+        if favorite {
+            self.recipe_repository
+                .add_favorite(id, viewer, self.clock.now())
+                .await
+                .map_err(|error| SetRecipeFavoriteError::Storage(error.into()))
+        } else {
+            self.recipe_repository
+                .remove_favorite(id, viewer)
+                .await
+                .map_err(|error| SetRecipeFavoriteError::Storage(error.into()))
+        }
     }
 
     async fn get_recipe_history(
@@ -2004,6 +2066,10 @@ mod tests {
                 ),
             ])
         });
+        repository
+            .expect_list_favorite_recipe_ids()
+            .times(1)
+            .returning(|_| Ok(vec![RecipeId::new("editable".to_string())]));
         let documents = MockRecipeDocumentRepository::new();
 
         let service = RecipeServiceImpl::new(repository, documents, FixedClock::new());
@@ -2023,9 +2089,10 @@ mod tests {
         let ids: Vec<_> = result
             .recipes
             .iter()
-            .map(|recipe| recipe.id().as_str())
+            .map(|recipe| recipe.recipe().id().as_str())
             .collect();
         assert_eq!(ids, ["editable"]);
+        assert!(result.recipes[0].is_favorite());
     }
 
     #[tokio::test]
@@ -2727,5 +2794,119 @@ mod tests {
         let result = service.purge_orphaned_private_recipes().await;
 
         assert!(matches!(result, Err(PurgeOrphanedRecipesError::Storage(_))));
+    }
+
+    #[tokio::test]
+    async fn set_recipe_favorite_adds_the_favorite() {
+        let current = current_recipe("soup", "Soup");
+        let id = current.id().clone();
+        let expected_id = id.clone();
+        let edited_at = FixedClock::new().0;
+
+        let mut repository = MockRecipeRepository::new();
+        expect_visible_recipe(&mut repository, current);
+        repository
+            .expect_add_favorite()
+            .times(1)
+            .withf(
+                move |recipe_id: &RecipeId, user: &UserId, created_at: &SystemTime| {
+                    recipe_id == &expected_id && user == &user_id() && created_at == &edited_at
+                },
+            )
+            .returning(|_, _, _| Ok(()));
+        let documents = MockRecipeDocumentRepository::new();
+
+        let service = RecipeServiceImpl::new(repository, documents, FixedClock::new());
+
+        service
+            .set_recipe_favorite(id, user_id(), true)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn set_recipe_favorite_removes_the_favorite() {
+        let current = current_recipe("soup", "Soup");
+        let expected_id = current.id().clone();
+
+        let mut repository = MockRecipeRepository::new();
+        expect_visible_recipe(&mut repository, current);
+        repository
+            .expect_remove_favorite()
+            .times(1)
+            .withf(move |recipe_id: &RecipeId, user: &UserId| {
+                recipe_id == &expected_id && user == &user_id()
+            })
+            .returning(|_, _| Ok(()));
+        let documents = MockRecipeDocumentRepository::new();
+
+        let service = RecipeServiceImpl::new(repository, documents, FixedClock::new());
+
+        service
+            .set_recipe_favorite(RecipeId::new("soup".to_string()), user_id(), false)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn set_recipe_favorite_hides_a_private_recipe_from_others() {
+        let current = current_recipe_with_scope("soup", "Soup", "author-1", RecipeScope::Private);
+        let mut repository = MockRecipeRepository::new();
+        expect_visible_recipe(&mut repository, current);
+        // No favorite expectation: a non-viewable recipe must not be stored.
+        let documents = MockRecipeDocumentRepository::new();
+
+        let service = RecipeServiceImpl::new(repository, documents, FixedClock::new());
+        let result = service
+            .set_recipe_favorite(
+                RecipeId::new("soup".to_string()),
+                UserId::new("viewer".to_string()),
+                true,
+            )
+            .await;
+
+        assert!(matches!(result, Err(SetRecipeFavoriteError::NotFound)));
+    }
+
+    #[tokio::test]
+    async fn get_recipe_for_viewer_reports_the_favorite_state() {
+        let current = current_recipe("soup", "Soup");
+        let mut repository = MockRecipeRepository::new();
+        expect_visible_recipe(&mut repository, current);
+        repository
+            .expect_is_favorite()
+            .times(1)
+            .returning(|_, _| Ok(true));
+        let documents = MockRecipeDocumentRepository::new();
+
+        let service = RecipeServiceImpl::new(repository, documents, FixedClock::new());
+        let recipe = service
+            .get_recipe_for_viewer(RecipeId::new("soup".to_string()), user_id())
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert!(recipe.is_favorite());
+        assert_eq!(recipe.recipe().title().as_str(), "Soup");
+    }
+
+    #[tokio::test]
+    async fn get_recipe_for_viewer_is_none_for_a_recipe_the_viewer_cannot_see() {
+        let current = current_recipe_with_scope("soup", "Soup", "author-1", RecipeScope::Private);
+        let mut repository = MockRecipeRepository::new();
+        expect_visible_recipe(&mut repository, current);
+        // No favorite read: a non-viewable recipe has no viewer state.
+        let documents = MockRecipeDocumentRepository::new();
+
+        let service = RecipeServiceImpl::new(repository, documents, FixedClock::new());
+        let recipe = service
+            .get_recipe_for_viewer(
+                RecipeId::new("soup".to_string()),
+                UserId::new("viewer".to_string()),
+            )
+            .await
+            .unwrap();
+
+        assert!(recipe.is_none());
     }
 }

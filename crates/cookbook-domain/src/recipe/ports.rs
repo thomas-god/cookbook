@@ -1,11 +1,13 @@
 use std::fmt;
 use std::future::Future;
+use std::time::SystemTime;
 
 use crate::recipe::models::{
-    NewRecipeImage, NewRecipeSourceDocument, Recipe, RecipeCategory, RecipeContent, RecipeId,
-    RecipeImage, RecipeImageId, RecipeImageMetadata, RecipeRevision, RecipeRevisionId, RecipeScope,
-    RecipeSourceDocument, RecipeSourceDocumentId, RecipeSourceDocumentSummary, RecipeStructureKind,
-    RecipeWithContent, RevisionMessage, RevisionVerification,
+    NewRecipeImage, NewRecipeSourceDocument, Recipe, RecipeCategory, RecipeContent,
+    RecipeForViewer, RecipeId, RecipeImage, RecipeImageId, RecipeImageMetadata, RecipeRevision,
+    RecipeRevisionId, RecipeScope, RecipeSourceDocument, RecipeSourceDocumentId,
+    RecipeSourceDocumentSummary, RecipeStructureKind, RecipeWithContent, RevisionMessage,
+    RevisionVerification,
 };
 use crate::user::models::UserId;
 
@@ -97,7 +99,7 @@ impl Default for SearchRecipesQuery {
 
 #[derive(Debug, Clone)]
 pub struct SearchRecipesResult {
-    pub recipes: Vec<RecipeWithContent>,
+    pub recipes: Vec<RecipeForViewer>,
     pub total: usize,
 }
 
@@ -177,6 +179,19 @@ pub trait RecipeService: Clone + Send + Sync + 'static {
         id: RecipeId,
         viewer: UserId,
     ) -> impl Future<Output = Result<Option<RecipeWithContent>, GetRecipeError>> + Send;
+
+    fn get_recipe_for_viewer(
+        &self,
+        id: RecipeId,
+        viewer: UserId,
+    ) -> impl Future<Output = Result<Option<RecipeForViewer>, GetRecipeForViewerError>> + Send;
+
+    fn set_recipe_favorite(
+        &self,
+        id: RecipeId,
+        viewer: UserId,
+        favorite: bool,
+    ) -> impl Future<Output = Result<(), SetRecipeFavoriteError>> + Send;
 
     fn get_recipe_history(
         &self,
@@ -267,6 +282,30 @@ pub trait RecipeRepository: Clone + Send + Sync + 'static {
         &self,
         id: RecipeId,
     ) -> impl Future<Output = Result<(), DeleteRecipeRecordError>> + Send;
+
+    fn add_favorite(
+        &self,
+        recipe_id: RecipeId,
+        user_id: UserId,
+        created_at: SystemTime,
+    ) -> impl Future<Output = Result<(), AddFavoriteError>> + Send;
+
+    fn remove_favorite(
+        &self,
+        recipe_id: RecipeId,
+        user_id: UserId,
+    ) -> impl Future<Output = Result<(), RemoveFavoriteError>> + Send;
+
+    fn is_favorite(
+        &self,
+        recipe_id: RecipeId,
+        user_id: UserId,
+    ) -> impl Future<Output = Result<bool, GetFavoriteError>> + Send;
+
+    fn list_favorite_recipe_ids(
+        &self,
+        user_id: UserId,
+    ) -> impl Future<Output = Result<Vec<RecipeId>, ListFavoritesError>> + Send;
 }
 
 /// Outbound (driven) port for recipe documents (images, source) persistence.
@@ -564,6 +603,98 @@ impl fmt::Display for GetRecipeError {
 impl std::error::Error for GetRecipeError {}
 
 #[derive(Debug)]
+pub enum SetRecipeFavoriteError {
+    NotFound,
+    Storage(anyhow::Error),
+}
+
+impl fmt::Display for SetRecipeFavoriteError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NotFound => f.write_str("recipe not found"),
+            Self::Storage(reason) => write!(f, "failed to update recipe favorite: {reason}"),
+        }
+    }
+}
+
+impl std::error::Error for SetRecipeFavoriteError {}
+
+#[derive(Debug)]
+pub enum GetRecipeForViewerError {
+    Storage(anyhow::Error),
+}
+
+impl fmt::Display for GetRecipeForViewerError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Storage(reason) => write!(f, "failed to read recipe for viewer: {reason}"),
+        }
+    }
+}
+
+impl std::error::Error for GetRecipeForViewerError {}
+
+#[derive(Debug)]
+pub enum AddFavoriteError {
+    Storage(anyhow::Error),
+}
+
+impl fmt::Display for AddFavoriteError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Storage(reason) => write!(f, "failed to add recipe favorite: {reason}"),
+        }
+    }
+}
+
+impl std::error::Error for AddFavoriteError {}
+
+#[derive(Debug)]
+pub enum RemoveFavoriteError {
+    Storage(anyhow::Error),
+}
+
+impl fmt::Display for RemoveFavoriteError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Storage(reason) => write!(f, "failed to remove recipe favorite: {reason}"),
+        }
+    }
+}
+
+impl std::error::Error for RemoveFavoriteError {}
+
+#[derive(Debug)]
+pub enum GetFavoriteError {
+    Storage(anyhow::Error),
+}
+
+impl fmt::Display for GetFavoriteError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Storage(reason) => write!(f, "failed to read recipe favorite: {reason}"),
+        }
+    }
+}
+
+impl std::error::Error for GetFavoriteError {}
+
+#[derive(Debug)]
+pub enum ListFavoritesError {
+    Storage(anyhow::Error),
+}
+
+impl fmt::Display for ListFavoritesError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Storage(reason) => write!(f, "failed to list recipe favorites: {reason}"),
+        }
+    }
+}
+
+impl std::error::Error for ListFavoritesError {}
+
+#[derive(Debug)]
 pub enum ListRecipesError {
     Storage(anyhow::Error),
 }
@@ -857,6 +988,19 @@ mockall::mock! {
             viewer: UserId,
         ) -> Result<Option<RecipeWithContent>, GetRecipeError>;
 
+        async fn get_recipe_for_viewer(
+            &self,
+            id: RecipeId,
+            viewer: UserId,
+        ) -> Result<Option<RecipeForViewer>, GetRecipeForViewerError>;
+
+        async fn set_recipe_favorite(
+            &self,
+            id: RecipeId,
+            viewer: UserId,
+            favorite: bool,
+        ) -> Result<(), SetRecipeFavoriteError>;
+
         async fn get_recipe_history(
             &self,
             id: RecipeId,
@@ -948,6 +1092,30 @@ mockall::mock! {
             &self,
             id: RecipeId,
         ) -> Result<(), DeleteRecipeRecordError>;
+
+        async fn add_favorite(
+            &self,
+            recipe_id: RecipeId,
+            user_id: UserId,
+            created_at: SystemTime,
+        ) -> Result<(), AddFavoriteError>;
+
+        async fn remove_favorite(
+            &self,
+            recipe_id: RecipeId,
+            user_id: UserId,
+        ) -> Result<(), RemoveFavoriteError>;
+
+        async fn is_favorite(
+            &self,
+            recipe_id: RecipeId,
+            user_id: UserId,
+        ) -> Result<bool, GetFavoriteError>;
+
+        async fn list_favorite_recipe_ids(
+            &self,
+            user_id: UserId,
+        ) -> Result<Vec<RecipeId>, ListFavoritesError>;
 
     }
 }

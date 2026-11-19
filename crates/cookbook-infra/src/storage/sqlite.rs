@@ -96,6 +96,7 @@ mod tests {
             "recipe_revisions" => "SELECT COUNT(*) FROM recipe_revisions",
             "recipe_images" => "SELECT COUNT(*) FROM recipe_images",
             "recipe_source_documents" => "SELECT COUNT(*) FROM recipe_source_documents",
+            "recipe_favorites" => "SELECT COUNT(*) FROM recipe_favorites",
             _ => anyhow::bail!("unknown table {table}"),
         };
 
@@ -158,7 +159,7 @@ mod tests {
                 .await
                 .unwrap();
 
-            assert_eq!(applied, 2);
+            assert_eq!(applied, 3);
 
             let tables: Vec<String> = sqlx::query_scalar(
                 "SELECT name FROM sqlite_master
@@ -176,6 +177,7 @@ mod tests {
                 "recipe_revisions",
                 "recipe_images",
                 "recipe_source_documents",
+                "recipe_favorites",
                 "_sqlx_migrations",
             ] {
                 assert!(
@@ -191,7 +193,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(applied, 2);
+        assert_eq!(applied, 3);
     }
 
     #[tokio::test]
@@ -286,6 +288,31 @@ mod tests {
         );
 
         assert_eq!(counts, (1, 1, 1));
+    }
+
+    #[tokio::test]
+    async fn deleting_a_user_cascades_to_favorites() {
+        let database = SqliteDatabase::open_in_memory().await.unwrap();
+        let pool = database.pool();
+
+        insert_user(pool, "user-1").await.unwrap();
+        insert_recipe(pool, "recipe-1", "user-1").await.unwrap();
+
+        sqlx::query(
+            "INSERT INTO recipe_favorites (user_id, recipe_id, created_at_ms)
+             VALUES ('user-1', 'recipe-1', 0)",
+        )
+        .execute(pool)
+        .await
+        .unwrap();
+
+        sqlx::query("DELETE FROM users WHERE id = 'user-1'")
+            .execute(pool)
+            .await
+            .unwrap();
+
+        assert_eq!(count_rows(pool, "recipe_favorites").await.unwrap(), 0);
+        assert_eq!(count_rows(pool, "recipes").await.unwrap(), 1);
     }
 
     #[tokio::test]
