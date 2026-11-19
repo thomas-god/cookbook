@@ -96,6 +96,7 @@ recipe_author = Author
 recipe_total_duration = Total time
 recipe_minutes = minutes
 recipe_servings = Servings
+recipe_parts = Parts
 category_label = Category
 category_none = Not specified
 category_aperitif = Aperitif

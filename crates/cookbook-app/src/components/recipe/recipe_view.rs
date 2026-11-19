@@ -68,6 +68,11 @@ pub(crate) fn quantity_label(cx: &Cx, quantity: &Quantity) -> String {
     }
 }
 
+/// Anchor id for a recipe part section, used by the table of contents.
+fn part_anchor_id(index: usize) -> String {
+    format!("recipe-part-{}", index + 1)
+}
+
 /// Read-only rendering of a recipe's ingredients and steps.
 #[component]
 pub async fn recipe_view(
@@ -76,13 +81,44 @@ pub async fn recipe_view(
     content: &RecipeContent,
     images: &[RecipeImageMetadata],
 ) -> Result<impl View> {
+    let parts = content.parts();
+
     Ok(view! {
         cx =>
         if let Some(body) = content.simple_body() {
             recipe_body_view(recipe_id: recipe_id, body: body, images: images)
         } else {
-            for part in content.parts() {
-                <section class="flex flex-col gap-4">
+            if parts.len() > 1 {
+                <nav
+                    aria-label=(t!(recipe_parts))
+                    class="rounded-lg border border-border bg-card px-4 py-3"
+                >
+                    <p
+                        class="text-xs font-medium uppercase tracking-wide text-muted-foreground"
+                    >
+                        (t!(recipe_parts))
+                    </p>
+                    <ol class="mt-2 flex flex-col gap-1 text-sm">
+                        for (index, part) in parts.iter().enumerate() {
+                            <li>
+                                <a
+                                    class="underline-offset-4 hover:underline"
+                                    href=(format!("#{}", part_anchor_id(index)))
+                                >
+                                    (index + 1)
+                                    ". "
+                                    (part.title().as_str())
+                                </a>
+                            </li>
+                        }
+                    </ol>
+                </nav>
+            }
+            for (index, part) in parts.iter().enumerate() {
+                <section
+                    id=(part_anchor_id(index))
+                    class="flex flex-col gap-4"
+                >
                     <div>
                         <h3 class="text-xl font-semibold">(part.title().as_str())</h3>
                         if let Some(description) = part.description() {
