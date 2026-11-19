@@ -157,7 +157,6 @@ pub(super) async fn metadata_fields(
     servings_count: String,
     servings_label: String,
 ) -> Result<impl View> {
-    let heading = t!(form_details).resolve(cx).into_owned();
     let title_label = t!(form_title).resolve(cx).into_owned();
     let title_placeholder = t!(form_title.placeholder).resolve(cx).into_owned();
     let description_label = t!(form_description).resolve(cx).into_owned();
@@ -165,7 +164,7 @@ pub(super) async fn metadata_fields(
 
     Ok(view! {
         form_section(
-            heading: heading,
+            heading: None,
             form_field(
                 name: TITLE_FIELD,
                 label: title_label,
@@ -327,7 +326,7 @@ pub(super) async fn revision_message_field(cx: &Cx, needs_review: bool) -> Resul
     } else {
         t!(form_edit_message.placeholder).resolve(cx).into_owned()
     };
-    let heading = t!(form_revision_note).resolve(cx).into_owned();
+    let heading = Some(t!(form_revision_note).resolve(cx).into_owned());
 
     Ok(view! {
         form_section(
@@ -426,7 +425,7 @@ async fn body_durations(
     let preparation_field = body_field(&prefix, PREPARATION_FIELD);
     let rest_field = body_field(&prefix, REST_FIELD);
     let cooking_field = body_field(&prefix, COOKING_FIELD);
-    let heading = t!(form_timing).resolve(cx).into_owned();
+    let heading = Some(t!(form_timing).resolve(cx).into_owned());
     let preparation_label = t!(form_preparation).resolve(cx).into_owned();
     let rest_label = t!(form_rest).resolve(cx).into_owned();
     let cooking_label = t!(form_cooking).resolve(cx).into_owned();
@@ -476,7 +475,7 @@ async fn body_images(
     let image_ids_field = body_field(&prefix, IMAGE_IDS_FIELD);
     let images_field = body_field(&prefix, IMAGES_FIELD);
     let recipe_images_id = element_id(cx);
-    let heading = t!(form_recipe_images).resolve(cx).into_owned();
+    let heading = Some(t!(form_recipe_images).resolve(cx).into_owned());
 
     Ok(view! {
         form_section(
@@ -520,7 +519,7 @@ async fn body_ingredients(
 ) -> Result<impl View> {
     let initial_count = initials.len().max(1);
     let count = signal(cx, move || initial_count);
-    let heading = t!(form_ingredients).resolve(cx).into_owned();
+    let heading = Some(t!(form_ingredients).resolve(cx).into_owned());
 
     Ok(view! {
         form_section(
@@ -573,7 +572,7 @@ async fn body_steps(
         insert_instruction: insert_instruction.clone(),
         insert_images: insert_images.clone(),
     };
-    let heading = t!(form_steps).resolve(cx).into_owned();
+    let heading = Some(t!(form_steps).resolve(cx).into_owned());
 
     Ok(view! {
         form_section(
@@ -642,43 +641,39 @@ pub(super) async fn parts_editor(
         order: order.clone(),
         next_key: next_key.clone(),
     };
-    let heading = t!(form_parts).resolve(cx).into_owned();
 
     Ok(view! {
-        form_section(
-            heading: heading,
-            <div id="parts" class="flex flex-col gap-4">
-                #[key(format!("part-{key}"))]
-                for (position, key) in order.get().into_iter().enumerate() {
-                    part_row(
-                        row: position,
-                        key: key,
-                        initial: initial.get(key).cloned(),
-                        list: list.clone(),
-                        image_lookup: image_lookup.clone(),
-                        start_editing: start_editing
-                    )
-                }
-            </div>
-            <div class="flex flex-wrap gap-2">
-                button(
-                    variant: ButtonVariant::Outline,
-                    size: ButtonSize::Sm,
-                    attrs: attributes! {
-                        type="button"
-                        @click=$(async |_e: Event| {
-                            let new_key = next_key.get();
-                            next_key.increment();
-                            let current_order = order.get();
-                            let index = current_order.len();
-                            let next = form_insert_item(current_order, index, new_key).await;
-                            order.set(next);
-                        })
-                    },
-                    (t!(form_add_part))
+        <div id="parts" class="flex flex-col gap-4">
+            #[key(format!("part-{key}"))]
+            for (position, key) in order.get().into_iter().enumerate() {
+                part_row(
+                    row: position,
+                    key: key,
+                    initial: initial.get(key).cloned(),
+                    list: list.clone(),
+                    image_lookup: image_lookup.clone(),
+                    start_editing: start_editing
                 )
-            </div>
-        )
+            }
+        </div>
+        <div class="flex flex-wrap gap-2">
+            button(
+                variant: ButtonVariant::Outline,
+                size: ButtonSize::Sm,
+                attrs: attributes! {
+                    type="button"
+                    @click=$(async |_e: Event| {
+                        let new_key = next_key.get();
+                        next_key.increment();
+                        let current_order = order.get();
+                        let index = current_order.len();
+                        let next = form_insert_item(current_order, index, new_key).await;
+                        order.set(next);
+                    })
+                },
+                (t!(form_add_part))
+            )
+        </div>
     })
 }
 
@@ -711,6 +706,9 @@ async fn part_row(
 
     let id_field = PartField::Id.key(row);
     let title_field = PartField::Title.key(row);
+    let heading = t!(form_part_heading, count = key + 1)
+        .resolve(cx)
+        .into_owned();
     let description_field = PartField::Description.key(row);
     let title_label = t!(form_part_title).resolve(cx).into_owned();
     let description_label = t!(form_part_description).resolve(cx).into_owned();
@@ -721,6 +719,7 @@ async fn part_row(
             class="m-0 flex min-w-0 flex-col gap-4 rounded-lg border border-border bg-background/60 p-4"
         >
             <input type="hidden" name=(id_field) value=(id_value)>
+            <h3 class="text-lg font-semibold">(heading)</h3>
             form_field(
                 name: title_field,
                 label: title_label,

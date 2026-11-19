@@ -305,6 +305,7 @@ form_instruction = Instruction
     .placeholder = Mélangez la farine et le beurre jusqu'à obtenir une texture sableuse.
 
 form_parts = Parties
+form_part_heading = Partie { $count }
 form_add_part = Ajouter une partie
 form_part_title = Titre de la partie
     .placeholder = Crème pâtissière
@@ -313,7 +314,7 @@ form_insert_part_below = Ajouter une partie en dessous
 form_move_part_up = Déplacer la partie vers le haut
 form_move_part_down = Déplacer la partie vers le bas
 
-recipe_ingredient_conflicts_notice = Cette recette contient des ingrédients en double. Vérifiez les ingrédients en double et ajustez les quantités.
+recipe_ingredient_conflicts_notice = Cette recette contient des ingrédients en double. Vérifiez les doublons et ajustez les quantités.
 
 form_convert_to_multipart = Convertir en recette à plusieurs parties
 form_convert_to_simple = Fusionner les parties en une seule recette

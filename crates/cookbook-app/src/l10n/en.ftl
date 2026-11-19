@@ -305,6 +305,7 @@ form_instruction = Instruction
     .placeholder = Mix the flour and butter until crumbly.
 
 form_parts = Parts
+form_part_heading = Part { $count }
 form_add_part = Add part
 form_part_title = Part title
     .placeholder = Pastry cream

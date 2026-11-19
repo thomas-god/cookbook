@@ -19,14 +19,16 @@ use crate::{
 /// A visually distinct group of related form fields.
 #[component]
 pub(super) async fn form_section(
-    #[into] heading: String,
+    #[into] heading: Option<String>,
     #[default] child: Child<'_>,
 ) -> Result<impl View> {
     Ok(view! {
         <section
             class="flex flex-col gap-4 rounded-xl border border-border bg-foreground/[0.02] p-4 sm:p-5"
         >
-            <h3 class="text-lg font-semibold">(heading)</h3>
+            if let Some(heading) = heading {
+                <h3 class="text-lg font-semibold">(heading)</h3>
+            }
             (child)
         </section>
     })

@@ -448,6 +448,14 @@ pub async fn edit_recipe(cx: &Cx) -> Result<impl View> {
 
     Ok(view! {
         <div class="flex flex-col gap-6">
+            <a
+                class="text-sm text-muted-foreground underline-offset-4 hover:underline italic opacity-80 flex items-center gap-1.5"
+                href=(href!(recipe_detail, RecipeId(recipe_id.clone())))
+            >
+                icon(data: BACK_ARROW)
+                (t!(recipe_back_to_recipe))
+            </a>
+
             if has_ingredient_conflicts {
                 <p
                     role="status"
@@ -456,17 +464,10 @@ pub async fn edit_recipe(cx: &Cx) -> Result<impl View> {
                     (t!(recipe_ingredient_conflicts_notice))
                 </p>
             }
-            <a
-                class="text-sm text-muted-foreground underline-offset-4 hover:underline italic opacity-80 flex items-center gap-1.5"
-                href=(href!(recipe_detail, RecipeId(recipe_id.clone())))
-            >
-                icon(data: BACK_ARROW)
-                (t!(recipe_back_to_recipe))
-            </a>
-            card(
-                card_header(card_title((form_title)))
-                card_content(recipe_form(mode: mode))
-            )
+
+            card_title((form_title))
+            recipe_form(mode: mode)
+
             card(
                 card_header(card_title((t!(form_recipe_type))))
                 card_content(
