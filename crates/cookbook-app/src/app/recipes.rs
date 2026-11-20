@@ -511,7 +511,7 @@ async fn recipe_search_results(
 }
 
 path_param!(pub recipe_id);
-path_param!(revision_id);
+path_param!(pub revision_id);
 path_param!(pub source_document_id);
 path_param!(pub image_id);
 

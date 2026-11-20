@@ -32,6 +32,7 @@ use topcoat::{
 
 pub(crate) mod admin;
 pub(crate) mod auth;
+pub(crate) mod cooked;
 mod locale;
 pub(crate) mod recipe;
 mod recipe_cleanup;

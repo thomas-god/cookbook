@@ -3,7 +3,7 @@
 **Cookbook** is a self-hosted web-application to manage and share your family recipes. Recipes can
 be either created from scratch or imported from images (cookbook pages, handwritten recipes, etc.)
 via an optional VLM-based vision module. The app supports public/private recipes, recipe revisions
-history, a big-picture cook mode, and more.
+history, a big-picture cook mode, a private cooking log, and more.
 
 ## Table of contents
 

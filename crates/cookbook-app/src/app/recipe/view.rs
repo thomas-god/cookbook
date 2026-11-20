@@ -11,6 +11,7 @@ use topcoat::{
     view::{View, attributes, class, view},
 };
 
+use crate::app::cooked::recipe_cook_journal;
 use crate::app::recipe::cook::cook_recipe;
 use crate::app::recipe::export::export_recipe;
 use crate::app::recipe::scope::recipe_scope;
@@ -48,6 +49,9 @@ pub async fn recipe_detail(cx: &Cx) -> Result<impl View> {
     let images = recipe_service
         .get_recipe_images(recipe.id().clone(), user.id().clone())
         .await?;
+    let cooked_events = recipe_service
+        .list_recipe_cooked_events(recipe.id().clone(), user.id().clone())
+        .await?;
 
     let author_name = display_name(cx, recipe.author()).await?;
     let total_minutes = recipe.durations().total_duration().as_minutes();
@@ -61,6 +65,7 @@ pub async fn recipe_detail(cx: &Cx) -> Result<impl View> {
     } else {
         t!(recipe_favorite_add).resolve(cx).into_owned()
     };
+    let cook_journal_href = href!(recipe_cook_journal, RecipeId(recipe.id().as_str())).resolve(cx);
 
     Ok(view! {
         <div class="flex flex-col gap-8">
@@ -147,6 +152,15 @@ pub async fn recipe_detail(cx: &Cx) -> Result<impl View> {
                         >
                             (category_label(cx, category))
                         </span>
+                    }
+                    if !cooked_events.is_empty() {
+                        <span>" · "</span>
+                        <a
+                            class="inline-flex items-center rounded-full border border-border px-2.5 py-0.5 text-sm font-medium text-muted-foreground underline-offset-4 hover:bg-foreground/5 hover:underline"
+                            href=(cook_journal_href)
+                        >
+                            (t!(recipe_cooked_count, count = cooked_events.len()))
+                        </a>
                     }
                 </div>
                 if let Some(description) = recipe.description() {
@@ -241,6 +255,15 @@ pub async fn recipe_menu(
                     href=(href!(cook_recipe, RecipeId(recipe.id().as_str())))
                 >
                     (t!(recipe_cook))
+                </a>
+                <a
+                    class=(class!(
+                        button_variants(ButtonVariant::Ghost, ButtonSize::Sm),
+                        "w-full justify-start",
+                    ))
+                    href=(href!(recipe_cook_journal, RecipeId(recipe.id().as_str())))
+                >
+                    (t!(cooked_event_log_link))
                 </a>
                 if can_edit {
                     <a
