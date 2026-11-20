@@ -8,7 +8,7 @@ use topcoat::{
 };
 
 use crate::{
-    app::{admin, auth::account},
+    app::{admin, auth::account, cooked},
     components::base::{
         button::{ButtonSize, ButtonVariant, button, button_variants},
         icons::SETTINGS,
@@ -34,6 +34,15 @@ pub async fn user_menu(cx: &Cx, user: &AuthenticatedUser) -> Result<impl View> {
             <div
                 class="absolute right-0 z-10 mt-1 flex w-48 flex-col gap-1 rounded-lg border border-border bg-card p-1 shadow-md"
             >
+                <a
+                    class=(class!(
+                        button_variants(ButtonVariant::Ghost, ButtonSize::Sm),
+                        "w-full justify-start",
+                    ))
+                    href=(href!(cooked::page))
+                >
+                    (t!(cooked_event_log_link))
+                </a>
                 <a
                     class=(class!(
                         button_variants(ButtonVariant::Ghost, ButtonSize::Sm),
