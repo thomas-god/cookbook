@@ -26,7 +26,8 @@ use crate::recipe::ports::{
     RestoreRecipeRevisionRequest, SaveRecipeError, SearchRecipesError, SearchRecipesQuery,
     SearchRecipesResult, SetRecipeFavoriteError, UpdateCookedEventError,
     UpdateRecipeCookedEventError, UpdateRecipeCookedEventRequest, UpdateRecipeError,
-    UpdateRecipeRequest, UpdateRecipeScopeError, UpdateRecipeScopeRequest,
+    UpdateRecipeRequest, UpdateRecipeRevisionMessageError, UpdateRecipeRevisionMessageRequest,
+    UpdateRecipeScopeError, UpdateRecipeScopeRequest, UpdateRevisionOriginError,
 };
 use crate::user::models::UserId;
 
@@ -352,6 +353,52 @@ where
                     RestoreRecipeRevisionError::Storage(error.into())
                 }
                 SaveRecipeError::Storage(reason) => RestoreRecipeRevisionError::Storage(reason),
+            })?;
+
+        Ok(updated)
+    }
+
+    async fn update_recipe_revision_message(
+        &self,
+        request: UpdateRecipeRevisionMessageRequest,
+    ) -> Result<RecipeRevision, UpdateRecipeRevisionMessageError> {
+        let current = self
+            .recipe_repository
+            .get_recipe(request.recipe_id)
+            .await
+            .map_err(|error| UpdateRecipeRevisionMessageError::Storage(error.into()))?
+            .filter(|recipe| recipe.can_view(&request.actor))
+            .ok_or(UpdateRecipeRevisionMessageError::NotFound)?;
+
+        if !current.can_edit(&request.actor) {
+            return Err(UpdateRecipeRevisionMessageError::Forbidden);
+        }
+
+        let revision = self
+            .recipe_repository
+            .get_recipe_revisions(current.id().clone())
+            .await
+            .map_err(|error| UpdateRecipeRevisionMessageError::Storage(error.into()))?
+            .into_iter()
+            .find(|revision| revision.id() == &request.revision_id)
+            .ok_or(UpdateRecipeRevisionMessageError::NotFound)?;
+
+        let updated = revision
+            .update_message(request.message)
+            .map_err(|_| UpdateRecipeRevisionMessageError::NotEditable)?;
+
+        self.recipe_repository
+            .update_recipe_revision_origin(
+                current.id().clone(),
+                updated.id().clone(),
+                updated.origin().clone(),
+            )
+            .await
+            .map_err(|error| match error {
+                UpdateRevisionOriginError::NotFound => UpdateRecipeRevisionMessageError::NotFound,
+                UpdateRevisionOriginError::Storage(reason) => {
+                    UpdateRecipeRevisionMessageError::Storage(reason)
+                }
             })?;
 
         Ok(updated)
@@ -2129,6 +2176,260 @@ mod tests {
             .await;
 
         assert!(matches!(result, Err(GetRecipeHistoryError::Storage(_))));
+    }
+
+    fn user_edit_revision(
+        recipe: &Recipe,
+        editor: &str,
+        message: Option<RevisionMessage>,
+    ) -> RecipeRevision {
+        RecipeRevision::new(
+            RecipeRevisionId::new("revision-1".to_string()),
+            recipe.id().clone(),
+            content("Soup"),
+            UserId::new(editor.to_string()),
+            FixedClock::new().0,
+            RevisionOrigin::UserEdit { message },
+            RevisionVerification::Verified,
+        )
+    }
+
+    #[tokio::test]
+    async fn update_recipe_revision_message_updates_a_user_edit_note() {
+        let current = current_recipe("soup", "Soup");
+        let revision = user_edit_revision(
+            current.recipe(),
+            "editor-1",
+            Some(RevisionMessage::new("Reduced sugar").unwrap()),
+        );
+        let expected_revision_id = revision.id().clone();
+        let expected_recipe_id = current.id().clone();
+        let mut repository = MockRecipeRepository::new();
+        expect_visible_recipe(&mut repository, current.clone());
+        repository
+            .expect_get_recipe_revisions()
+            .times(1)
+            .returning({
+                let revision = revision.clone();
+                move |_| Ok(vec![revision.clone()])
+            });
+        repository
+            .expect_update_recipe_revision_origin()
+            .times(1)
+            .withf(
+                move |recipe_id: &RecipeId,
+                      revision_id: &RecipeRevisionId,
+                      origin: &RevisionOrigin| {
+                    recipe_id == &expected_recipe_id
+                        && revision_id == &expected_revision_id
+                        && matches!(
+                            origin,
+                            RevisionOrigin::UserEdit { message: Some(message) }
+                                if message.as_str() == "Reduced salt"
+                        )
+                },
+            )
+            .returning(|_, _, _| Ok(()));
+        let documents = MockRecipeDocumentRepository::new();
+
+        let service = RecipeServiceImpl::new(repository, documents, FixedClock::new());
+        let updated = service
+            .update_recipe_revision_message(UpdateRecipeRevisionMessageRequest {
+                recipe_id: current.id().clone(),
+                revision_id: revision.id().clone(),
+                message: Some(RevisionMessage::new("Reduced salt").unwrap()),
+                actor: UserId::new("editor-2".to_string()),
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(
+            updated.origin(),
+            &RevisionOrigin::UserEdit {
+                message: Some(RevisionMessage::new("Reduced salt").unwrap()),
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn update_recipe_revision_message_clears_a_note() {
+        let current = current_recipe("soup", "Soup");
+        let revision = user_edit_revision(
+            current.recipe(),
+            "editor-1",
+            Some(RevisionMessage::new("Reduced sugar").unwrap()),
+        );
+        let mut repository = MockRecipeRepository::new();
+        expect_visible_recipe(&mut repository, current.clone());
+        repository
+            .expect_get_recipe_revisions()
+            .times(1)
+            .returning({
+                let revision = revision.clone();
+                move |_| Ok(vec![revision.clone()])
+            });
+        repository
+            .expect_update_recipe_revision_origin()
+            .times(1)
+            .withf(|_, _, origin: &RevisionOrigin| {
+                origin == &RevisionOrigin::UserEdit { message: None }
+            })
+            .returning(|_, _, _| Ok(()));
+        let documents = MockRecipeDocumentRepository::new();
+
+        let service = RecipeServiceImpl::new(repository, documents, FixedClock::new());
+        let updated = service
+            .update_recipe_revision_message(UpdateRecipeRevisionMessageRequest {
+                recipe_id: current.id().clone(),
+                revision_id: revision.id().clone(),
+                message: None,
+                actor: user_id(),
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(
+            updated.origin(),
+            &RevisionOrigin::UserEdit { message: None }
+        );
+    }
+
+    #[tokio::test]
+    async fn update_recipe_revision_message_forbids_a_viewer_without_edit_access() {
+        let current = current_recipe_with_scope("soup", "Soup", "author-1", RecipeScope::Viewable);
+        let mut repository = MockRecipeRepository::new();
+        expect_visible_recipe(&mut repository, current.clone());
+        let documents = MockRecipeDocumentRepository::new();
+
+        let service = RecipeServiceImpl::new(repository, documents, FixedClock::new());
+        let result = service
+            .update_recipe_revision_message(UpdateRecipeRevisionMessageRequest {
+                recipe_id: current.id().clone(),
+                revision_id: current.revision().id().clone(),
+                message: Some(RevisionMessage::new("Trying").unwrap()),
+                actor: UserId::new("editor-2".to_string()),
+            })
+            .await;
+
+        assert!(matches!(
+            result,
+            Err(UpdateRecipeRevisionMessageError::Forbidden)
+        ));
+    }
+
+    #[tokio::test]
+    async fn update_recipe_revision_message_hides_a_private_recipe_from_a_non_author() {
+        let current = current_recipe_with_scope("soup", "Soup", "author-1", RecipeScope::Private);
+        let mut repository = MockRecipeRepository::new();
+        expect_visible_recipe(&mut repository, current.clone());
+        let documents = MockRecipeDocumentRepository::new();
+
+        let service = RecipeServiceImpl::new(repository, documents, FixedClock::new());
+        let result = service
+            .update_recipe_revision_message(UpdateRecipeRevisionMessageRequest {
+                recipe_id: current.id().clone(),
+                revision_id: current.revision().id().clone(),
+                message: None,
+                actor: UserId::new("viewer".to_string()),
+            })
+            .await;
+
+        assert!(matches!(
+            result,
+            Err(UpdateRecipeRevisionMessageError::NotFound)
+        ));
+    }
+
+    #[tokio::test]
+    async fn update_recipe_revision_message_rejects_an_unknown_revision() {
+        let current = current_recipe("soup", "Soup");
+        let mut repository = MockRecipeRepository::new();
+        expect_visible_recipe(&mut repository, current.clone());
+        repository
+            .expect_get_recipe_revisions()
+            .times(1)
+            .returning(|_| Ok(Vec::new()));
+        let documents = MockRecipeDocumentRepository::new();
+
+        let service = RecipeServiceImpl::new(repository, documents, FixedClock::new());
+        let result = service
+            .update_recipe_revision_message(UpdateRecipeRevisionMessageRequest {
+                recipe_id: current.id().clone(),
+                revision_id: RecipeRevisionId::new("missing".to_string()),
+                message: None,
+                actor: user_id(),
+            })
+            .await;
+
+        assert!(matches!(
+            result,
+            Err(UpdateRecipeRevisionMessageError::NotFound)
+        ));
+    }
+
+    #[tokio::test]
+    async fn update_recipe_revision_message_rejects_other_origins() {
+        let current = current_recipe("soup", "Soup");
+        let revision = revision(
+            "revision-1",
+            current.recipe(),
+            "user-1",
+            FixedClock::new().0,
+        );
+        let mut repository = MockRecipeRepository::new();
+        expect_visible_recipe(&mut repository, current.clone());
+        repository
+            .expect_get_recipe_revisions()
+            .times(1)
+            .returning(move |_| Ok(vec![revision.clone()]));
+        let documents = MockRecipeDocumentRepository::new();
+
+        let service = RecipeServiceImpl::new(repository, documents, FixedClock::new());
+        let result = service
+            .update_recipe_revision_message(UpdateRecipeRevisionMessageRequest {
+                recipe_id: current.id().clone(),
+                revision_id: current.revision().id().clone(),
+                message: None,
+                actor: user_id(),
+            })
+            .await;
+
+        assert!(matches!(
+            result,
+            Err(UpdateRecipeRevisionMessageError::NotEditable)
+        ));
+    }
+
+    #[tokio::test]
+    async fn update_recipe_revision_message_maps_storage_failures() {
+        let current = current_recipe("soup", "Soup");
+        let revision = user_edit_revision(current.recipe(), "user-1", None);
+        let mut repository = MockRecipeRepository::new();
+        expect_visible_recipe(&mut repository, current.clone());
+        repository
+            .expect_get_recipe_revisions()
+            .times(1)
+            .returning(move |_| Ok(vec![revision.clone()]));
+        repository
+            .expect_update_recipe_revision_origin()
+            .times(1)
+            .returning(|_, _, _| Err(UpdateRevisionOriginError::Storage(anyhow!("write failed"))));
+        let documents = MockRecipeDocumentRepository::new();
+
+        let service = RecipeServiceImpl::new(repository, documents, FixedClock::new());
+        let result = service
+            .update_recipe_revision_message(UpdateRecipeRevisionMessageRequest {
+                recipe_id: current.id().clone(),
+                revision_id: current.revision().id().clone(),
+                message: None,
+                actor: user_id(),
+            })
+            .await;
+
+        assert!(matches!(
+            result,
+            Err(UpdateRecipeRevisionMessageError::Storage(_))
+        ));
     }
 
     #[tokio::test]

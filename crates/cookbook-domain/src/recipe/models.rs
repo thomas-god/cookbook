@@ -410,6 +410,17 @@ impl fmt::Display for RecipeRevisionMismatch {
 
 impl std::error::Error for RecipeRevisionMismatch {}
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RevisionNotEditable;
+
+impl fmt::Display for RevisionNotEditable {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("only user edits have an editable note")
+    }
+}
+
+impl std::error::Error for RevisionNotEditable {}
+
 /// The edible content shared by a standard recipe and a multipart sub-recipe.
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Debug, Clone)]
@@ -887,7 +898,7 @@ impl RevisionVerification {
     }
 }
 
-/// An immutable snapshot of a recipe after a create or edit operation.
+/// An immutable snapshot of a recipe content after a create or edit operation.
 #[derive(Debug, Clone, Constructor)]
 pub struct RecipeRevision {
     id: RecipeRevisionId,
@@ -926,6 +937,20 @@ impl RecipeRevision {
 
     pub fn origin(&self) -> &RevisionOrigin {
         &self.origin
+    }
+
+    pub fn update_message(
+        self,
+        message: Option<RevisionMessage>,
+    ) -> Result<Self, RevisionNotEditable> {
+        if !matches!(&self.origin, RevisionOrigin::UserEdit { .. }) {
+            return Err(RevisionNotEditable);
+        }
+
+        Ok(Self {
+            origin: RevisionOrigin::UserEdit { message },
+            ..self
+        })
     }
 }
 
@@ -1630,6 +1655,79 @@ mod tests {
             RevisionMessage::new("   "),
             Err(RevisionMessageError::Empty)
         );
+    }
+
+    fn revision_with_origin(origin: RevisionOrigin) -> RecipeRevision {
+        RecipeRevision::new(
+            RecipeRevisionId::new("revision-1".to_string()),
+            RecipeId::new("soup".to_string()),
+            simple_content(
+                "Soup",
+                RecipeBody::new(
+                    RecipeDurations::new(None, None, None),
+                    Vec::new(),
+                    Vec::new(),
+                    Vec::new(),
+                ),
+            ),
+            UserId::new("user-1".to_string()),
+            SystemTime::UNIX_EPOCH,
+            origin,
+            RevisionVerification::Verified,
+        )
+    }
+
+    #[test]
+    fn user_edit_revision_message_can_be_updated() {
+        let revision = revision_with_origin(RevisionOrigin::UserEdit {
+            message: Some(RevisionMessage::new("Reduced sugar").unwrap()),
+        });
+
+        let updated = revision
+            .update_message(Some(RevisionMessage::new("Reduced salt").unwrap()))
+            .unwrap();
+
+        assert_eq!(
+            updated.origin(),
+            &RevisionOrigin::UserEdit {
+                message: Some(RevisionMessage::new("Reduced salt").unwrap()),
+            }
+        );
+    }
+
+    #[test]
+    fn user_edit_revision_message_can_be_cleared() {
+        let revision = revision_with_origin(RevisionOrigin::UserEdit {
+            message: Some(RevisionMessage::new("Reduced sugar").unwrap()),
+        });
+
+        let updated = revision.update_message(None).unwrap();
+
+        assert_eq!(
+            updated.origin(),
+            &RevisionOrigin::UserEdit { message: None }
+        );
+    }
+
+    #[test]
+    fn revisions_from_other_origins_have_no_editable_message() {
+        for origin in [
+            RevisionOrigin::Created,
+            RevisionOrigin::Imported,
+            RevisionOrigin::StructureConverted {
+                to: RecipeStructureKind::Simple,
+            },
+            RevisionOrigin::Restored {
+                revision_id: RecipeRevisionId::new("revision-0".to_string()),
+            },
+        ] {
+            let revision = revision_with_origin(origin);
+
+            assert!(matches!(
+                revision.update_message(None),
+                Err(RevisionNotEditable)
+            ));
+        }
     }
 
     #[test]

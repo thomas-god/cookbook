@@ -9,7 +9,7 @@ use crate::recipe::models::{
     RecipeContent, RecipeCookedEvent, RecipeCookedEventEntry, RecipeCookedEventId, RecipeForViewer,
     RecipeId, RecipeImage, RecipeImageId, RecipeImageMetadata, RecipeRevision, RecipeRevisionId,
     RecipeScope, RecipeSourceDocument, RecipeSourceDocumentId, RecipeSourceDocumentSummary,
-    RecipeStructureKind, RecipeWithContent, RevisionMessage, RevisionVerification,
+    RecipeStructureKind, RecipeWithContent, RevisionMessage, RevisionOrigin, RevisionVerification,
 };
 use crate::user::models::UserId;
 
@@ -60,6 +60,14 @@ pub struct RestoreRecipeRevisionRequest {
     pub revision_id: RecipeRevisionId,
     pub editor: UserId,
     pub latest_revision: RecipeRevisionId,
+}
+
+#[derive(Debug, Clone)]
+pub struct UpdateRecipeRevisionMessageRequest {
+    pub recipe_id: RecipeId,
+    pub revision_id: RecipeRevisionId,
+    pub message: Option<RevisionMessage>,
+    pub actor: UserId,
 }
 
 #[derive(Debug, Clone)]
@@ -191,6 +199,11 @@ pub trait RecipeService: Clone + Send + Sync + 'static {
         &self,
         request: RestoreRecipeRevisionRequest,
     ) -> impl Future<Output = Result<RecipeWithContent, RestoreRecipeRevisionError>> + Send;
+
+    fn update_recipe_revision_message(
+        &self,
+        request: UpdateRecipeRevisionMessageRequest,
+    ) -> impl Future<Output = Result<RecipeRevision, UpdateRecipeRevisionMessageError>> + Send;
 
     fn update_recipe_scope(
         &self,
@@ -349,6 +362,13 @@ pub trait RecipeRepository: Clone + Send + Sync + 'static {
         &self,
         id: RecipeId,
     ) -> impl Future<Output = Result<Vec<RecipeRevision>, ListRecipeRevisionsError>> + Send;
+
+    fn update_recipe_revision_origin(
+        &self,
+        recipe_id: RecipeId,
+        revision_id: RecipeRevisionId,
+        origin: RevisionOrigin,
+    ) -> impl Future<Output = Result<(), UpdateRevisionOriginError>> + Send;
 
     fn delete_recipe(
         &self,
@@ -531,6 +551,27 @@ impl fmt::Display for RestoreRecipeRevisionError {
 impl std::error::Error for RestoreRecipeRevisionError {}
 
 #[derive(Debug)]
+pub enum UpdateRecipeRevisionMessageError {
+    NotFound,
+    Forbidden,
+    NotEditable,
+    Storage(anyhow::Error),
+}
+
+impl fmt::Display for UpdateRecipeRevisionMessageError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NotFound => f.write_str("recipe or revision not found"),
+            Self::Forbidden => f.write_str("the recipe cannot be edited by this user"),
+            Self::NotEditable => f.write_str("only user edits have an editable note"),
+            Self::Storage(reason) => write!(f, "failed to update revision note: {reason}"),
+        }
+    }
+}
+
+impl std::error::Error for UpdateRecipeRevisionMessageError {}
+
+#[derive(Debug)]
 pub enum UpdateRecipeScopeError {
     NotFound,
     Forbidden,
@@ -690,6 +731,23 @@ impl fmt::Display for SaveRecipeError {
 }
 
 impl std::error::Error for SaveRecipeError {}
+
+#[derive(Debug)]
+pub enum UpdateRevisionOriginError {
+    NotFound,
+    Storage(anyhow::Error),
+}
+
+impl fmt::Display for UpdateRevisionOriginError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NotFound => f.write_str("recipe revision not found"),
+            Self::Storage(reason) => write!(f, "failed to update recipe revision: {reason}"),
+        }
+    }
+}
+
+impl std::error::Error for UpdateRevisionOriginError {}
 
 #[derive(Debug)]
 pub enum GetRecipeError {
@@ -1198,6 +1256,11 @@ mockall::mock! {
             request: RestoreRecipeRevisionRequest,
         ) -> Result<RecipeWithContent, RestoreRecipeRevisionError>;
 
+        async fn update_recipe_revision_message(
+            &self,
+            request: UpdateRecipeRevisionMessageRequest,
+        ) -> Result<RecipeRevision, UpdateRecipeRevisionMessageError>;
+
         async fn update_recipe_scope(
             &self,
             request: UpdateRecipeScopeRequest,
@@ -1357,6 +1420,13 @@ mockall::mock! {
             &self,
             id: RecipeId,
         ) -> Result<Vec<RecipeRevision>, ListRecipeRevisionsError>;
+
+        async fn update_recipe_revision_origin(
+            &self,
+            recipe_id: RecipeId,
+            revision_id: RecipeRevisionId,
+            origin: RevisionOrigin,
+        ) -> Result<(), UpdateRevisionOriginError>;
 
         async fn delete_recipe(
             &self,

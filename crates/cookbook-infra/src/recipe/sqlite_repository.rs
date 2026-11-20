@@ -13,7 +13,7 @@ use cookbook_domain::recipe::ports::{
     DeleteRecipeRecordError, GetFavoriteError, GetRecipeError, ListCookedEventsError,
     ListRecipeRevisionsError, ListRecipesError, RecipeRepository, RecipeSearchCriteria, RecipeSort,
     RemoveFavoriteError, SaveRecipeError, SearchRecipesError, SortDirection,
-    UpdateCookedEventError,
+    UpdateCookedEventError, UpdateRevisionOriginError,
 };
 use cookbook_domain::user::models::UserId;
 use sqlx::sqlite::{Sqlite, SqlitePool, SqliteRow};
@@ -333,6 +333,35 @@ impl RecipeRepository for SqliteRecipeRepository {
             .map(decode_revision)
             .collect::<anyhow::Result<Vec<_>>>()
             .map_err(revisions_storage)
+    }
+
+    async fn update_recipe_revision_origin(
+        &self,
+        recipe_id: RecipeId,
+        revision_id: RecipeRevisionId,
+        origin: RevisionOrigin,
+    ) -> Result<(), UpdateRevisionOriginError> {
+        let origin = serde_json::to_string(&origin)
+            .context("failed to encode revision origin")
+            .map_err(UpdateRevisionOriginError::Storage)?;
+
+        let result = sqlx::query(
+            "UPDATE recipe_revisions
+             SET origin = ?
+             WHERE id = ? AND recipe_id = ?",
+        )
+        .bind(origin)
+        .bind(revision_id.as_str())
+        .bind(recipe_id.as_str())
+        .execute(&self.pool)
+        .await
+        .map_err(|error| UpdateRevisionOriginError::Storage(error.into()))?;
+
+        if result.rows_affected() == 0 {
+            return Err(UpdateRevisionOriginError::NotFound);
+        }
+
+        Ok(())
     }
 
     async fn delete_recipe(&self, id: RecipeId) -> Result<(), DeleteRecipeRecordError> {
@@ -728,7 +757,7 @@ mod tests {
 
     use cookbook_domain::recipe::models::{
         Ingredient, IngredientName, Quantity, RecipeBody, RecipeCategory, RecipeContent,
-        RecipeDurations, RecipeStep, RecipeStepId, RecipeTitle, RevisionOrigin,
+        RecipeDurations, RecipeStep, RecipeStepId, RecipeTitle, RevisionMessage, RevisionOrigin,
         RevisionVerification,
     };
 
@@ -951,6 +980,68 @@ mod tests {
         assert_eq!(revisions.len(), 2);
         assert_eq!(revisions[0].id().as_str(), "revision-1");
         assert_eq!(revisions[1].id().as_str(), "revision-2");
+    }
+
+    #[tokio::test]
+    async fn update_recipe_revision_origin_changes_only_the_note() {
+        let repository = repository().await;
+        let recipe = recipe("soup");
+        let edited_at = SystemTime::UNIX_EPOCH + Duration::from_secs(60);
+        let revision = RecipeRevision::new(
+            RecipeRevisionId::new("revision-1".to_string()),
+            recipe.id().clone(),
+            content("Soup"),
+            UserId::new("editor-1".to_string()),
+            edited_at,
+            RevisionOrigin::UserEdit {
+                message: Some(RevisionMessage::new("Reduced sugar").unwrap()),
+            },
+            RevisionVerification::Verified,
+        );
+
+        save(&repository, recipe.clone(), revision).await;
+
+        repository
+            .update_recipe_revision_origin(
+                recipe.id().clone(),
+                RecipeRevisionId::new("revision-1".to_string()),
+                RevisionOrigin::UserEdit {
+                    message: Some(RevisionMessage::new("Reduced salt").unwrap()),
+                },
+            )
+            .await
+            .unwrap();
+
+        let revisions = repository
+            .get_recipe_revisions(recipe.id().clone())
+            .await
+            .unwrap();
+
+        assert_eq!(revisions.len(), 1);
+        assert_eq!(revisions[0].content().title().as_str(), "Soup");
+        assert_eq!(revisions[0].editor().as_str(), "editor-1");
+        assert_eq!(revisions[0].edited_at(), edited_at);
+        assert_eq!(
+            revisions[0].origin(),
+            &RevisionOrigin::UserEdit {
+                message: Some(RevisionMessage::new("Reduced salt").unwrap()),
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn update_recipe_revision_origin_rejects_an_unknown_revision() {
+        let repository = repository().await;
+
+        let result = repository
+            .update_recipe_revision_origin(
+                RecipeId::new("soup".to_string()),
+                RecipeRevisionId::new("missing".to_string()),
+                RevisionOrigin::UserEdit { message: None },
+            )
+            .await;
+
+        assert!(matches!(result, Err(UpdateRevisionOriginError::NotFound)));
     }
 
     #[tokio::test]
