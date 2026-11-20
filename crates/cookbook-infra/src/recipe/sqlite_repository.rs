@@ -1,14 +1,19 @@
 use std::time::SystemTime;
 
 use anyhow::{Context, anyhow, bail};
+use chrono::NaiveDate;
 use cookbook_domain::recipe::models::{
-    Recipe, RecipeCategory, RecipeForViewer, RecipeId, RecipeRevision, RecipeRevisionId,
-    RecipeScope, RecipeWithContent, RevisionOrigin, RevisionVerification,
+    CookedRecipeLink, CookedRecipeNote, CookedRecipeSnapshot, Recipe, RecipeCategory,
+    RecipeCookedEvent, RecipeCookedEventEntry, RecipeCookedEventId, RecipeForViewer, RecipeId,
+    RecipeRevision, RecipeRevisionId, RecipeScope, RecipeTitle, RecipeWithContent, RevisionOrigin,
+    RevisionVerification,
 };
 use cookbook_domain::recipe::ports::{
-    AddFavoriteError, CategorySelection, DeleteRecipeRecordError, GetFavoriteError, GetRecipeError,
+    AddCookedEventError, AddFavoriteError, CategorySelection, DeleteCookedEventError,
+    DeleteRecipeRecordError, GetFavoriteError, GetRecipeError, ListCookedEventsError,
     ListRecipeRevisionsError, ListRecipesError, RecipeRepository, RecipeSearchCriteria, RecipeSort,
     RemoveFavoriteError, SaveRecipeError, SearchRecipesError, SortDirection,
+    UpdateCookedEventError,
 };
 use cookbook_domain::user::models::UserId;
 use sqlx::sqlite::{Sqlite, SqlitePool, SqliteRow};
@@ -399,6 +404,182 @@ impl RecipeRepository for SqliteRecipeRepository {
 
         Ok(exists)
     }
+
+    async fn add_cooked_event(&self, event: RecipeCookedEvent) -> Result<(), AddCookedEventError> {
+        let recipe_id = event
+            .recipe_id()
+            .ok_or_else(|| AddCookedEventError::Storage(anyhow!("cooked event has no recipe")))?;
+        let created_at_ms =
+            time::to_millis(event.created_at()).map_err(AddCookedEventError::Storage)?;
+
+        sqlx::query(
+            "INSERT INTO recipe_cooked_events (
+                id, recipe_id, user_id, recipe_revision_id, recipe_title,
+                cooked_on, note, created_at_ms
+             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(event.id().as_str())
+        .bind(recipe_id.as_str())
+        .bind(event.user_id().as_str())
+        .bind(event.snapshot().revision_id().as_str())
+        .bind(event.snapshot().title().as_str())
+        .bind(format_cooked_on(event.cooked_on()))
+        .bind(event.note().as_str())
+        .bind(created_at_ms)
+        .execute(&self.pool)
+        .await
+        .map_err(|error| {
+            let is_foreign_key = error
+                .as_database_error()
+                .is_some_and(|error| error.is_foreign_key_violation());
+
+            if is_foreign_key {
+                AddCookedEventError::RecipeNotFound
+            } else {
+                AddCookedEventError::Storage(error.into())
+            }
+        })?;
+
+        Ok(())
+    }
+
+    async fn update_cooked_event(
+        &self,
+        id: RecipeCookedEventId,
+        user_id: UserId,
+        cooked_on: NaiveDate,
+        note: CookedRecipeNote,
+    ) -> Result<(), UpdateCookedEventError> {
+        let result = sqlx::query(
+            "UPDATE recipe_cooked_events
+             SET cooked_on = ?, note = ?
+             WHERE id = ? AND user_id = ?",
+        )
+        .bind(format_cooked_on(cooked_on))
+        .bind(note.as_str())
+        .bind(id.as_str())
+        .bind(user_id.as_str())
+        .execute(&self.pool)
+        .await
+        .map_err(|error| UpdateCookedEventError::Storage(error.into()))?;
+
+        if result.rows_affected() == 0 {
+            return Err(UpdateCookedEventError::NotFound);
+        }
+
+        Ok(())
+    }
+
+    async fn delete_cooked_event(
+        &self,
+        id: RecipeCookedEventId,
+        user_id: UserId,
+    ) -> Result<(), DeleteCookedEventError> {
+        let result = sqlx::query("DELETE FROM recipe_cooked_events WHERE id = ? AND user_id = ?")
+            .bind(id.as_str())
+            .bind(user_id.as_str())
+            .execute(&self.pool)
+            .await
+            .map_err(|error| DeleteCookedEventError::Storage(error.into()))?;
+
+        if result.rows_affected() == 0 {
+            return Err(DeleteCookedEventError::NotFound);
+        }
+
+        Ok(())
+    }
+
+    async fn list_recipe_cooked_events(
+        &self,
+        recipe_id: RecipeId,
+        user_id: UserId,
+    ) -> Result<Vec<RecipeCookedEvent>, ListCookedEventsError> {
+        let rows = sqlx::query(
+            "SELECT id, recipe_id, user_id, recipe_revision_id, recipe_title,
+                    cooked_on, note, created_at_ms
+             FROM recipe_cooked_events
+             WHERE recipe_id = ? AND user_id = ?
+             ORDER BY cooked_on DESC, created_at_ms DESC, id DESC",
+        )
+        .bind(recipe_id.as_str())
+        .bind(user_id.as_str())
+        .fetch_all(&self.pool)
+        .await
+        .map_err(list_cooked_storage)?;
+
+        rows.iter()
+            .map(decode_cooked_event)
+            .collect::<anyhow::Result<Vec<_>>>()
+            .map_err(list_cooked_storage)
+    }
+
+    async fn list_user_cooked_events(
+        &self,
+        user_id: UserId,
+        offset: usize,
+        limit: usize,
+    ) -> Result<Vec<RecipeCookedEventEntry>, ListCookedEventsError> {
+        let rows = sqlx::query(
+            "SELECT e.id, e.recipe_id, e.user_id, e.recipe_revision_id, e.recipe_title,
+                    e.cooked_on, e.note, e.created_at_ms,
+                    CASE
+                        WHEN r.id IS NOT NULL
+                             AND (r.scope <> 'private' OR r.author_id = e.user_id)
+                        THEN rev.title
+                        ELSE e.recipe_title
+                    END AS display_title,
+                    CASE
+                        WHEN r.id IS NOT NULL
+                             AND (r.scope <> 'private' OR r.author_id = e.user_id)
+                        THEN r.id
+                        ELSE NULL
+                    END AS visible_recipe_id,
+                    CASE
+                        WHEN r.id IS NOT NULL
+                             AND (r.scope <> 'private' OR r.author_id = e.user_id)
+                             AND EXISTS (
+                                 SELECT 1 FROM recipe_revisions visible_rev
+                                 WHERE visible_rev.recipe_id = r.id
+                                   AND visible_rev.id = e.recipe_revision_id
+                             )
+                        THEN e.recipe_revision_id
+                        ELSE NULL
+                    END AS visible_revision_id
+             FROM recipe_cooked_events e
+             LEFT JOIN recipes r ON r.id = e.recipe_id
+             LEFT JOIN recipe_revisions rev ON rev.seq = (
+                 SELECT MAX(seq) FROM recipe_revisions WHERE recipe_id = r.id
+             )
+             WHERE e.user_id = ?
+             ORDER BY e.cooked_on DESC, e.created_at_ms DESC, e.id DESC
+             LIMIT ? OFFSET ?",
+        )
+        .bind(user_id.as_str())
+        .bind(i64::try_from(limit).unwrap_or(i64::MAX))
+        .bind(i64::try_from(offset).unwrap_or(i64::MAX))
+        .fetch_all(&self.pool)
+        .await
+        .map_err(list_cooked_storage)?;
+
+        rows.iter()
+            .map(decode_cooked_event_entry)
+            .collect::<anyhow::Result<Vec<_>>>()
+            .map_err(list_cooked_storage)
+    }
+
+    async fn count_user_cooked_events(
+        &self,
+        user_id: UserId,
+    ) -> Result<usize, ListCookedEventsError> {
+        let count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM recipe_cooked_events WHERE user_id = ?")
+                .bind(user_id.as_str())
+                .fetch_one(&self.pool)
+                .await
+                .map_err(list_cooked_storage)?;
+
+        usize::try_from(count).map_err(|error| ListCookedEventsError::Storage(error.into()))
+    }
 }
 
 fn decode_current(row: &SqliteRow) -> anyhow::Result<RecipeWithContent> {
@@ -419,6 +600,64 @@ fn decode_for_viewer(row: &SqliteRow) -> anyhow::Result<RecipeForViewer> {
     let is_favorite: bool = row.try_get("is_favorite")?;
 
     Ok(RecipeForViewer::new(recipe, is_favorite))
+}
+
+fn decode_cooked_event(row: &SqliteRow) -> anyhow::Result<RecipeCookedEvent> {
+    let id: String = row.try_get("id")?;
+    let recipe_id: Option<String> = row.try_get("recipe_id")?;
+    let user_id: String = row.try_get("user_id")?;
+    let recipe_revision_id: String = row.try_get("recipe_revision_id")?;
+    let recipe_title: String = row.try_get("recipe_title")?;
+    let cooked_on: String = row.try_get("cooked_on")?;
+    let note: String = row.try_get("note")?;
+    let created_at_ms: i64 = row.try_get("created_at_ms")?;
+
+    let cooked_on = parse_cooked_on(&cooked_on)?;
+    let created_at = time::from_millis(created_at_ms)?;
+    let note = CookedRecipeNote::try_new(note).map_err(|error| anyhow!(error))?;
+
+    Ok(RecipeCookedEvent::new(
+        RecipeCookedEventId::new(id),
+        recipe_id.map(RecipeId::new),
+        UserId::new(user_id),
+        CookedRecipeSnapshot::new(
+            RecipeRevisionId::new(recipe_revision_id),
+            RecipeTitle::new(recipe_title),
+        ),
+        cooked_on,
+        note,
+        created_at,
+    ))
+}
+
+fn decode_cooked_event_entry(row: &SqliteRow) -> anyhow::Result<RecipeCookedEventEntry> {
+    let event = decode_cooked_event(row)?;
+    let display_title: String = row.try_get("display_title")?;
+    let visible_recipe_id: Option<String> = row.try_get("visible_recipe_id")?;
+    let visible_revision_id: Option<String> = row.try_get("visible_revision_id")?;
+
+    let recipe_link = match (visible_recipe_id, visible_revision_id) {
+        (Some(recipe_id), Some(revision_id)) => Some(CookedRecipeLink::new(
+            RecipeId::new(recipe_id),
+            RecipeRevisionId::new(revision_id),
+        )),
+        _ => None,
+    };
+
+    Ok(RecipeCookedEventEntry::new(
+        event,
+        RecipeTitle::new(display_title),
+        recipe_link,
+    ))
+}
+
+fn format_cooked_on(date: NaiveDate) -> String {
+    date.format("%Y-%m-%d").to_string()
+}
+
+fn parse_cooked_on(value: &str) -> anyhow::Result<NaiveDate> {
+    NaiveDate::parse_from_str(value, "%Y-%m-%d")
+        .with_context(|| format!("failed to parse cooked event date `{value}`"))
 }
 
 fn decode_revision(row: &SqliteRow) -> anyhow::Result<RecipeRevision> {
@@ -470,6 +709,10 @@ fn revisions_storage(error: impl Into<anyhow::Error>) -> ListRecipeRevisionsErro
 
 fn search_storage(error: impl Into<anyhow::Error>) -> SearchRecipesError {
     SearchRecipesError::Storage(error.into())
+}
+
+fn list_cooked_storage(error: impl Into<anyhow::Error>) -> ListCookedEventsError {
+    ListCookedEventsError::Storage(error.into())
 }
 
 fn sort_direction(direction: SortDirection) -> &'static str {
@@ -1509,5 +1752,354 @@ mod tests {
             .unwrap();
 
         assert_eq!(count, 0);
+    }
+    fn cooked_event(
+        id: &str,
+        recipe: &Recipe,
+        user: &UserId,
+        title: &str,
+        cooked_on: NaiveDate,
+        note: &str,
+    ) -> RecipeCookedEvent {
+        RecipeCookedEvent::new(
+            RecipeCookedEventId::new(id.to_string()),
+            Some(recipe.id().clone()),
+            user.clone(),
+            CookedRecipeSnapshot::new(
+                RecipeRevisionId::new("revision-1".to_string()),
+                RecipeTitle::new(title.to_string()),
+            ),
+            cooked_on,
+            CookedRecipeNote::try_new(note).unwrap(),
+            SystemTime::UNIX_EPOCH,
+        )
+    }
+
+    async fn save_recipe(repository: &SqliteRecipeRepository, recipe: &Recipe, title: &str) {
+        save(
+            repository,
+            recipe.clone(),
+            revision("revision-1", recipe, title, SystemTime::UNIX_EPOCH),
+        )
+        .await;
+    }
+
+    async fn cooked_rows(repository: &SqliteRecipeRepository) -> i64 {
+        sqlx::query_scalar("SELECT COUNT(*) FROM recipe_cooked_events")
+            .fetch_one(repository.pool())
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn saves_lists_updates_and_deletes_cooked_events() {
+        let repository = repository().await;
+        insert_user(&repository, "user-1").await;
+        let recipe = recipe("soup");
+        save_recipe(&repository, &recipe, "Soup").await;
+        let user = UserId::new("user-1".to_string());
+        let first = cooked_event(
+            "event-1",
+            &recipe,
+            &user,
+            "Soup",
+            NaiveDate::from_ymd_opt(2026, 11, 18).unwrap(),
+            "Good",
+        );
+        let second = cooked_event(
+            "event-2",
+            &recipe,
+            &user,
+            "Soup",
+            NaiveDate::from_ymd_opt(2026, 11, 20).unwrap(),
+            "",
+        );
+
+        repository.add_cooked_event(first.clone()).await.unwrap();
+        repository.add_cooked_event(second).await.unwrap();
+
+        let events = repository
+            .list_recipe_cooked_events(recipe.id().clone(), user.clone())
+            .await
+            .unwrap();
+        let ids: Vec<_> = events.iter().map(|event| event.id().as_str()).collect();
+        assert_eq!(ids, ["event-2", "event-1"]);
+        assert_eq!(events[1].note().as_str(), "Good");
+        assert_eq!(events[1].snapshot().revision_id().as_str(), "revision-1");
+        assert_eq!(events[1].snapshot().title().as_str(), "Soup");
+
+        repository
+            .update_cooked_event(
+                first.id().clone(),
+                user.clone(),
+                NaiveDate::from_ymd_opt(2026, 11, 19).unwrap(),
+                CookedRecipeNote::try_new("Better").unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let events = repository
+            .list_recipe_cooked_events(recipe.id().clone(), user.clone())
+            .await
+            .unwrap();
+        assert_eq!(
+            events[1].cooked_on(),
+            NaiveDate::from_ymd_opt(2026, 11, 19).unwrap()
+        );
+        assert_eq!(events[1].note().as_str(), "Better");
+
+        repository
+            .delete_cooked_event(first.id().clone(), user.clone())
+            .await
+            .unwrap();
+        assert_eq!(
+            repository
+                .list_recipe_cooked_events(recipe.id().clone(), user.clone())
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
+        assert!(matches!(
+            repository
+                .delete_cooked_event(first.id().clone(), user)
+                .await,
+            Err(DeleteCookedEventError::NotFound)
+        ));
+    }
+
+    #[tokio::test]
+    async fn cooked_events_are_isolated_per_user() {
+        let repository = repository().await;
+        insert_user(&repository, "user-1").await;
+        insert_user(&repository, "user-2").await;
+        let recipe = recipe("soup");
+        save_recipe(&repository, &recipe, "Soup").await;
+
+        repository
+            .add_cooked_event(cooked_event(
+                "event-1",
+                &recipe,
+                &UserId::new("user-1".to_string()),
+                "Soup",
+                NaiveDate::from_ymd_opt(2026, 11, 20).unwrap(),
+                "",
+            ))
+            .await
+            .unwrap();
+
+        let other = repository
+            .list_recipe_cooked_events(recipe.id().clone(), UserId::new("user-2".to_string()))
+            .await
+            .unwrap();
+        assert!(other.is_empty());
+        assert!(matches!(
+            repository
+                .update_cooked_event(
+                    RecipeCookedEventId::new("event-1".to_string()),
+                    UserId::new("user-2".to_string()),
+                    NaiveDate::from_ymd_opt(2026, 11, 21).unwrap(),
+                    CookedRecipeNote::try_new("").unwrap(),
+                )
+                .await,
+            Err(UpdateCookedEventError::NotFound)
+        ));
+    }
+
+    #[tokio::test]
+    async fn deleting_a_recipe_keeps_cooked_events_with_their_snapshot() {
+        let repository = repository().await;
+        insert_user(&repository, "user-1").await;
+        let recipe = recipe("soup");
+        save_recipe(&repository, &recipe, "Soup").await;
+        let user = UserId::new("user-1".to_string());
+
+        repository
+            .add_cooked_event(cooked_event(
+                "event-1",
+                &recipe,
+                &user,
+                "Soup",
+                NaiveDate::from_ymd_opt(2026, 11, 20).unwrap(),
+                "Cozy",
+            ))
+            .await
+            .unwrap();
+
+        repository.delete_recipe(recipe.id().clone()).await.unwrap();
+
+        assert_eq!(cooked_rows(&repository).await, 1);
+        let recipe_id: Option<String> =
+            sqlx::query_scalar("SELECT recipe_id FROM recipe_cooked_events")
+                .fetch_one(repository.pool())
+                .await
+                .unwrap();
+        assert!(recipe_id.is_none());
+
+        let entries = repository
+            .list_user_cooked_events(user.clone(), 0, 20)
+            .await
+            .unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].display_title().as_str(), "Soup");
+        assert!(entries[0].recipe_link().is_none());
+        assert_eq!(entries[0].event().note().as_str(), "Cozy");
+
+        repository
+            .update_cooked_event(
+                RecipeCookedEventId::new("event-1".to_string()),
+                user.clone(),
+                NaiveDate::from_ymd_opt(2026, 11, 21).unwrap(),
+                CookedRecipeNote::try_new("Still good").unwrap(),
+            )
+            .await
+            .unwrap();
+        repository
+            .delete_cooked_event(RecipeCookedEventId::new("event-1".to_string()), user)
+            .await
+            .unwrap();
+        assert_eq!(cooked_rows(&repository).await, 0);
+    }
+
+    #[tokio::test]
+    async fn deleting_a_user_removes_their_cooked_events() {
+        let repository = repository().await;
+        insert_user(&repository, "user-1").await;
+        let recipe = recipe("soup");
+        save_recipe(&repository, &recipe, "Soup").await;
+
+        repository
+            .add_cooked_event(cooked_event(
+                "event-1",
+                &recipe,
+                &UserId::new("user-1".to_string()),
+                "Soup",
+                NaiveDate::from_ymd_opt(2026, 11, 20).unwrap(),
+                "",
+            ))
+            .await
+            .unwrap();
+
+        sqlx::query("DELETE FROM users WHERE id = 'user-1'")
+            .execute(repository.pool())
+            .await
+            .unwrap();
+
+        assert_eq!(cooked_rows(&repository).await, 0);
+    }
+
+    #[tokio::test]
+    async fn global_log_prefers_the_current_visible_recipe_title() {
+        let repository = repository().await;
+        insert_user(&repository, "user-1").await;
+        let recipe = recipe("soup");
+        save_recipe(&repository, &recipe, "Soup").await;
+        let user = UserId::new("user-1".to_string());
+
+        repository
+            .add_cooked_event(cooked_event(
+                "event-1",
+                &recipe,
+                &user,
+                "Old Name",
+                NaiveDate::from_ymd_opt(2026, 11, 20).unwrap(),
+                "",
+            ))
+            .await
+            .unwrap();
+
+        save(
+            &repository,
+            recipe.clone(),
+            revision("revision-2", &recipe, "New Name", SystemTime::UNIX_EPOCH),
+        )
+        .await;
+
+        let entries = repository
+            .list_user_cooked_events(user.clone(), 0, 20)
+            .await
+            .unwrap();
+        assert_eq!(entries[0].display_title().as_str(), "New Name");
+        assert_eq!(
+            entries[0].recipe_link().map(|link| link.recipe_id()),
+            Some(recipe.id())
+        );
+        assert_eq!(
+            entries[0]
+                .recipe_link()
+                .map(|link| link.revision_id().as_str()),
+            Some("revision-1")
+        );
+
+        let count = repository.count_user_cooked_events(user).await.unwrap();
+        assert_eq!(count, 1);
+    }
+
+    #[tokio::test]
+    async fn global_log_omits_the_link_when_the_cooked_revision_is_missing() {
+        let repository = repository().await;
+        insert_user(&repository, "user-1").await;
+        let recipe = recipe("soup");
+        save_recipe(&repository, &recipe, "Soup").await;
+        let user = UserId::new("user-1".to_string());
+
+        repository
+            .add_cooked_event(cooked_event(
+                "event-1",
+                &recipe,
+                &user,
+                "Soup",
+                NaiveDate::from_ymd_opt(2026, 11, 20).unwrap(),
+                "",
+            ))
+            .await
+            .unwrap();
+
+        sqlx::query(
+            "UPDATE recipe_cooked_events SET recipe_revision_id = 'missing' WHERE id = 'event-1'",
+        )
+        .execute(repository.pool())
+        .await
+        .unwrap();
+
+        let entries = repository
+            .list_user_cooked_events(user, 0, 20)
+            .await
+            .unwrap();
+        assert_eq!(entries[0].display_title().as_str(), "Soup");
+        assert!(entries[0].recipe_link().is_none());
+    }
+
+    #[tokio::test]
+    async fn global_log_falls_back_to_the_snapshot_for_a_hidden_recipe() {
+        let repository = repository().await;
+        insert_user(&repository, "user-1").await;
+        insert_user(&repository, "user-2").await;
+        let recipe = Recipe::with_scope(
+            RecipeId::new("soup".to_string()),
+            UserId::new("user-2".to_string()),
+            RecipeScope::Private,
+        );
+        save_recipe(&repository, &recipe, "Secret Soup").await;
+        let user = UserId::new("user-1".to_string());
+
+        repository
+            .add_cooked_event(cooked_event(
+                "event-1",
+                &recipe,
+                &user,
+                "Secret Soup",
+                NaiveDate::from_ymd_opt(2026, 11, 20).unwrap(),
+                "",
+            ))
+            .await
+            .unwrap();
+
+        let entries = repository
+            .list_user_cooked_events(user, 0, 20)
+            .await
+            .unwrap();
+        assert_eq!(entries[0].display_title().as_str(), "Secret Soup");
+        assert!(entries[0].recipe_link().is_none());
     }
 }

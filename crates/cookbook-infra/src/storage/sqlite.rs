@@ -159,7 +159,7 @@ mod tests {
                 .await
                 .unwrap();
 
-            assert_eq!(applied, 3);
+            assert_eq!(applied, 4);
 
             let tables: Vec<String> = sqlx::query_scalar(
                 "SELECT name FROM sqlite_master
@@ -178,6 +178,7 @@ mod tests {
                 "recipe_images",
                 "recipe_source_documents",
                 "recipe_favorites",
+                "recipe_cooked_events",
                 "_sqlx_migrations",
             ] {
                 assert!(
@@ -193,7 +194,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(applied, 3);
+        assert_eq!(applied, 4);
     }
 
     #[tokio::test]

@@ -5,21 +5,27 @@ use uuid::Uuid;
 
 use crate::clock::Clock;
 use crate::recipe::models::{
-    NewRecipeImage, NewRecipeSourceDocument, Recipe, RecipeContent, RecipeForViewer, RecipeId,
-    RecipeImage, RecipeImageId, RecipeImageMetadata, RecipeRevision, RecipeRevisionId,
-    RecipeSourceDocument, RecipeSourceDocumentId, RecipeSourceDocumentSummary, RecipeStructureKind,
-    RecipeWithContent, RevisionOrigin, RevisionVerification,
+    CookedRecipeNote, CookedRecipeSnapshot, NewRecipeImage, NewRecipeSourceDocument, Recipe,
+    RecipeContent, RecipeCookedEvent, RecipeCookedEventId, RecipeForViewer, RecipeId, RecipeImage,
+    RecipeImageId, RecipeImageMetadata, RecipeRevision, RecipeRevisionId, RecipeSourceDocument,
+    RecipeSourceDocumentId, RecipeSourceDocumentSummary, RecipeStructureKind, RecipeWithContent,
+    RevisionOrigin, RevisionVerification,
 };
 use crate::recipe::ports::{
+    AddCookedEventError, AddRecipeCookedEventError, AddRecipeCookedEventRequest,
     AddRecipeSourceDocumentsError, AddRecipeSourceDocumentsRequest, AddSourceDocumentsError,
-    ConvertRecipeStructureRequest, CreateRecipeError, CreateRecipeRequest, DeleteRecipeError,
-    DeleteRecipeRecordError, DeleteRecipeSourceDocumentError, DeleteSourceDocumentError,
-    GetRecipeError, GetRecipeForViewerError, GetRecipeHistoryError, GetRecipeImageError,
-    GetRecipeImagesError, GetRecipeSourceDocumentError, GetRecipeSourceDocumentsError,
-    GetRecipesError, GetSourceDocumentError, ListRecipeImagesError, ListSourceDocumentsError,
-    PurgeOrphanedRecipesError, RecipeDocumentRepository, RecipeRepository, RecipeService,
-    RestoreRecipeRevisionError, RestoreRecipeRevisionRequest, SaveRecipeError, SearchRecipesError,
-    SearchRecipesQuery, SearchRecipesResult, SetRecipeFavoriteError, UpdateRecipeError,
+    ConvertRecipeStructureRequest, CreateRecipeError, CreateRecipeRequest, DeleteCookedEventError,
+    DeleteRecipeCookedEventError, DeleteRecipeError, DeleteRecipeRecordError,
+    DeleteRecipeSourceDocumentError, DeleteSourceDocumentError, GetRecipeError,
+    GetRecipeForViewerError, GetRecipeHistoryError, GetRecipeImageError, GetRecipeImagesError,
+    GetRecipeSourceDocumentError, GetRecipeSourceDocumentsError, GetRecipesError,
+    GetSourceDocumentError, ListCookedEventsError, ListRecipeCookedEventsError,
+    ListRecipeImagesError, ListSourceDocumentsError, ListUserCookedEventsError,
+    ListUserCookedEventsQuery, ListUserCookedEventsResult, PurgeOrphanedRecipesError,
+    RecipeDocumentRepository, RecipeRepository, RecipeService, RestoreRecipeRevisionError,
+    RestoreRecipeRevisionRequest, SaveRecipeError, SearchRecipesError, SearchRecipesQuery,
+    SearchRecipesResult, SetRecipeFavoriteError, UpdateCookedEventError,
+    UpdateRecipeCookedEventError, UpdateRecipeCookedEventRequest, UpdateRecipeError,
     UpdateRecipeRequest, UpdateRecipeScopeError, UpdateRecipeScopeRequest,
 };
 use crate::user::models::UserId;
@@ -565,6 +571,124 @@ where
         }
     }
 
+    async fn add_recipe_cooked_event(
+        &self,
+        request: AddRecipeCookedEventRequest,
+    ) -> Result<RecipeCookedEvent, AddRecipeCookedEventError> {
+        let current = self
+            .recipe_repository
+            .get_recipe(request.recipe_id.clone())
+            .await
+            .map_err(|error| AddRecipeCookedEventError::Storage(error.into()))?
+            .filter(|recipe| recipe.can_view(&request.user_id))
+            .ok_or(AddRecipeCookedEventError::NotFound)?;
+
+        let note = CookedRecipeNote::try_new(request.note)
+            .map_err(|_| AddRecipeCookedEventError::InvalidNote)?;
+        let event = RecipeCookedEvent::new(
+            RecipeCookedEventId::new(Uuid::now_v7().to_string()),
+            Some(current.id().clone()),
+            request.user_id,
+            CookedRecipeSnapshot::new(current.revision().id().clone(), current.title().clone()),
+            request.cooked_on,
+            note,
+            self.clock.now(),
+        );
+
+        self.recipe_repository
+            .add_cooked_event(event.clone())
+            .await
+            .map_err(|error| match error {
+                AddCookedEventError::RecipeNotFound => AddRecipeCookedEventError::NotFound,
+                AddCookedEventError::Storage(reason) => AddRecipeCookedEventError::Storage(reason),
+            })?;
+
+        Ok(event)
+    }
+
+    async fn update_recipe_cooked_event(
+        &self,
+        request: UpdateRecipeCookedEventRequest,
+    ) -> Result<(), UpdateRecipeCookedEventError> {
+        let note = CookedRecipeNote::try_new(request.note)
+            .map_err(|_| UpdateRecipeCookedEventError::InvalidNote)?;
+
+        self.recipe_repository
+            .update_cooked_event(request.id, request.user_id, request.cooked_on, note)
+            .await
+            .map_err(|error| match error {
+                UpdateCookedEventError::NotFound => UpdateRecipeCookedEventError::NotFound,
+                UpdateCookedEventError::Storage(reason) => {
+                    UpdateRecipeCookedEventError::Storage(reason)
+                }
+            })
+    }
+
+    async fn delete_recipe_cooked_event(
+        &self,
+        id: RecipeCookedEventId,
+        actor: UserId,
+    ) -> Result<(), DeleteRecipeCookedEventError> {
+        self.recipe_repository
+            .delete_cooked_event(id, actor)
+            .await
+            .map_err(|error| match error {
+                DeleteCookedEventError::NotFound => DeleteRecipeCookedEventError::NotFound,
+                DeleteCookedEventError::Storage(reason) => {
+                    DeleteRecipeCookedEventError::Storage(reason)
+                }
+            })
+    }
+
+    async fn list_recipe_cooked_events(
+        &self,
+        recipe_id: RecipeId,
+        viewer: UserId,
+    ) -> Result<Vec<RecipeCookedEvent>, ListRecipeCookedEventsError> {
+        self.recipe_repository
+            .get_recipe(recipe_id.clone())
+            .await
+            .map_err(|error| ListRecipeCookedEventsError::Storage(error.into()))?
+            .filter(|recipe| recipe.can_view(&viewer))
+            .ok_or(ListRecipeCookedEventsError::NotFound)?;
+
+        self.recipe_repository
+            .list_recipe_cooked_events(recipe_id, viewer)
+            .await
+            .map_err(|error| match error {
+                ListCookedEventsError::Storage(reason) => {
+                    ListRecipeCookedEventsError::Storage(reason)
+                }
+            })
+    }
+
+    async fn list_user_cooked_events(
+        &self,
+        query: ListUserCookedEventsQuery,
+    ) -> Result<ListUserCookedEventsResult, ListUserCookedEventsError> {
+        let total = self
+            .recipe_repository
+            .count_user_cooked_events(query.user_id.clone())
+            .await
+            .map_err(|error| match error {
+                ListCookedEventsError::Storage(reason) => {
+                    ListUserCookedEventsError::Storage(reason)
+                }
+            })?;
+
+        let events = self
+            .recipe_repository
+            .list_user_cooked_events(query.user_id, query.offset, query.limit)
+            .await
+            .map_err(|error| match error {
+                ListCookedEventsError::Storage(reason) => {
+                    ListUserCookedEventsError::Storage(reason)
+                }
+            })?;
+
+        Ok(ListUserCookedEventsResult { events, total })
+    }
+
     async fn get_recipe_history(
         &self,
         id: RecipeId,
@@ -817,12 +941,14 @@ mod tests {
     use std::time::{Duration, SystemTime};
 
     use anyhow::anyhow;
+    use chrono::NaiveDate;
 
     use super::*;
     use crate::recipe::models::{
-        RecipeBody, RecipeCategory, RecipeContent, RecipeDurations, RecipeImageId,
-        RecipeImageMetadata, RecipePart, RecipePartId, RecipePartTitle, RecipeRevision,
-        RecipeScope, RecipeStep, RecipeStepId, RecipeTitle, RevisionMessage,
+        CookedRecipeLink, CookedRecipeSnapshot, RecipeBody, RecipeCategory, RecipeContent,
+        RecipeCookedEventEntry, RecipeDurations, RecipeImageId, RecipeImageMetadata, RecipePart,
+        RecipePartId, RecipePartTitle, RecipeRevision, RecipeScope, RecipeStep, RecipeStepId,
+        RecipeTitle, RevisionMessage,
     };
     use crate::recipe::ports::{
         AddRecipeImagesError, CategorySelection, DeleteRecipeAssetsError, DeleteRecipeRecordError,
@@ -2960,5 +3086,276 @@ mod tests {
             .unwrap();
 
         assert!(recipe.is_none());
+    }
+    fn cooked_event(id: &str) -> RecipeCookedEvent {
+        RecipeCookedEvent::new(
+            RecipeCookedEventId::new(id.to_string()),
+            Some(recipe_id()),
+            user_id(),
+            CookedRecipeSnapshot::new(
+                RecipeRevisionId::new("revision-1".to_string()),
+                RecipeTitle::new("Soup".to_string()),
+            ),
+            NaiveDate::from_ymd_opt(2026, 11, 20).unwrap(),
+            CookedRecipeNote::try_new("Great").unwrap(),
+            FixedClock::new().0,
+        )
+    }
+
+    #[tokio::test]
+    async fn add_cooked_event_snapshots_the_current_revision_and_title() {
+        let current = current_recipe("soup", "Soup");
+        let expected_id = current.id().clone();
+        let mut repository = MockRecipeRepository::new();
+        expect_visible_recipe(&mut repository, current.clone());
+        repository
+            .expect_add_cooked_event()
+            .times(1)
+            .withf(move |event: &RecipeCookedEvent| {
+                event.recipe_id() == Some(&expected_id)
+                    && event.user_id() == &user_id()
+                    && event.snapshot().revision_id().as_str() == "revision-1"
+                    && event.snapshot().title().as_str() == "Soup"
+                    && event.cooked_on() == NaiveDate::from_ymd_opt(2026, 11, 20).unwrap()
+                    && event.note().as_str() == "Great"
+                    && event.created_at() == FixedClock::new().0
+            })
+            .returning(|_| Ok(()));
+        let documents = MockRecipeDocumentRepository::new();
+
+        let service = RecipeServiceImpl::new(repository, documents, FixedClock::new());
+        let event = service
+            .add_recipe_cooked_event(AddRecipeCookedEventRequest {
+                recipe_id: current.id().clone(),
+                user_id: user_id(),
+                cooked_on: NaiveDate::from_ymd_opt(2026, 11, 20).unwrap(),
+                note: "  Great  ".to_string(),
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(event.snapshot().title().as_str(), "Soup");
+        assert_eq!(event.note().as_str(), "Great");
+    }
+
+    #[tokio::test]
+    async fn add_cooked_event_hides_a_recipe_from_a_non_viewer() {
+        let current = current_recipe_with_scope("soup", "Soup", "author-1", RecipeScope::Private);
+        let mut repository = MockRecipeRepository::new();
+        expect_visible_recipe(&mut repository, current);
+        // No add expectation: a hidden recipe must not record an event.
+        let documents = MockRecipeDocumentRepository::new();
+
+        let service = RecipeServiceImpl::new(repository, documents, FixedClock::new());
+        let result = service
+            .add_recipe_cooked_event(AddRecipeCookedEventRequest {
+                recipe_id: recipe_id(),
+                user_id: UserId::new("viewer".to_string()),
+                cooked_on: NaiveDate::from_ymd_opt(2026, 11, 20).unwrap(),
+                note: String::new(),
+            })
+            .await;
+
+        assert!(matches!(result, Err(AddRecipeCookedEventError::NotFound)));
+    }
+
+    #[tokio::test]
+    async fn add_cooked_event_rejects_a_note_that_is_too_long() {
+        let mut repository = MockRecipeRepository::new();
+        expect_visible_recipe(&mut repository, current_recipe("soup", "Soup"));
+        // No add expectation: validation happens before persistence.
+        let documents = MockRecipeDocumentRepository::new();
+
+        let service = RecipeServiceImpl::new(repository, documents, FixedClock::new());
+        let result = service
+            .add_recipe_cooked_event(AddRecipeCookedEventRequest {
+                recipe_id: recipe_id(),
+                user_id: user_id(),
+                cooked_on: NaiveDate::from_ymd_opt(2026, 11, 20).unwrap(),
+                note: "x".repeat(crate::recipe::models::MAX_COOKED_RECIPE_NOTE_CHARS + 1),
+            })
+            .await;
+
+        assert!(matches!(
+            result,
+            Err(AddRecipeCookedEventError::InvalidNote)
+        ));
+    }
+
+    #[tokio::test]
+    async fn update_cooked_event_forwards_the_new_values() {
+        let mut repository = MockRecipeRepository::new();
+        repository
+            .expect_update_cooked_event()
+            .times(1)
+            .withf(
+                |id: &RecipeCookedEventId,
+                 user: &UserId,
+                 cooked_on: &NaiveDate,
+                 note: &CookedRecipeNote| {
+                    id.as_str() == "event-1"
+                        && user == &user_id()
+                        && *cooked_on == NaiveDate::from_ymd_opt(2026, 11, 21).unwrap()
+                        && note.as_str() == "Adjusted"
+                },
+            )
+            .returning(|_, _, _, _| Ok(()));
+        let documents = MockRecipeDocumentRepository::new();
+
+        let service = RecipeServiceImpl::new(repository, documents, FixedClock::new());
+        service
+            .update_recipe_cooked_event(UpdateRecipeCookedEventRequest {
+                id: RecipeCookedEventId::new("event-1".to_string()),
+                user_id: user_id(),
+                cooked_on: NaiveDate::from_ymd_opt(2026, 11, 21).unwrap(),
+                note: " Adjusted ".to_string(),
+            })
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn update_cooked_event_maps_missing_and_invalid_values() {
+        let mut repository = MockRecipeRepository::new();
+        repository
+            .expect_update_cooked_event()
+            .times(1)
+            .returning(|_, _, _, _| Err(UpdateCookedEventError::NotFound));
+        let documents = MockRecipeDocumentRepository::new();
+        let service = RecipeServiceImpl::new(repository, documents, FixedClock::new());
+
+        let result = service
+            .update_recipe_cooked_event(UpdateRecipeCookedEventRequest {
+                id: RecipeCookedEventId::new("missing".to_string()),
+                user_id: user_id(),
+                cooked_on: NaiveDate::from_ymd_opt(2026, 11, 20).unwrap(),
+                note: String::new(),
+            })
+            .await;
+
+        assert!(matches!(
+            result,
+            Err(UpdateRecipeCookedEventError::NotFound)
+        ));
+
+        let repository = MockRecipeRepository::new();
+        let documents = MockRecipeDocumentRepository::new();
+        let service = RecipeServiceImpl::new(repository, documents, FixedClock::new());
+        let result = service
+            .update_recipe_cooked_event(UpdateRecipeCookedEventRequest {
+                id: RecipeCookedEventId::new("event-1".to_string()),
+                user_id: user_id(),
+                cooked_on: NaiveDate::from_ymd_opt(2026, 11, 20).unwrap(),
+                note: "x".repeat(crate::recipe::models::MAX_COOKED_RECIPE_NOTE_CHARS + 1),
+            })
+            .await;
+
+        assert!(matches!(
+            result,
+            Err(UpdateRecipeCookedEventError::InvalidNote)
+        ));
+    }
+
+    #[tokio::test]
+    async fn delete_cooked_event_maps_the_repository_result() {
+        let mut repository = MockRecipeRepository::new();
+        repository
+            .expect_delete_cooked_event()
+            .times(1)
+            .withf(|id: &RecipeCookedEventId, user: &UserId| {
+                id.as_str() == "event-1" && user == &user_id()
+            })
+            .returning(|_, _| Err(DeleteCookedEventError::NotFound));
+        let documents = MockRecipeDocumentRepository::new();
+        let service = RecipeServiceImpl::new(repository, documents, FixedClock::new());
+
+        let result = service
+            .delete_recipe_cooked_event(RecipeCookedEventId::new("event-1".to_string()), user_id())
+            .await;
+
+        assert!(matches!(
+            result,
+            Err(DeleteRecipeCookedEventError::NotFound)
+        ));
+    }
+
+    #[tokio::test]
+    async fn list_recipe_cooked_events_checks_visibility() {
+        let current = current_recipe("soup", "Soup");
+        let expected_id = current.id().clone();
+        let mut repository = MockRecipeRepository::new();
+        expect_visible_recipe(&mut repository, current);
+        repository
+            .expect_list_recipe_cooked_events()
+            .times(1)
+            .withf(move |recipe_id: &RecipeId, user: &UserId| {
+                recipe_id == &expected_id && user == &user_id()
+            })
+            .returning(|_, _| Ok(vec![cooked_event("event-1")]));
+        let documents = MockRecipeDocumentRepository::new();
+        let service = RecipeServiceImpl::new(repository, documents, FixedClock::new());
+
+        let events = service
+            .list_recipe_cooked_events(recipe_id(), user_id())
+            .await
+            .unwrap();
+
+        assert_eq!(events.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn list_recipe_cooked_events_hides_a_private_recipe_from_others() {
+        let current = current_recipe_with_scope("soup", "Soup", "author-1", RecipeScope::Private);
+        let mut repository = MockRecipeRepository::new();
+        expect_visible_recipe(&mut repository, current);
+        // No list expectation: a hidden recipe has no readable events.
+        let documents = MockRecipeDocumentRepository::new();
+        let service = RecipeServiceImpl::new(repository, documents, FixedClock::new());
+
+        let result = service
+            .list_recipe_cooked_events(recipe_id(), UserId::new("viewer".to_string()))
+            .await;
+
+        assert!(matches!(result, Err(ListRecipeCookedEventsError::NotFound)));
+    }
+
+    #[tokio::test]
+    async fn list_user_cooked_events_returns_the_total_and_page() {
+        let mut repository = MockRecipeRepository::new();
+        repository
+            .expect_count_user_cooked_events()
+            .times(1)
+            .returning(|_| Ok(3));
+        repository
+            .expect_list_user_cooked_events()
+            .times(1)
+            .withf(|user: &UserId, offset: &usize, limit: &usize| {
+                user == &user_id() && *offset == 20 && *limit == 20
+            })
+            .returning(|_, _, _| {
+                Ok(vec![RecipeCookedEventEntry::new(
+                    cooked_event("event-1"),
+                    RecipeTitle::new("Soup".to_string()),
+                    Some(CookedRecipeLink::new(
+                        recipe_id(),
+                        RecipeRevisionId::new("revision-1".to_string()),
+                    )),
+                )])
+            });
+        let documents = MockRecipeDocumentRepository::new();
+        let service = RecipeServiceImpl::new(repository, documents, FixedClock::new());
+
+        let result = service
+            .list_user_cooked_events(ListUserCookedEventsQuery {
+                user_id: user_id(),
+                offset: 20,
+                limit: 20,
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(result.total, 3);
+        assert_eq!(result.events.len(), 1);
+        assert_eq!(result.events[0].display_title().as_str(), "Soup");
     }
 }

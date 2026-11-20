@@ -2,12 +2,14 @@ use std::fmt;
 use std::future::Future;
 use std::time::SystemTime;
 
+use chrono::NaiveDate;
+
 use crate::recipe::models::{
-    NewRecipeImage, NewRecipeSourceDocument, Recipe, RecipeCategory, RecipeContent,
-    RecipeForViewer, RecipeId, RecipeImage, RecipeImageId, RecipeImageMetadata, RecipeRevision,
-    RecipeRevisionId, RecipeScope, RecipeSourceDocument, RecipeSourceDocumentId,
-    RecipeSourceDocumentSummary, RecipeStructureKind, RecipeWithContent, RevisionMessage,
-    RevisionVerification,
+    CookedRecipeNote, NewRecipeImage, NewRecipeSourceDocument, Recipe, RecipeCategory,
+    RecipeContent, RecipeCookedEvent, RecipeCookedEventEntry, RecipeCookedEventId, RecipeForViewer,
+    RecipeId, RecipeImage, RecipeImageId, RecipeImageMetadata, RecipeRevision, RecipeRevisionId,
+    RecipeScope, RecipeSourceDocument, RecipeSourceDocumentId, RecipeSourceDocumentSummary,
+    RecipeStructureKind, RecipeWithContent, RevisionMessage, RevisionVerification,
 };
 use crate::user::models::UserId;
 
@@ -58,6 +60,35 @@ pub struct RestoreRecipeRevisionRequest {
     pub revision_id: RecipeRevisionId,
     pub editor: UserId,
     pub latest_revision: RecipeRevisionId,
+}
+
+#[derive(Debug, Clone)]
+pub struct AddRecipeCookedEventRequest {
+    pub recipe_id: RecipeId,
+    pub user_id: UserId,
+    pub cooked_on: NaiveDate,
+    pub note: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct UpdateRecipeCookedEventRequest {
+    pub id: RecipeCookedEventId,
+    pub user_id: UserId,
+    pub cooked_on: NaiveDate,
+    pub note: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct ListUserCookedEventsQuery {
+    pub user_id: UserId,
+    pub offset: usize,
+    pub limit: usize,
+}
+
+#[derive(Debug, Clone)]
+pub struct ListUserCookedEventsResult {
+    pub events: Vec<RecipeCookedEventEntry>,
+    pub total: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -206,6 +237,33 @@ pub trait RecipeService: Clone + Send + Sync + 'static {
         favorite: bool,
     ) -> impl Future<Output = Result<(), SetRecipeFavoriteError>> + Send;
 
+    fn add_recipe_cooked_event(
+        &self,
+        request: AddRecipeCookedEventRequest,
+    ) -> impl Future<Output = Result<RecipeCookedEvent, AddRecipeCookedEventError>> + Send;
+
+    fn update_recipe_cooked_event(
+        &self,
+        request: UpdateRecipeCookedEventRequest,
+    ) -> impl Future<Output = Result<(), UpdateRecipeCookedEventError>> + Send;
+
+    fn delete_recipe_cooked_event(
+        &self,
+        id: RecipeCookedEventId,
+        actor: UserId,
+    ) -> impl Future<Output = Result<(), DeleteRecipeCookedEventError>> + Send;
+
+    fn list_recipe_cooked_events(
+        &self,
+        recipe_id: RecipeId,
+        viewer: UserId,
+    ) -> impl Future<Output = Result<Vec<RecipeCookedEvent>, ListRecipeCookedEventsError>> + Send;
+
+    fn list_user_cooked_events(
+        &self,
+        query: ListUserCookedEventsQuery,
+    ) -> impl Future<Output = Result<ListUserCookedEventsResult, ListUserCookedEventsError>> + Send;
+
     fn get_recipe_history(
         &self,
         id: RecipeId,
@@ -315,6 +373,43 @@ pub trait RecipeRepository: Clone + Send + Sync + 'static {
         recipe_id: RecipeId,
         user_id: UserId,
     ) -> impl Future<Output = Result<bool, GetFavoriteError>> + Send;
+
+    fn add_cooked_event(
+        &self,
+        event: RecipeCookedEvent,
+    ) -> impl Future<Output = Result<(), AddCookedEventError>> + Send;
+
+    fn update_cooked_event(
+        &self,
+        id: RecipeCookedEventId,
+        user_id: UserId,
+        cooked_on: NaiveDate,
+        note: CookedRecipeNote,
+    ) -> impl Future<Output = Result<(), UpdateCookedEventError>> + Send;
+
+    fn delete_cooked_event(
+        &self,
+        id: RecipeCookedEventId,
+        user_id: UserId,
+    ) -> impl Future<Output = Result<(), DeleteCookedEventError>> + Send;
+
+    fn list_recipe_cooked_events(
+        &self,
+        recipe_id: RecipeId,
+        user_id: UserId,
+    ) -> impl Future<Output = Result<Vec<RecipeCookedEvent>, ListCookedEventsError>> + Send;
+
+    fn list_user_cooked_events(
+        &self,
+        user_id: UserId,
+        offset: usize,
+        limit: usize,
+    ) -> impl Future<Output = Result<Vec<RecipeCookedEventEntry>, ListCookedEventsError>> + Send;
+
+    fn count_user_cooked_events(
+        &self,
+        user_id: UserId,
+    ) -> impl Future<Output = Result<usize, ListCookedEventsError>> + Send;
 }
 
 /// Outbound (driven) port for recipe documents (images, source) persistence.
@@ -689,6 +784,159 @@ impl fmt::Display for GetFavoriteError {
 impl std::error::Error for GetFavoriteError {}
 
 #[derive(Debug)]
+pub enum AddRecipeCookedEventError {
+    NotFound,
+    InvalidNote,
+    Storage(anyhow::Error),
+}
+
+impl fmt::Display for AddRecipeCookedEventError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NotFound => f.write_str("recipe not found"),
+            Self::InvalidNote => f.write_str("the cooked event note is invalid"),
+            Self::Storage(reason) => write!(f, "failed to add cooked event: {reason}"),
+        }
+    }
+}
+
+impl std::error::Error for AddRecipeCookedEventError {}
+
+#[derive(Debug)]
+pub enum UpdateRecipeCookedEventError {
+    NotFound,
+    InvalidNote,
+    Storage(anyhow::Error),
+}
+
+impl fmt::Display for UpdateRecipeCookedEventError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NotFound => f.write_str("cooked event not found"),
+            Self::InvalidNote => f.write_str("the cooked event note is invalid"),
+            Self::Storage(reason) => write!(f, "failed to update cooked event: {reason}"),
+        }
+    }
+}
+
+impl std::error::Error for UpdateRecipeCookedEventError {}
+
+#[derive(Debug)]
+pub enum DeleteRecipeCookedEventError {
+    NotFound,
+    Storage(anyhow::Error),
+}
+
+impl fmt::Display for DeleteRecipeCookedEventError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NotFound => f.write_str("cooked event not found"),
+            Self::Storage(reason) => write!(f, "failed to delete cooked event: {reason}"),
+        }
+    }
+}
+
+impl std::error::Error for DeleteRecipeCookedEventError {}
+
+#[derive(Debug)]
+pub enum ListRecipeCookedEventsError {
+    NotFound,
+    Storage(anyhow::Error),
+}
+
+impl fmt::Display for ListRecipeCookedEventsError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NotFound => f.write_str("recipe not found"),
+            Self::Storage(reason) => write!(f, "failed to read cooked events: {reason}"),
+        }
+    }
+}
+
+impl std::error::Error for ListRecipeCookedEventsError {}
+
+#[derive(Debug)]
+pub enum ListUserCookedEventsError {
+    Storage(anyhow::Error),
+}
+
+impl fmt::Display for ListUserCookedEventsError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Storage(reason) => write!(f, "failed to read cooked events: {reason}"),
+        }
+    }
+}
+
+impl std::error::Error for ListUserCookedEventsError {}
+
+#[derive(Debug)]
+pub enum AddCookedEventError {
+    RecipeNotFound,
+    Storage(anyhow::Error),
+}
+
+impl fmt::Display for AddCookedEventError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::RecipeNotFound => f.write_str("recipe not found"),
+            Self::Storage(reason) => write!(f, "failed to add cooked event: {reason}"),
+        }
+    }
+}
+
+impl std::error::Error for AddCookedEventError {}
+
+#[derive(Debug)]
+pub enum UpdateCookedEventError {
+    NotFound,
+    Storage(anyhow::Error),
+}
+
+impl fmt::Display for UpdateCookedEventError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NotFound => f.write_str("cooked event not found"),
+            Self::Storage(reason) => write!(f, "failed to update cooked event: {reason}"),
+        }
+    }
+}
+
+impl std::error::Error for UpdateCookedEventError {}
+
+#[derive(Debug)]
+pub enum DeleteCookedEventError {
+    NotFound,
+    Storage(anyhow::Error),
+}
+
+impl fmt::Display for DeleteCookedEventError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NotFound => f.write_str("cooked event not found"),
+            Self::Storage(reason) => write!(f, "failed to delete cooked event: {reason}"),
+        }
+    }
+}
+
+impl std::error::Error for DeleteCookedEventError {}
+
+#[derive(Debug)]
+pub enum ListCookedEventsError {
+    Storage(anyhow::Error),
+}
+
+impl fmt::Display for ListCookedEventsError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Storage(reason) => write!(f, "failed to read cooked events: {reason}"),
+        }
+    }
+}
+
+impl std::error::Error for ListCookedEventsError {}
+
+#[derive(Debug)]
 pub enum ListRecipesError {
     Storage(anyhow::Error),
 }
@@ -995,6 +1243,33 @@ mockall::mock! {
             favorite: bool,
         ) -> Result<(), SetRecipeFavoriteError>;
 
+        async fn add_recipe_cooked_event(
+            &self,
+            request: AddRecipeCookedEventRequest,
+        ) -> Result<RecipeCookedEvent, AddRecipeCookedEventError>;
+
+        async fn update_recipe_cooked_event(
+            &self,
+            request: UpdateRecipeCookedEventRequest,
+        ) -> Result<(), UpdateRecipeCookedEventError>;
+
+        async fn delete_recipe_cooked_event(
+            &self,
+            id: RecipeCookedEventId,
+            actor: UserId,
+        ) -> Result<(), DeleteRecipeCookedEventError>;
+
+        async fn list_recipe_cooked_events(
+            &self,
+            recipe_id: RecipeId,
+            viewer: UserId,
+        ) -> Result<Vec<RecipeCookedEvent>, ListRecipeCookedEventsError>;
+
+        async fn list_user_cooked_events(
+            &self,
+            query: ListUserCookedEventsQuery,
+        ) -> Result<ListUserCookedEventsResult, ListUserCookedEventsError>;
+
         async fn get_recipe_history(
             &self,
             id: RecipeId,
@@ -1106,6 +1381,43 @@ mockall::mock! {
             recipe_id: RecipeId,
             user_id: UserId,
         ) -> Result<bool, GetFavoriteError>;
+
+        async fn add_cooked_event(
+            &self,
+            event: RecipeCookedEvent,
+        ) -> Result<(), AddCookedEventError>;
+
+        async fn update_cooked_event(
+            &self,
+            id: RecipeCookedEventId,
+            user_id: UserId,
+            cooked_on: NaiveDate,
+            note: CookedRecipeNote,
+        ) -> Result<(), UpdateCookedEventError>;
+
+        async fn delete_cooked_event(
+            &self,
+            id: RecipeCookedEventId,
+            user_id: UserId,
+        ) -> Result<(), DeleteCookedEventError>;
+
+        async fn list_recipe_cooked_events(
+            &self,
+            recipe_id: RecipeId,
+            user_id: UserId,
+        ) -> Result<Vec<RecipeCookedEvent>, ListCookedEventsError>;
+
+        async fn list_user_cooked_events(
+            &self,
+            user_id: UserId,
+            offset: usize,
+            limit: usize,
+        ) -> Result<Vec<RecipeCookedEventEntry>, ListCookedEventsError>;
+
+        async fn count_user_cooked_events(
+            &self,
+            user_id: UserId,
+        ) -> Result<usize, ListCookedEventsError>;
 
 
     }
