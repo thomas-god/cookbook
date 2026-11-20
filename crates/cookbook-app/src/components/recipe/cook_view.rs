@@ -11,6 +11,7 @@ use topcoat::{
 
 use crate::{
     app::{
+        cooked::recipe_cook_journal,
         recipe::view::recipe_detail,
         recipes::{ImageId, RecipeId, recipe_image},
     },
@@ -158,6 +159,7 @@ pub async fn cook_recipe_view(
 
     let total_steps = steps.len();
     let recipe_href = href!(recipe_detail, RecipeId(recipe_id)).resolve(cx);
+    let cooked_href = href!(recipe_cook_journal, RecipeId(recipe_id)).resolve(cx);
 
     Ok(view! {
         <div class="fixed inset-0 z-50 flex flex-col bg-background text-foreground">
@@ -477,16 +479,29 @@ pub async fn cook_recipe_view(
                                     (t!(cook_next))
                                     " →"
                                 )
-                                <a
-                                    class=(class!(
-                                        button_variants(ButtonVariant::Primary, ButtonSize::Lg),
-                                        "min-h-16 w-full",
-                                    ))
+                                <div
+                                    class="flex min-h-16 w-full flex-col gap-2 sm:flex-row"
                                     :hidden=$(step_index.get() + 1 != total_steps)
-                                    href=(recipe_href)
                                 >
-                                    (t!(cook_finish))
-                                </a>
+                                    <a
+                                        class=(class!(
+                                            button_variants(ButtonVariant::Primary, ButtonSize::Lg),
+                                            "min-h-16 flex-1",
+                                        ))
+                                        href=(cooked_href)
+                                    >
+                                        (t!(cook_log_session))
+                                    </a>
+                                    <a
+                                        class=(class!(
+                                            button_variants(ButtonVariant::Outline, ButtonSize::Lg),
+                                            "min-h-16 flex-1",
+                                        ))
+                                        href=(recipe_href)
+                                    >
+                                        (t!(recipe_back_to_recipe))
+                                    </a>
+                                </div>
                             </div>
                         </div>
                     </footer>
