@@ -1,5 +1,6 @@
 use topcoat::{
     Result,
+    context::Cx,
     view::{View, component, view},
 };
 
@@ -10,7 +11,7 @@ const IMAGE_CLASS: &str = "aspect-square w-full rounded-lg border border-border 
 
 /// A linked image thumbnail that opens the full image in a new tab.
 #[component]
-pub async fn image_thumbnail(url: String, alt: String) -> Result<impl View> {
+pub async fn image_thumbnail(cx: &Cx, url: String, alt: String) -> Result<impl View> {
     Ok(view! {
         <a href=(url.clone()) target="_blank" rel="noreferrer">
             <img src=(url) alt=(alt) loading="lazy" class=(IMAGE_CLASS)>

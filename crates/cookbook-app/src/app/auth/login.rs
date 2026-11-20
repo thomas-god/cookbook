@@ -4,7 +4,7 @@ use cookbook_infra::auth::{
 };
 use topcoat::{
     Result,
-    context::{Cx, app_context},
+    context::{Cx, context},
     router::{content::Form, error::see_other, page},
     view::{View, attributes, element_id, view},
 };
@@ -42,7 +42,7 @@ pub async fn login(cx: &Cx, Form(form): Form<Vec<(String, String)>>) -> Result<i
         return login_form(cx, form.email, Some(LoginFormError::InvalidCredentials)).await;
     };
 
-    let auth: &AppAuthService = app_context(cx);
+    let auth: &AppAuthService = context(cx);
 
     match auth.login(email, form.password).await {
         Ok(result) => {
@@ -102,13 +102,12 @@ impl LoginForm {
 async fn login_form(cx: &Cx, email: String, error: Option<LoginFormError>) -> Result<impl View> {
     let email_id = element_id(cx);
     let password_id = element_id(cx);
-    let settings: &AuthSettings = app_context(cx);
+    let settings: &AuthSettings = context(cx);
     let registration_enabled = settings.registration_enabled();
     let invalid_form = matches!(error, Some(LoginFormError::InvalidForm));
     let invalid_credentials = matches!(error, Some(LoginFormError::InvalidCredentials));
 
     Ok(view! {
-        cx =>
         card(
             attrs: attributes! { class="mx-auto max-w-md" },
             card_header(card_title((t!(auth_login_heading))))

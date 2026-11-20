@@ -5,7 +5,7 @@ use cookbook_infra::auth::{
 };
 use topcoat::{
     Result,
-    context::{Cx, app_context},
+    context::{Cx, context},
     router::{
         content::Form,
         error::{forbidden, see_other},
@@ -83,7 +83,7 @@ pub async fn register(cx: &Cx, Form(form): Form<Vec<(String, String)>>) -> Resul
         .await;
     };
 
-    let auth: &AppAuthService = app_context(cx);
+    let auth: &AppAuthService = context(cx);
     let request = RegisterRequest {
         email,
         username: form.username.clone().map(Username::new),
@@ -179,7 +179,7 @@ impl RegisterForm {
 }
 
 fn registration_enabled(cx: &Cx) -> bool {
-    let settings: &AuthSettings = app_context(cx);
+    let settings: &AuthSettings = context(cx);
     settings.registration_enabled()
 }
 
@@ -201,7 +201,6 @@ async fn register_form(
     let email_taken = matches!(error, Some(RegisterFormError::EmailTaken));
 
     Ok(view! {
-        cx =>
         card(
             attrs: attributes! { class="mx-auto max-w-md" },
             card_header(card_title((t!(auth_register_heading))))

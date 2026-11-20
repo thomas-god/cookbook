@@ -8,7 +8,7 @@ use cookbook_domain::recipe::ports::{
 use topcoat::icon::icon;
 use topcoat::{
     Result,
-    context::{Cx, app_context},
+    context::{Cx, context},
     router::{
         content::Form,
         error::{RouterErrorExt, SeeOther, bad_request, not_found, see_other},
@@ -19,7 +19,7 @@ use topcoat::{
 
 use crate::components::base::icons::BACK_ARROW;
 use crate::{
-    app::{AppRecipeService, auth, recipes::RecipeId},
+    app::{AppRecipeService, auth, recipes::recipe_id},
     components::recipe::cooked_event::{cooked_event_log, recipe_cooked_events},
     t,
 };
@@ -52,7 +52,7 @@ pub async fn page(cx: &Cx) -> Result<impl View> {
     let user = auth::require_user(cx)?;
     let query = query_params::<CookedLogQuery>(cx)?;
     let requested_page = query.page_number();
-    let recipe_service: &AppRecipeService = app_context(cx);
+    let recipe_service: &AppRecipeService = context(cx);
 
     let mut result = recipe_service
         .list_user_cooked_events(ListUserCookedEventsQuery {
@@ -110,8 +110,8 @@ pub async fn page(cx: &Cx) -> Result<impl View> {
                     <span class="text-muted-foreground">
                         (t!(
                             cooked_event_page,
-                            current = current_page.to_string(),
-                            total = total_pages.to_string(),
+                            current: current_page.to_string(),
+                            total: total_pages.to_string(),
                         ))
                     </span>
                     if let Some(next) = next_page {
@@ -130,8 +130,8 @@ pub async fn page(cx: &Cx) -> Result<impl View> {
 #[page("/recipe/{recipe_id}/cooked")]
 pub async fn recipe_cook_journal(cx: &Cx) -> Result<impl View> {
     let user = auth::require_user(cx)?;
-    let recipe_id = path_param::<RecipeId>(cx).to_string();
-    let recipe_service: &AppRecipeService = app_context(cx);
+    let recipe_id = recipe_id(cx).to_string();
+    let recipe_service: &AppRecipeService = context(cx);
     let recipe = recipe_service
         .get_recipe(
             cookbook_domain::recipe::models::RecipeId::new(recipe_id),
@@ -144,7 +144,7 @@ pub async fn recipe_cook_journal(cx: &Cx) -> Result<impl View> {
         .await?;
     let back_href = href!(
         crate::app::recipe::view::recipe_detail,
-        RecipeId(recipe.id().as_str())
+        recipe_id: recipe.id().as_str()
     )
     .resolve(cx);
 
@@ -178,11 +178,11 @@ pub async fn add_recipe_cooked_event(
     Form(form): Form<Vec<(String, String)>>,
 ) -> Result<SeeOther> {
     let user = auth::require_user(cx)?;
-    let recipe_id = path_param::<RecipeId>(cx).to_string();
+    let recipe_id = recipe_id(cx).to_string();
     let form = CookedEventForm::parse(form).ok_or_else(|| -> topcoat::Error {
         bad_request(t!(cooked_event_invalid_form).resolve(cx)).into()
     })?;
-    let recipe_service: &AppRecipeService = app_context(cx);
+    let recipe_service: &AppRecipeService = context(cx);
 
     match recipe_service
         .add_recipe_cooked_event(AddRecipeCookedEventRequest {
@@ -194,7 +194,7 @@ pub async fn add_recipe_cooked_event(
         .await
     {
         Ok(_) => Ok(see_other(
-            href!(recipe_cook_journal, RecipeId(recipe_id.as_str())).resolve(cx),
+            href!(recipe_cook_journal, recipe_id: recipe_id.as_str()).resolve(cx),
         )),
         Err(AddRecipeCookedEventError::NotFound) => Err(not_found().into()),
         Err(AddRecipeCookedEventError::InvalidNote) => {
@@ -210,12 +210,12 @@ pub async fn update_cooked_event(
     Form(form): Form<Vec<(String, String)>>,
 ) -> Result<SeeOther> {
     let user = auth::require_user(cx)?;
-    let event_id = path_param::<CookedEventId>(cx).to_string();
+    let event_id = cooked_event_id(cx).to_string();
     let form = CookedEventForm::parse(form).ok_or_else(|| -> topcoat::Error {
         bad_request(t!(cooked_event_invalid_form).resolve(cx)).into()
     })?;
     let next = redirect_target(form.next, "/cooked".to_string());
-    let recipe_service: &AppRecipeService = app_context(cx);
+    let recipe_service: &AppRecipeService = context(cx);
 
     match recipe_service
         .update_recipe_cooked_event(UpdateRecipeCookedEventRequest {
@@ -241,14 +241,14 @@ pub async fn delete_cooked_event(
     Form(form): Form<Vec<(String, String)>>,
 ) -> Result<SeeOther> {
     let user = auth::require_user(cx)?;
-    let event_id = path_param::<CookedEventId>(cx).to_string();
+    let event_id = cooked_event_id(cx).to_string();
     let next = redirect_target(
         form.into_iter()
             .find(|(key, _)| key == "next")
             .map(|(_, value)| value),
         "/cooked".to_string(),
     );
-    let recipe_service: &AppRecipeService = app_context(cx);
+    let recipe_service: &AppRecipeService = context(cx);
 
     match recipe_service
         .delete_recipe_cooked_event(RecipeCookedEventId::new(event_id), user.id().clone())

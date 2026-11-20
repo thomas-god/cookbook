@@ -5,7 +5,7 @@ use cookbook_infra::auth::{
 };
 use topcoat::{
     Result,
-    context::{Cx, app_context},
+    context::{Cx, context},
     router::{
         content::Form,
         error::{SeeOther, see_other},
@@ -144,7 +144,7 @@ pub async fn change_email(cx: &Cx, Form(form): Form<Vec<(String, String)>>) -> R
         return account_page(cx, state, None, None).await;
     };
 
-    let auth: &AppAuthService = app_context(cx);
+    let auth: &AppAuthService = context(cx);
 
     match auth.change_email(user, form.current_password, email).await {
         Ok(_) => Err(see_other("/account?updated=email").into()),
@@ -177,7 +177,7 @@ pub async fn change_username(
         return account_page(cx, state, None, None).await;
     };
 
-    let auth: &AppAuthService = app_context(cx);
+    let auth: &AppAuthService = context(cx);
 
     match auth
         .change_username(user, form.username.map(Username::new))
@@ -207,7 +207,7 @@ pub async fn change_password(
         return account_page(cx, state, None, None).await;
     }
 
-    let auth: &AppAuthService = app_context(cx);
+    let auth: &AppAuthService = context(cx);
 
     match auth
         .change_password(user, form.current_password, form.password)
@@ -239,7 +239,7 @@ pub async fn delete_account(cx: &Cx, Form(form): Form<Vec<(String, String)>>) ->
         return Ok(see_other("/account?error=delete-confirm"));
     }
 
-    let auth: &AppAuthService = app_context(cx);
+    let auth: &AppAuthService = context(cx);
 
     match auth.delete_account(user).await {
         Ok(()) => {
@@ -429,7 +429,6 @@ async fn account_page(
     );
 
     Ok(view! {
-        cx =>
         <h2 class="mb-6 text-2xl font-semibold">(t!(account_heading))</h2>
         if let Some(updated) = updated {
             <p

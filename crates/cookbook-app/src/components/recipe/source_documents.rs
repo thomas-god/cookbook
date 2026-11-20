@@ -9,7 +9,7 @@ use topcoat::{
 
 use crate::{
     app::recipes::{
-        RecipeId, SourceDocumentId, delete_source_document, source_document,
+        delete_source_document, recipe_id, source_document, source_document_id,
         upload_source_documents,
     },
     components::{
@@ -65,8 +65,8 @@ pub async fn source_document_gallery(
         .map(|document| {
             let url = href!(
                 source_document,
-                RecipeId(recipe_id),
-                SourceDocumentId(document.id().as_str())
+                recipe_id: recipe_id,
+                source_document_id: document.id().as_str()
             )
             .resolve(cx);
 
@@ -82,7 +82,6 @@ pub async fn source_document_gallery(
         .collect::<Vec<_>>();
 
     Ok(view! {
-        cx =>
         <section>
             <h3 class="mb-3 text-lg font-semibold">(t!(source_documents_heading))</h3>
             if documents.is_empty() {
@@ -119,14 +118,14 @@ pub async fn source_document_editor(
         .map(|document| {
             let url = href!(
                 source_document,
-                RecipeId(recipe_id),
-                SourceDocumentId(document.id().as_str())
+                recipe_id: recipe_id,
+                source_document_id: document.id().as_str()
             )
             .resolve(cx);
             let delete_url = href!(
                 delete_source_document,
-                RecipeId(recipe_id),
-                SourceDocumentId(document.id().as_str())
+                recipe_id: recipe_id,
+                source_document_id: document.id().as_str()
             )
             .resolve(cx);
 
@@ -143,7 +142,6 @@ pub async fn source_document_editor(
         .collect::<Vec<_>>();
 
     Ok(view! {
-        cx =>
         <div class="flex flex-col gap-6">
             if documents.is_empty() {
                 <p class="text-sm text-muted-foreground">
@@ -173,7 +171,7 @@ pub async fn source_document_editor(
 
             <form
                 method="post"
-                action=(href!(upload_source_documents, RecipeId(recipe_id)))
+                action=(href!(upload_source_documents, recipe_id: recipe_id))
                 enctype="multipart/form-data"
                 class="flex flex-col gap-4"
             >
@@ -205,7 +203,6 @@ pub async fn source_document_editor(
 #[component]
 async fn pdf_document_link(cx: &Cx, url: String, alt: String) -> Result<impl View> {
     Ok(view! {
-        cx =>
         <a
             href=(url)
             target="_blank"

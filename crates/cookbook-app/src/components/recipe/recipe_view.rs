@@ -11,7 +11,7 @@ use topcoat::{
 };
 
 use crate::{
-    app::recipes::{ImageId, RecipeId, recipe_image},
+    app::recipes::{image_id, recipe_id, recipe_image},
     components::recipe::{image_thumbnail::image_thumbnail, recipe_images::recipe_image_gallery},
     t,
 };
@@ -25,27 +25,27 @@ struct StepImageView {
 /// or plural form from the locale's own plural rules.
 fn unit_label(cx: &Cx, unit: &Unit, value: f32) -> String {
     match unit {
-        Unit::Gram => t!(quantity_unit_gram, count = value)
+        Unit::Gram => t!(quantity_unit_gram, count: value)
             .resolve(cx)
             .into_owned(),
-        Unit::Kilogram => t!(quantity_unit_kilogram, count = value)
+        Unit::Kilogram => t!(quantity_unit_kilogram, count: value)
             .resolve(cx)
             .into_owned(),
-        Unit::MilliLitre => t!(quantity_unit_millilitre, count = value)
+        Unit::MilliLitre => t!(quantity_unit_millilitre, count: value)
             .resolve(cx)
             .into_owned(),
-        Unit::CentiLitre => t!(quantity_unit_centilitre, count = value)
+        Unit::CentiLitre => t!(quantity_unit_centilitre, count: value)
             .resolve(cx)
             .into_owned(),
-        Unit::Litre => t!(quantity_unit_litre, count = value)
+        Unit::Litre => t!(quantity_unit_litre, count: value)
             .resolve(cx)
             .into_owned(),
         // Pieces have no unit label; the ingredient name carries the noun.
         Unit::Piece => String::new(),
-        Unit::Teaspoon => t!(quantity_unit_teaspoon, count = value)
+        Unit::Teaspoon => t!(quantity_unit_teaspoon, count: value)
             .resolve(cx)
             .into_owned(),
-        Unit::Tablespoon => t!(quantity_unit_tablespoon, count = value)
+        Unit::Tablespoon => t!(quantity_unit_tablespoon, count: value)
             .resolve(cx)
             .into_owned(),
         // Free-text custom units are shown exactly as entered.
@@ -84,7 +84,6 @@ pub async fn recipe_view(
     let parts = content.parts();
 
     Ok(view! {
-        cx =>
         if let Some(body) = content.simple_body() {
             recipe_body_view(recipe_id: recipe_id, body: body, images: images)
         } else {
@@ -183,8 +182,8 @@ async fn recipe_body_view(
             .map(|image| StepImageView {
                 url: href!(
                     recipe_image,
-                    RecipeId(recipe_id),
-                    ImageId(image.id().as_str())
+                    recipe_id: recipe_id,
+                    image_id: image.id().as_str()
                 )
                 .resolve(cx),
                 alt: fallback_alt.clone(),

@@ -12,14 +12,14 @@ use cookbook_domain::{
 };
 use topcoat::{
     Result,
-    context::{Cx, app_context},
+    context::{Cx, context},
     router::{error::RouterErrorExt, href},
 };
 
 use crate::{
     app::{
         AppRecipeService,
-        recipes::{ImageId, RecipeId, recipe_image},
+        recipes::{image_id, recipe_id, recipe_image},
     },
     t,
 };
@@ -100,8 +100,8 @@ pub(super) fn form_image_initial(
         id: image.id().as_str().to_string(),
         url: href!(
             recipe_image,
-            RecipeId(recipe_id),
-            ImageId(image.id().as_str())
+            recipe_id: recipe_id,
+            image_id: image.id().as_str()
         )
         .resolve(cx),
         alt: t!(recipe_image_alt).resolve(cx).into_owned(),
@@ -247,7 +247,7 @@ pub(super) async fn load_current_recipe(
         return Ok(None);
     }
 
-    let recipe_service: &AppRecipeService = app_context(cx);
+    let recipe_service: &AppRecipeService = context(cx);
     let recipe = recipe_service
         .get_recipe(RecipeIdValue::new(recipe_id.to_string()), user.clone())
         .await?;

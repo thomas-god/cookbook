@@ -5,7 +5,7 @@ FROM rust:1.99-bookworm AS builder
 WORKDIR /app
 
 # The Topcoat CLI bundles the Tailwind and font assets embedded in the binary.
-ARG TOPCOAT_VERSION=0.11.0
+ARG TOPCOAT_VERSION=0.12.1
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
     cargo install topcoat-cli --version "${TOPCOAT_VERSION}" --locked

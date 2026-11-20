@@ -54,7 +54,7 @@ pub async fn image_upload(
         attrs.insert(cx, "multiple", "");
     }
 
-    Ok(view! { cx => input(attrs: attrs) })
+    Ok(view! { input(attrs: attrs) })
 }
 
 /// A file input restricted to JPEG, PNG, and PDF source documents.
@@ -73,5 +73,5 @@ pub async fn document_upload(
         attrs.insert(cx, "multiple", "");
     }
 
-    Ok(view! { cx => input(attrs: attrs) })
+    Ok(view! { input(attrs: attrs) })
 }

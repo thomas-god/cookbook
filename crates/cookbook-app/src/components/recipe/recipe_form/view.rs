@@ -11,7 +11,7 @@ use topcoat::{
 };
 
 use crate::{
-    app::{recipe::view::recipe_detail, recipes::RecipeId},
+    app::{recipe::view::recipe_detail, recipes::recipe_id},
     components::{
         base::{
             button::{ButtonSize, ButtonVariant, button},
@@ -109,22 +109,27 @@ fn remove_step_image_id(ids: Vec<String>, id: &str) -> Vec<String> {
 }
 
 #[procedure]
-async fn form_insert_item(order: Vec<usize>, index: usize, key: usize) -> Result<Vec<usize>> {
+async fn form_insert_item(
+    cx: &Cx,
+    order: Vec<usize>,
+    index: usize,
+    key: usize,
+) -> Result<Vec<usize>> {
     Ok(insert_order_key(order, index, key))
 }
 
 #[procedure]
-async fn form_remove_item(order: Vec<usize>, key: usize) -> Result<Vec<usize>> {
+async fn form_remove_item(cx: &Cx, order: Vec<usize>, key: usize) -> Result<Vec<usize>> {
     Ok(remove_order_key(order, key))
 }
 
 #[procedure]
-async fn form_move_item(order: Vec<usize>, key: usize, up: bool) -> Result<Vec<usize>> {
+async fn form_move_item(cx: &Cx, order: Vec<usize>, key: usize, up: bool) -> Result<Vec<usize>> {
     Ok(move_order_key(order, key, up))
 }
 
 #[procedure]
-async fn form_remove_step_image(ids: Vec<String>, id: String) -> Result<Vec<String>> {
+async fn form_remove_step_image(cx: &Cx, ids: Vec<String>, id: String) -> Result<Vec<String>> {
     Ok(remove_step_image_id(ids, &id))
 }
 
@@ -363,7 +368,7 @@ pub(super) async fn form_actions(
     Ok(view! {
         <div class="flex justify-end gap-2">
             if is_edit {
-                <a href=(href!(recipe_detail, RecipeId(recipe_id)))>
+                <a href=(href!(recipe_detail, recipe_id: recipe_id))>
                     button(variant: ButtonVariant::Secondary, (t!(form_cancel)))
                 </a>
                 button(attrs: attributes! { type="submit" }, (submit_label))
@@ -376,6 +381,7 @@ pub(super) async fn form_actions(
 
 #[component]
 pub(super) async fn body_fields(
+    cx: &Cx,
     prefix: String,
     initial: BodyInitial,
     image_lookup: HashMap<String, FormImageInitial>,
@@ -706,7 +712,7 @@ async fn part_row(
 
     let id_field = PartField::Id.key(row);
     let title_field = PartField::Title.key(row);
-    let heading = t!(form_part_heading, count = key + 1)
+    let heading = t!(form_part_heading, count: key + 1)
         .resolve(cx)
         .into_owned();
     let description_field = PartField::Description.key(row);
@@ -863,7 +869,7 @@ async fn ingredient_row(
     let amount_type_label_text = t!(form_amount_type).resolve(cx).into_owned();
     let not_set = t!(form_not_set).resolve(cx).into_owned();
     let edit_field = format!("{ingredient_label} {}", row + 1);
-    let remove_label = t!(form_remove_field, field = edit_field.clone())
+    let remove_label = t!(form_remove_field, field: edit_field.clone())
         .resolve(cx)
         .into_owned();
 
@@ -1186,7 +1192,7 @@ async fn step_row(
     let title_field = StepField::Title.key(row, &prefix);
     let instruction_field = StepField::Instruction.key(row, &prefix);
     let step_label = format!("{} {}", t!(recipe_step).resolve(cx), row + 1);
-    let step_remove_label = t!(form_remove_field, field = step_label.clone())
+    let step_remove_label = t!(form_remove_field, field: step_label.clone())
         .resolve(cx)
         .into_owned();
     let not_set = t!(form_not_set).resolve(cx).into_owned();

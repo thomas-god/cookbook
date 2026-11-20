@@ -16,7 +16,7 @@ cron.workspace = true
 form_urlencoded.workspace = true
 serde.workspace = true
 tokio.workspace = true
-topcoat = { version = "0.11", features = ["font-fontsource", "icon", "icon-iconify", "l10n-fluent", "multipart", "session", "tailwind", "ui"] }
+topcoat = { version = "0.12", features = ["font-fontsource", "icon", "icon-iconify", "l10n-fluent", "multipart", "session", "tailwind", "ui"] }
 tracing.workspace = true
 tracing-subscriber.workspace = true
 
@@ -24,4 +24,4 @@ tracing-subscriber.workspace = true
 cookbook-infra = { workspace = true, features = ["test-support"] }
 
 [build-dependencies]
-topcoat = { version = "0.11", default-features = false, features = ["tailwind", "icon-iconify"] }
+topcoat = { version = "0.12", default-features = false, features = ["tailwind", "icon-iconify"] }

@@ -12,12 +12,12 @@ use cookbook_infra::{
 use topcoat::{
     Result,
     asset::{AssetBundle, RouterBuilderAssetExt},
-    context::{Cx, app_context},
-    cookie::RouterBuilderCookieExt,
+    context::{Cx, context},
+    cookie::CookieLayer,
     font::{fontsource::fontsource_font, link},
     l10n::locale,
     router::{
-        Body, BodyLimit, HeaderValue, Next, RouterBuilderDiscoverExt, Slot,
+        Body, HeaderValue, Next, RouterBuilderDiscoverExt, Slot,
         error::{SeeOther, see_other},
         header::VARY,
         href, layer, layout, module_router,
@@ -25,8 +25,8 @@ use topcoat::{
         response::{Response, response_headers},
         route,
     },
-    runtime::RouterBuilderRuntimeExt,
-    session::{RouterBuilderSessionExt, SessionConfig},
+    runtime::RuntimeLayer,
+    session::{SessionLifetime, SessionTokenStore},
     view::{View, view},
 };
 
@@ -102,29 +102,24 @@ pub async fn router() -> topcoat::router::Router {
         .expect("failed to create the initial admin");
 
     module_router!()
-        .app_context(recipe_service)
-        .app_context(auth_service)
-        .app_context(user_repository)
-        .app_context(auth_config.settings())
-        .app_context(vision_config.settings())
-        .app_context(vision_config.client())
+        .with(recipe_service)
+        .with(auth_service)
+        .with(user_repository)
+        .with(auth_config.settings())
+        .with(vision_config.settings())
+        .with(vision_config.client())
+        .with(SessionTokenStore::new(
+            auth::ForwardedProtoCookieTokenStore::new(),
+        ))
+        .with(SessionLifetime(SESSION_POLICY.lifetime()))
         .discover()
-        .layer(BodyLimit::max(recipe::import::MAX_UPLOAD_BYTES).at("/recipe/import"))
-        .layer(BodyLimit::max(recipes::MAX_UPLOAD_BYTES).at("/recipe"))
-        .layer(BodyLimit::max(recipes::MAX_UPLOAD_BYTES).at("/recipes"))
         .layer(auth::AuthenticationLayer::new())
-        .cookies()
-        .sessions(
-            SessionConfig::builder()
-                .token_store(auth::ForwardedProtoCookieTokenStore::new())
-                .lifetime(SESSION_POLICY.lifetime())
-                .build(),
-        )
+        .layer(CookieLayer::new())
         .assets(
             AssetBundle::load()
                 .expect("no asset bundle found; run `topcoat asset bundle` or use `topcoat dev`"),
         )
-        .runtime()
+        .layer(RuntimeLayer::new())
         .build()
 }
 
@@ -132,8 +127,8 @@ pub async fn router() -> topcoat::router::Router {
 async fn root_layout(cx: &Cx, slot: Slot<'_>) -> Result<impl View> {
     let current_locale = locale(cx);
     let current_user = auth::current_user(cx);
-    let settings: &AuthSettings = app_context(cx);
-    let vision_settings: &vision::VisionSettings = app_context(cx);
+    let settings: &AuthSettings = context(cx);
+    let vision_settings: &vision::VisionSettings = context(cx);
 
     Ok(view! {
         <!DOCTYPE html>

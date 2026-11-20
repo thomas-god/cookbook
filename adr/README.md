@@ -13,7 +13,7 @@
 ## Tech stack
 
 - **Language/runtime:** Rust 2024, Tokio async runtime.
-- **Web framework:** [Topcoat](https://github.com/tokio-rs/topcoat) 0.11 — server-rendered HTML with
+- **Web framework:** [Topcoat](https://github.com/tokio-rs/topcoat) 0.12 — server-rendered HTML with
   `view!` templates, typed routing, layers, and a small runtime for interactive shards (signals,
   bindings, and procedures for add/remove/reorder operations).
 - **UI:** Topcoat UI components, Tailwind CSS, Geist font, Iconify icons, Fluent localization

@@ -8,7 +8,7 @@ use cookbook_infra::auth::{
 };
 use topcoat::{
     Result,
-    context::{Cx, app_context},
+    context::{Cx, context},
     router::{
         content::Form,
         error::{SeeOther, bad_request, forbidden, not_found, see_other},
@@ -316,7 +316,7 @@ impl EditFormState {
 pub async fn page(cx: &Cx) -> Result<impl View> {
     let admin = require_admin(cx)?;
     let query = query_params::<ListQuery>(cx)?;
-    let auth: &AppAuthService = app_context(cx);
+    let auth: &AppAuthService = context(cx);
 
     let users = auth.list_users(&admin).await?;
 
@@ -352,7 +352,7 @@ pub async fn create(cx: &Cx, Form(form): Form<Vec<(String, String)>>) -> Result<
         return create_page(cx, state, Some(CreateFormError::InvalidEmail)).await;
     };
 
-    let auth: &AppAuthService = app_context(cx);
+    let auth: &AppAuthService = context(cx);
     let request = CreateUserRequest {
         email,
         username: form.username.clone().map(Username::new),
@@ -411,7 +411,7 @@ pub async fn change_email(cx: &Cx, Form(form): Form<Vec<(String, String)>>) -> R
         return edit_view(cx, admin.id().clone(), user, state, None, None).await;
     };
 
-    let auth: &AppAuthService = app_context(cx);
+    let auth: &AppAuthService = context(cx);
 
     match auth.change_user_email(&admin, &id, email).await {
         Ok(_) => Err(see_other(edit_url(cx, &id, "updated=email")).into()),
@@ -440,7 +440,7 @@ pub async fn change_username(
         return edit_view(cx, admin.id().clone(), user, state, None, None).await;
     };
 
-    let auth: &AppAuthService = app_context(cx);
+    let auth: &AppAuthService = context(cx);
 
     match auth
         .change_user_username(&admin, &id, form.username.map(Username::new))
@@ -473,7 +473,7 @@ pub async fn change_password(
         return edit_view(cx, admin.id().clone(), user, state, None, None).await;
     }
 
-    let auth: &AppAuthService = app_context(cx);
+    let auth: &AppAuthService = context(cx);
 
     match auth.reset_user_password(&admin, &id, form.password).await {
         Ok(_) => Err(see_other(edit_url(cx, &id, "updated=password")).into()),
@@ -490,7 +490,7 @@ pub async fn set_role(cx: &Cx, Form(form): Form<Vec<(String, String)>>) -> Resul
         return Err(bad_request("role is required").into());
     };
 
-    let auth: &AppAuthService = app_context(cx);
+    let auth: &AppAuthService = context(cx);
 
     match auth.set_user_role(&admin, &id, role).await {
         Ok(_) if id.as_str() == admin.id().as_str() && role == UserRole::User => Ok(see_other("/")),
@@ -505,7 +505,7 @@ pub async fn set_role(cx: &Cx, Form(form): Form<Vec<(String, String)>>) -> Resul
 pub async fn delete_user(cx: &Cx) -> Result<SeeOther> {
     let admin = require_admin(cx)?;
     let id = path_user_id(cx);
-    let auth: &AppAuthService = app_context(cx);
+    let auth: &AppAuthService = context(cx);
 
     match auth.delete_user(&admin, &id).await {
         Ok(()) => Ok(see_other(format!(
@@ -537,11 +537,11 @@ fn parse_role_form(pairs: Vec<(String, String)>) -> Option<UserRole> {
 }
 
 fn path_user_id(cx: &Cx) -> UserIdValue {
-    UserIdValue::new(path_param::<UserId>(cx).to_string())
+    UserIdValue::new(user_id(cx).to_string())
 }
 
 async fn load_user(cx: &Cx, admin: &AdminActor, id: &UserIdValue) -> Result<UserSummary> {
-    let auth: &AppAuthService = app_context(cx);
+    let auth: &AppAuthService = context(cx);
 
     auth.get_user(admin, id)
         .await?
@@ -549,7 +549,7 @@ async fn load_user(cx: &Cx, admin: &AdminActor, id: &UserIdValue) -> Result<User
 }
 
 fn edit_url(cx: &Cx, id: &UserIdValue, query: &str) -> String {
-    let base = href!(edit_page, UserId(id.as_str())).resolve(cx);
+    let base = href!(edit_page, user_id: id.as_str()).resolve(cx);
 
     format!("{base}?{query}")
 }
@@ -559,9 +559,8 @@ async fn users_page(
     admin_id: UserIdValue,
     users: Vec<UserSummary>,
     updated: Option<Update>,
-) -> Result<impl View + use<>> {
+) -> Result<impl View + use<'_>> {
     Ok(view! {
-        cx =>
         <div class="mb-6 flex items-center justify-between gap-4">
             <h2 class="text-2xl font-semibold">(t!(admin_users_heading))</h2>
             <a
@@ -617,7 +616,7 @@ async fn users_page(
                             </span>
                             <a
                                 class=(button_variants(ButtonVariant::Ghost, ButtonSize::Sm))
-                                href=(href!(edit_page, UserId(user.id().as_str())))
+                                href=(href!(edit_page, user_id: user.id().as_str()))
                             >
                                 (t!(admin_user_edit))
                             </a>
@@ -633,7 +632,7 @@ async fn create_page(
     cx: &Cx,
     state: CreateFormState,
     error: Option<CreateFormError>,
-) -> Result<impl View + use<>> {
+) -> Result<impl View + use<'_>> {
     let email_id = element_id(cx);
     let username_id = element_id(cx);
     let password_id = element_id(cx);
@@ -645,7 +644,6 @@ async fn create_page(
     let email_taken = matches!(error, Some(CreateFormError::EmailTaken));
 
     Ok(view! {
-        cx =>
         <div class="mb-6">
             <a class="text-sm underline underline-offset-4" href=(href!(page))>
                 (t!(admin_users_back))
@@ -766,7 +764,7 @@ async fn edit_view(
     state: EditFormState,
     updated: Option<Update>,
     error: Option<EditError>,
-) -> Result<impl View + use<>> {
+) -> Result<impl View + use<'_>> {
     let email_id = element_id(cx);
     let username_id = element_id(cx);
     let password_id = element_id(cx);
@@ -783,11 +781,10 @@ async fn edit_view(
         state.password_error,
         Some(PasswordFormError::PasswordMismatch)
     );
-    let delete_action = href!(delete_user, UserId(user.id().as_str())).resolve(cx);
+    let delete_action = href!(delete_user, user_id: user.id().as_str()).resolve(cx);
     let delete_confirm = t!(admin_user_delete_confirm).resolve(cx);
 
     Ok(view! {
-        cx =>
         <div class="mb-6">
             <a class="text-sm underline underline-offset-4" href=(href!(page))>
                 (t!(admin_users_back))
@@ -831,7 +828,7 @@ async fn edit_view(
                 card_content(
                     <form
                         method="post"
-                        action=(href!(change_email, UserId(user.id().as_str())))
+                        action=(href!(change_email, user_id: user.id().as_str()))
                         class="flex flex-col gap-4"
                     >
                         if invalid_email_form {
@@ -878,7 +875,7 @@ async fn edit_view(
                 card_content(
                     <form
                         method="post"
-                        action=(href!(change_username, UserId(user.id().as_str())))
+                        action=(href!(change_username, user_id: user.id().as_str()))
                         class="flex flex-col gap-4"
                     >
                         if invalid_username_form {
@@ -927,7 +924,7 @@ async fn edit_view(
                 card_content(
                     <form
                         method="post"
-                        action=(href!(change_password, UserId(user.id().as_str())))
+                        action=(href!(change_password, user_id: user.id().as_str()))
                         class="flex flex-col gap-4"
                     >
                         if invalid_password_form {
@@ -997,7 +994,7 @@ async fn edit_view(
                         </div>
                         <form
                             method="post"
-                            action=(href!(set_role, UserId(user.id().as_str())))
+                            action=(href!(set_role, user_id: user.id().as_str()))
                         >
                             if user.role().is_admin() {
                                 <input type="hidden" name="role" value="user">

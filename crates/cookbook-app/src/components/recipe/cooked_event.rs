@@ -10,8 +10,8 @@ use topcoat::{
 
 use crate::{
     app::{
-        cooked::{CookedEventId, delete_cooked_event, update_cooked_event},
-        recipes::{RecipeId, RevisionId, recipe_revision},
+        cooked::{cooked_event_id, delete_cooked_event, update_cooked_event},
+        recipes::{recipe_id, recipe_revision, revision_id},
     },
     components::base::{
         button::{ButtonSize, ButtonVariant, button, button_variants},
@@ -30,9 +30,9 @@ fn format_cooked_on(date: NaiveDate) -> String {
 fn format_display_date(cx: &Cx, date: NaiveDate) -> String {
     t!(
         cooked_event_date_display,
-        month = date.month(),
-        day = date.day(),
-        year = date.year().to_string(),
+        month: date.month(),
+        day: date.day(),
+        year: date.year().to_string(),
     )
     .resolve(cx)
     .into_owned()
@@ -43,18 +43,18 @@ fn today() -> String {
 }
 
 fn update_action(cx: &Cx, event_id: &str) -> String {
-    href!(update_cooked_event, CookedEventId(event_id)).resolve(cx)
+    href!(update_cooked_event, cooked_event_id: event_id).resolve(cx)
 }
 
 fn delete_action(cx: &Cx, event_id: &str) -> String {
-    href!(delete_cooked_event, CookedEventId(event_id)).resolve(cx)
+    href!(delete_cooked_event, cooked_event_id: event_id).resolve(cx)
 }
 
 fn recipe_revision_href(cx: &Cx, recipe_id: &str, revision_id: &str) -> String {
     href!(
         recipe_revision,
-        RecipeId(recipe_id),
-        RevisionId(revision_id)
+        recipe_id: recipe_id,
+        revision_id: revision_id
     )
     .resolve(cx)
 }
@@ -73,7 +73,6 @@ pub async fn cooked_event_form(
     let note_id = element_id(cx);
 
     Ok(view! {
-        cx =>
         <form method="post" action=(action) class="flex flex-col gap-3">
             if let Some(next) = &next {
                 <input type="hidden" name="next" value=(next)>
@@ -124,7 +123,6 @@ pub async fn cooked_event_actions(
     let delete_confirm = t!(cooked_event_delete_confirm).resolve(cx);
 
     Ok(view! {
-        cx =>
         <div class="flex items-center gap-1">
             <details class="relative" data-menu="">
                 <summary
@@ -195,13 +193,12 @@ pub async fn recipe_cooked_events(
 ) -> Result<impl View> {
     let add_action = href!(
         crate::app::cooked::add_recipe_cooked_event,
-        RecipeId(recipe_id)
+        recipe_id: recipe_id
     )
     .resolve(cx);
-    let next = href!(crate::app::cooked::recipe_cook_journal, RecipeId(recipe_id)).resolve(cx);
+    let next = href!(crate::app::cooked::recipe_cook_journal, recipe_id: recipe_id).resolve(cx);
 
     Ok(view! {
-        cx =>
         <div class="flex flex-col gap-4">
             card(
                 card_header(card_title((t!(cooked_event_new))))
@@ -254,7 +251,6 @@ pub async fn cooked_event_log_entry(
     let event = entry.event();
 
     Ok(view! {
-        cx =>
         <li class="rounded-lg border border-border bg-card px-4 py-3 text-sm">
             <div class="flex flex-wrap items-baseline justify-between gap-2">
                 <div class="flex flex-wrap items-center gap-2">
@@ -309,7 +305,6 @@ pub async fn cooked_event_log(
     next: &str,
 ) -> Result<impl View> {
     Ok(view! {
-        cx =>
         if entries.is_empty() {
             <p class="mt-8 text-sm text-muted-foreground">
                 (t!(cooked_event_log_empty))
