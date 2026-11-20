@@ -524,7 +524,7 @@ version = "0.1.1"
 dependencies = [
  "anyhow",
  "argon2",
- "base64 0.22.1",
+ "base64 0.23.1",
  "chrono",
  "cookbook-config",
  "cookbook-domain",
@@ -545,7 +545,7 @@ dependencies = [
 name = "cookbook-vision"
 version = "0.1.1"
 dependencies = [
- "base64 0.22.1",
+ "base64 0.23.1",
  "cookbook-domain",
  "hayro",
  "image",
