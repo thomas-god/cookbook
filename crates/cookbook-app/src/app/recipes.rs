@@ -3,15 +3,16 @@ use std::time::SystemTime;
 use cookbook_domain::recipe::models::{
     NewRecipeSourceDocument, RecipeCategory, RecipeId as RecipeIdValue,
     RecipeImageId as RecipeImageIdValue, RecipeRevision, RecipeRevisionId, RecipeScope,
-    RecipeSourceDocumentId as RecipeSourceDocumentIdValue, RecipeStructureKind, RevisionOrigin,
-    RevisionVerification, Servings,
+    RecipeSourceDocumentId as RecipeSourceDocumentIdValue, RecipeStructureKind, RevisionMessage,
+    RevisionOrigin, RevisionVerification, Servings,
 };
 use cookbook_domain::recipe::ports::{
     AddRecipeSourceDocumentsError, AddRecipeSourceDocumentsRequest, CategorySelection,
     ConvertRecipeStructureRequest, DeleteRecipeError, DeleteRecipeSourceDocumentError,
     RecipeSearchCriteria, RecipeService, RecipeSort, RestoreRecipeRevisionError,
     RestoreRecipeRevisionRequest, SearchRecipesQuery, SortDirection, UpdateRecipeError,
-    UpdateRecipeScopeError, UpdateRecipeScopeRequest,
+    UpdateRecipeRevisionMessageError, UpdateRecipeRevisionMessageRequest, UpdateRecipeScopeError,
+    UpdateRecipeScopeRequest,
 };
 use cookbook_domain::user::models::UserId;
 use cookbook_infra::auth::ports::UserRepository;
@@ -33,12 +34,12 @@ use topcoat::{
 };
 
 use crate::app::recipe::view::recipe_detail;
-use crate::components::base::icons::{BACK_ARROW, STAR_FILL};
+use crate::components::base::icons::{BACK_ARROW, CLOSE, EDIT, STAR_FILL};
 use crate::{
     app::{AppRecipeService, AppUserRepository, auth, recipe::export::export_recipe},
     components::{
         base::{
-            button::button,
+            button::{ButtonVariant, button},
             card::{card, card_content, card_header, card_title},
         },
         recipe::{
@@ -56,6 +57,10 @@ use crate::{
 pub(crate) const MAX_UPLOAD_BYTES: usize = 100 * 1024 * 1024;
 
 const RECIPE_PAGE_SIZE: usize = 20;
+
+const REVISION_MESSAGE_FIELD: &str = "message";
+
+const TEXTAREA_CLASS: &str = "min-h-24 w-full rounded-lg border border-border bg-transparent px-3 py-2 text-sm transition-colors outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background";
 
 /// A sort order accepted by the recipe list query.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -745,6 +750,32 @@ fn parse_latest_revision_form(pairs: Vec<(String, String)>) -> Result<RecipeRevi
     Ok(RecipeRevisionId::new(latest_revision))
 }
 
+fn parse_revision_message_form(pairs: Vec<(String, String)>) -> Result<Option<RevisionMessage>> {
+    let mut message = None;
+
+    for (key, value) in pairs {
+        if key != REVISION_MESSAGE_FIELD {
+            return Err(bad_request(format!("unknown form field `{key}`")).into());
+        }
+
+        if message.replace(value).is_some() {
+            return Err(bad_request("duplicate revision message").into());
+        }
+    }
+
+    let message =
+        message.ok_or_else(|| -> topcoat::Error { bad_request("message is required").into() })?;
+    let message = message.trim();
+
+    if message.is_empty() {
+        return Ok(None);
+    }
+
+    RevisionMessage::new(message)
+        .map(Some)
+        .map_err(|error| bad_request(error.to_string()).into())
+}
+
 #[route(POST "/recipe/{recipe_id}/history/{revision_id}/restore")]
 pub async fn restore_recipe_revision(
     cx: &Cx,
@@ -773,6 +804,43 @@ pub async fn restore_recipe_revision(
         }
         Err(RestoreRecipeRevisionError::NotFound) => Err(not_found().into()),
         Err(RestoreRecipeRevisionError::Forbidden) => Err(forbidden().into()),
+        Err(error) => Err(error.into()),
+    }
+}
+
+#[route(POST "/recipe/{recipe_id}/history/{revision_id}/message")]
+pub async fn update_recipe_revision_message(
+    cx: &Cx,
+    Form(form): Form<Vec<(String, String)>>,
+) -> Result<SeeOther> {
+    let user = auth::require_user(cx)?;
+    let recipe_id = path_param::<RecipeId>(cx).to_string();
+    let revision_id = path_param::<RevisionId>(cx).to_string();
+    let message = parse_revision_message_form(form)?;
+    let recipe_service: &AppRecipeService = app_context(cx);
+
+    match recipe_service
+        .update_recipe_revision_message(UpdateRecipeRevisionMessageRequest {
+            recipe_id: RecipeIdValue::new(recipe_id.clone()),
+            revision_id: RecipeRevisionId::new(revision_id.clone()),
+            message,
+            actor: user.id().clone(),
+        })
+        .await
+    {
+        Ok(_) => Ok(see_other(
+            href!(
+                recipe_revision,
+                RecipeId(recipe_id.as_str()),
+                RevisionId(revision_id.as_str()),
+            )
+            .resolve(cx),
+        )),
+        Err(UpdateRecipeRevisionMessageError::NotFound) => Err(not_found().into()),
+        Err(UpdateRecipeRevisionMessageError::Forbidden) => Err(forbidden().into()),
+        Err(UpdateRecipeRevisionMessageError::NotEditable) => {
+            Err(bad_request(t!(recipe_history_note_not_editable).resolve(cx)).into())
+        }
         Err(error) => Err(error.into()),
     }
 }
@@ -972,16 +1040,11 @@ struct HistoryEntry {
     editor: String,
 }
 
-fn revision_origin_label(cx: &Cx, origin: &RevisionOrigin, revisions: &[RecipeRevision]) -> String {
+fn revision_nature_label(cx: &Cx, origin: &RevisionOrigin, revisions: &[RecipeRevision]) -> String {
     match origin {
         RevisionOrigin::Created => t!(recipe_history_created).resolve(cx).into_owned(),
         RevisionOrigin::Imported => t!(recipe_history_imported).resolve(cx).into_owned(),
-        RevisionOrigin::UserEdit {
-            message: Some(message),
-        } => message.as_str().to_owned(),
-        RevisionOrigin::UserEdit { message: None } => {
-            t!(recipe_history_edited).resolve(cx).into_owned()
-        }
+        RevisionOrigin::UserEdit { .. } => t!(recipe_history_edited).resolve(cx).into_owned(),
         RevisionOrigin::StructureConverted { to } => match to {
             RecipeStructureKind::Simple => t!(recipe_history_converted_to_simple)
                 .resolve(cx)
@@ -1006,6 +1069,13 @@ fn revision_origin_label(cx: &Cx, origin: &RevisionOrigin, revisions: &[RecipeRe
                     .resolve(cx)
                     .into_owned()
             }),
+    }
+}
+
+fn user_edit_message(origin: &RevisionOrigin) -> Option<Option<&RevisionMessage>> {
+    match origin {
+        RevisionOrigin::UserEdit { message } => Some(message.as_ref()),
+        _ => None,
     }
 }
 
@@ -1056,15 +1126,17 @@ pub async fn recipe_history(cx: &Cx) -> Result<impl View> {
                             class="rounded-lg border border-border bg-card px-4 py-3 text-sm"
                         >
                             <div class="flex items-start justify-between gap-4">
-                                <div>
-                                    <p class="font-medium">
-                                        (revision_origin_label(
-                                            cx,
-                                            entry.revision.origin(),
-                                            &revisions,
-                                        ))
-                                    </p>
-                                    <p class="mt-1">
+                                <div class="min-w-0">
+                                    <div class="flex flex-wrap items-center gap-2">
+                                        <span
+                                            class="inline-flex items-center rounded-full border border-border bg-foreground/5 px-2 py-0.5 text-xs font-medium"
+                                        >
+                                            (revision_nature_label(
+                                                cx,
+                                                entry.revision.origin(),
+                                                &revisions,
+                                            ))
+                                        </span>
                                         if entry.revision.verification()
                                             == RevisionVerification::NeedsReview {
                                             <span
@@ -1079,8 +1151,25 @@ pub async fn recipe_history(cx: &Cx) -> Result<impl View> {
                                                 (t!(recipe_verified))
                                             </span>
                                         }
-                                    </p>
-                                    <p class="mt-1 text-muted-foreground">
+                                    </div>
+                                    if let Some(note) = user_edit_message(
+                                        entry.revision.origin(),
+                                    ) {
+                                        if let Some(message) = note {
+                                            <p
+                                                class="mt-2 whitespace-pre-line border-l-2 border-foreground/20 pl-3 text-sm"
+                                            >
+                                                (message.as_str())
+                                            </p>
+                                        } else {
+                                            <p
+                                                class="mt-2 border-l-2 border-border pl-3 text-sm text-muted-foreground italic"
+                                            >
+                                                (t!(recipe_history_no_note))
+                                            </p>
+                                        }
+                                    }
+                                    <p class="mt-2 text-muted-foreground">
                                         (t!(recipe_history_edited_by))
                                         " "
                                         (entry.editor)
@@ -1142,6 +1231,14 @@ pub async fn recipe_revision(cx: &Cx) -> Result<impl View> {
         RevisionId(revision.id().as_str()),
     )
     .resolve(cx);
+    let update_message_action = href!(
+        update_recipe_revision_message,
+        RecipeId(recipe_id.as_str()),
+        RevisionId(revision.id().as_str()),
+    )
+    .resolve(cx);
+    let user_edit_note = user_edit_message(revision.origin())
+        .map(|message| message.map(|message| message.as_str().to_owned()));
     let export_action = format!(
         "{}?revision={}",
         href!(export_recipe, RecipeId(recipe_id.as_str())).resolve(cx),
@@ -1161,6 +1258,11 @@ pub async fn recipe_revision(cx: &Cx) -> Result<impl View> {
                     <h2 class="text-3xl font-semibold">
                         (revision.content().title().as_str())
                     </h2>
+                    <span
+                        class="inline-flex items-center rounded-full border border-border bg-foreground/5 px-2.5 py-0.5 text-sm font-medium"
+                    >
+                        (revision_nature_label(cx, revision.origin(), &revisions))
+                    </span>
                     if revision.verification() == RevisionVerification::NeedsReview {
                         <span
                             class="inline-flex items-center rounded-full border border-warning/40 bg-warning/10 px-2.5 py-0.5 text-sm font-medium text-warning-foreground"
@@ -1194,9 +1296,78 @@ pub async fn recipe_revision(cx: &Cx) -> Result<impl View> {
                     " · "
                     (format_timestamp(revision.edited_at()))
                 </p>
-                <p class="mt-2 text-sm">
-                    (revision_origin_label(cx, revision.origin(), &revisions))
-                </p>
+                if let Some(message) = &user_edit_note {
+                    <details
+                        class="group mt-4 rounded-lg border border-border bg-foreground/[0.02] px-3 py-2"
+                    >
+                        <summary
+                            class="flex cursor-pointer list-none flex-col gap-1 [&::-webkit-details-marker]:hidden"
+                        >
+                            <span class="flex items-center justify-between gap-2">
+                                <span
+                                    class="text-xs font-medium tracking-wide text-muted-foreground uppercase"
+                                >
+                                    (t!(recipe_history_note))
+                                </span>
+                                if can_edit {
+                                    <span
+                                        class="inline-flex size-8 items-center justify-center rounded-lg hover:bg-foreground/5 group-open:hidden"
+                                        aria-hidden="true"
+                                    >
+                                        icon(data: EDIT, size: 16)
+                                    </span>
+                                    <span
+                                        class="hidden size-8 items-center justify-center rounded-lg hover:bg-foreground/5 group-open:inline-flex"
+                                        aria-hidden="true"
+                                    >
+                                        icon(data: CLOSE, size: 16)
+                                    </span>
+                                }
+                            </span>
+                            <span class="block group-open:hidden">
+                                if let Some(message) = message {
+                                    <span class="block whitespace-pre-line text-sm">
+                                        (message)
+                                    </span>
+                                } else {
+                                    <span class="block text-sm text-muted-foreground italic">
+                                        (t!(recipe_history_no_note))
+                                    </span>
+                                }
+                            </span>
+                        </summary>
+                        if can_edit {
+                            <form
+                                method="post"
+                                action=(update_message_action)
+                                class="mt-1 hidden flex-col gap-2 group-open:flex"
+                            >
+                                <textarea
+                                    name=(REVISION_MESSAGE_FIELD)
+                                    rows="2"
+                                    class=(TEXTAREA_CLASS)
+                                    placeholder=(t!(form_edit_message.placeholder))
+                                >
+                                    (message.as_deref().unwrap_or_default())
+                                </textarea>
+                                <div class="flex justify-end gap-2">
+                                    button(
+                                        variant: ButtonVariant::Secondary,
+                                        attrs: attributes! {
+                                            type="button"
+                                            onclick="this.closest('details').open = false"
+                                        },
+                                        (t!(form_cancel))
+                                    )
+                                    button(
+                                        attrs: attributes! { type="submit" },
+                                        (t!(recipe_history_save_note))
+                                    )
+                                </div>
+                            </form>
+                        }
+                    </details>
+                }
                 if total_minutes > 0 {
                     <p class="mt-2 text-sm text-muted-foreground">
                         (t!(recipe_total_duration))
@@ -1481,6 +1652,37 @@ mod tests {
     }
 
     #[test]
+    fn parses_and_trims_a_revision_message() {
+        let message = parse_revision_message_form(pairs(&[("message", "  Reduced salt  ")]))
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(message.as_str(), "Reduced salt");
+    }
+
+    #[test]
+    fn an_empty_revision_message_clears_the_note() {
+        assert_eq!(
+            parse_revision_message_form(pairs(&[("message", "   ")])).unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_revision_message_forms() {
+        for entries in [
+            vec![],
+            vec![("message", "Salt"), ("message", "Sugar")],
+            vec![("message", "Salt"), ("mystery", "x")],
+        ] {
+            assert!(
+                parse_revision_message_form(pairs(&entries)).is_err(),
+                "expected an error for {entries:?}"
+            );
+        }
+    }
+
+    #[test]
     fn rejects_missing_unknown_duplicate_and_extra_fields() {
         for entries in [
             vec![],
@@ -1542,10 +1744,36 @@ mod tests {
             RevisionVerification::Verified,
         );
 
-        let label = revision_origin_label(&cx, restored.origin(), &[source, restored.clone()]);
+        let label = revision_nature_label(&cx, restored.origin(), &[source, restored.clone()]);
 
         assert!(label.contains("Restored"));
         assert!(label.contains(&format_timestamp(SystemTime::UNIX_EPOCH)));
+    }
+
+    #[test]
+    fn user_edit_nature_is_separate_from_its_message() {
+        let cx = Cx::default().with(topcoat::l10n::locale!("en"));
+        let origin = RevisionOrigin::UserEdit {
+            message: Some(RevisionMessage::new("Reduced salt").unwrap()),
+        };
+
+        assert_eq!(
+            revision_nature_label(&cx, &origin, &[]),
+            "Edited the recipe"
+        );
+        assert_eq!(
+            user_edit_message(&origin)
+                .flatten()
+                .map(|message| message.as_str()),
+            Some("Reduced salt")
+        );
+    }
+
+    #[test]
+    fn user_edit_without_a_message_exposes_a_placeholder_state() {
+        let origin = RevisionOrigin::UserEdit { message: None };
+
+        assert!(matches!(user_edit_message(&origin), Some(None)));
     }
 
     #[test]

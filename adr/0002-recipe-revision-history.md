@@ -66,6 +66,14 @@ and the current time. The source revision's verification state is preserved, so 
 unreviewed import does not silently mark it verified. The form carries the latest revision id, and a
 stale restore is rejected with a conflict.
 
+### Editing revision notes (added 2026-11-20)
+
+The content snapshot, editor, timestamp, and verification of a revision never change. A user who can
+edit the recipe may update or clear the optional note on a `UserEdit` revision, since the note is
+metadata rather than recipe content. The note lives inside `RevisionOrigin`, so updating it rewrites
+only the stored origin; it does not append a revision or change the revision's content. Revisions
+created by any other operation have no editable note. Concurrent note edits are last-write-wins.
+
 ### Atomic persistence
 
 The repository port saves the current recipe identity and appends the revision in one operation. A
@@ -100,7 +108,7 @@ Step splitting can copy image ids to the new step without duplicating or updatin
 - Current content is always derived from the latest revision.
 - The author and editor are represented separately.
 - Stale edits are rejected instead of silently overwriting newer content.
-- History is append-only and independently readable.
+- History content is append-only; only the notes on `UserEdit` revisions are mutable.
 - No diff format or migration is required.
 
 ### Tradeoffs
