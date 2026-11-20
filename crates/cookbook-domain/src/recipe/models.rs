@@ -2,6 +2,7 @@ use std::collections::HashSet;
 use std::fmt;
 use std::time::SystemTime;
 
+use chrono::NaiveDate;
 use derive_more::Constructor;
 use uuid::Uuid;
 
@@ -251,6 +252,152 @@ impl RecipeForViewer {
         (self.recipe, self.is_favorite)
     }
 }
+
+/// Captured when the recipe is cooked so it remains meaningful after the
+/// recipe is deleted or edited.
+#[derive(Debug, Clone, Constructor)]
+pub struct CookedRecipeSnapshot {
+    revision_id: RecipeRevisionId,
+    title: RecipeTitle,
+}
+
+impl CookedRecipeSnapshot {
+    pub fn revision_id(&self) -> &RecipeRevisionId {
+        &self.revision_id
+    }
+
+    pub fn title(&self) -> &RecipeTitle {
+        &self.title
+    }
+}
+
+#[derive(Debug, Clone, Constructor)]
+pub struct RecipeCookedEvent {
+    id: RecipeCookedEventId,
+    /// Can be None for deleted recipes
+    recipe_id: Option<RecipeId>,
+    user_id: UserId,
+    snapshot: CookedRecipeSnapshot,
+    cooked_on: NaiveDate,
+    note: CookedRecipeNote,
+    created_at: SystemTime,
+}
+
+impl RecipeCookedEvent {
+    pub fn id(&self) -> &RecipeCookedEventId {
+        &self.id
+    }
+
+    pub fn recipe_id(&self) -> Option<&RecipeId> {
+        self.recipe_id.as_ref()
+    }
+
+    pub fn user_id(&self) -> &UserId {
+        &self.user_id
+    }
+
+    pub fn snapshot(&self) -> &CookedRecipeSnapshot {
+        &self.snapshot
+    }
+
+    pub fn cooked_on(&self) -> NaiveDate {
+        self.cooked_on
+    }
+
+    pub fn note(&self) -> &CookedRecipeNote {
+        &self.note
+    }
+
+    pub fn created_at(&self) -> SystemTime {
+        self.created_at
+    }
+}
+
+#[derive(Debug, Clone, Constructor)]
+pub struct CookedRecipeLink {
+    recipe_id: RecipeId,
+    revision_id: RecipeRevisionId,
+}
+
+impl CookedRecipeLink {
+    pub fn recipe_id(&self) -> &RecipeId {
+        &self.recipe_id
+    }
+
+    pub fn revision_id(&self) -> &RecipeRevisionId {
+        &self.revision_id
+    }
+}
+
+#[derive(Debug, Clone, Constructor)]
+pub struct RecipeCookedEventEntry {
+    event: RecipeCookedEvent,
+    display_title: RecipeTitle,
+    recipe_link: Option<CookedRecipeLink>,
+}
+
+impl RecipeCookedEventEntry {
+    pub fn event(&self) -> &RecipeCookedEvent {
+        &self.event
+    }
+
+    pub fn display_title(&self) -> &RecipeTitle {
+        &self.display_title
+    }
+
+    pub fn recipe_link(&self) -> Option<&CookedRecipeLink> {
+        self.recipe_link.as_ref()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Constructor)]
+pub struct RecipeCookedEventId(String);
+
+impl RecipeCookedEventId {
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+pub const MAX_COOKED_RECIPE_NOTE_CHARS: usize = 2000;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CookedRecipeNote(String);
+
+impl CookedRecipeNote {
+    pub fn try_new(note: impl Into<String>) -> Result<Self, CookedEventNoteError> {
+        let note = note.into();
+        let note = note.trim();
+
+        if note.chars().count() > MAX_COOKED_RECIPE_NOTE_CHARS {
+            return Err(CookedEventNoteError::TooLong);
+        }
+
+        Ok(Self(note.to_string()))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CookedEventNoteError {
+    TooLong,
+}
+
+impl fmt::Display for CookedEventNoteError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::TooLong => write!(
+                f,
+                "a cooked event note cannot exceed {MAX_COOKED_RECIPE_NOTE_CHARS} characters"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for CookedEventNoteError {}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RecipeRevisionMismatch;

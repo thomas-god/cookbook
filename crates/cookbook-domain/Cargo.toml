@@ -8,6 +8,7 @@ serde = ["dep:serde"]
 
 [dependencies]
 anyhow.workspace = true
+chrono.workspace = true
 derive_more.workspace = true
 serde = { workspace = true, optional = true }
 uuid.workspace = true

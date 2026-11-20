@@ -501,6 +501,7 @@ name = "cookbook-domain"
 version = "0.1.1"
 dependencies = [
  "anyhow",
+ "chrono",
  "derive_more",
  "mockall",
  "serde",
