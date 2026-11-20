@@ -51,7 +51,7 @@ jobs:
             type=sha,format=long,suffix=-${{ matrix.arch }}
 
       - name: Build and push ${{ matrix.platform }}
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: ./infra/Dockerfile
