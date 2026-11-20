@@ -133,6 +133,21 @@ cooked_event_hint = Keep track of when you cooked this recipe and how it went.
 cooked_event_new = New cook entry
 cooked_event_empty = You have not cooked this recipe yet.
 cooked_event_date = Date cooked
+cooked_event_date_display = { $month ->
+    [1] Jan. { $day }, { $year }
+    [2] Feb. { $day }, { $year }
+    [3] Mar. { $day }, { $year }
+    [4] Apr. { $day }, { $year }
+    [5] May { $day }, { $year }
+    [6] Jun. { $day }, { $year }
+    [7] Jul. { $day }, { $year }
+    [8] Aug. { $day }, { $year }
+    [9] Sep. { $day }, { $year }
+   [10] Oct. { $day }, { $year }
+   [11] Nov. { $day }, { $year }
+   [12] Dec. { $day }, { $year }
+   *[other] { $day }/{ $month }/{ $year }
+}
 cooked_event_note = Note (optional)
 cooked_event_note_placeholder = How did it turn out? Any changes you made?
 cooked_event_add = Log this cook
@@ -140,7 +155,6 @@ cooked_event_edit = Edit
 cooked_event_save = Save
 cooked_event_delete = Delete
 cooked_event_delete_confirm = Delete this cooking log entry? This cannot be undone.
-cooked_event_view_version = View cooked version
 cooked_event_log_heading = Cooking log
 cooked_event_log_hint = Every recipe you have cooked, newest first.
 cooked_event_log_empty = You have not logged any cooked recipe yet.

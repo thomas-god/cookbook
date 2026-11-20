@@ -133,6 +133,21 @@ cooked_event_hint = Notez quand vous avez cuisiné cette recette et comment cela
 cooked_event_new = Nouvelle entrée
 cooked_event_empty = Vous n'avez pas encore cuisiné cette recette.
 cooked_event_date = Date de préparation
+cooked_event_date_display = { $month ->
+    [1] { $day } janvier { $year }
+    [2] { $day } février { $year }
+    [3] { $day } mars { $year }
+    [4] { $day } avril { $year }
+    [5] { $day } mai { $year }
+    [6] { $day } juin { $year }
+    [7] { $day } juillet { $year }
+    [8] { $day } août { $year }
+    [9] { $day } septembre { $year }
+   [10] { $day } octobre { $year }
+   [11] { $day } novembre { $year }
+   [12] { $day } décembre { $year }
+   *[other] { $day }/{ $month }/{ $year }
+}
 cooked_event_note = Note (facultative)
 cooked_event_note_placeholder = Comment était le résultat ? Avez-vous fait des changements ?
 cooked_event_add = Ajouter
@@ -140,7 +155,6 @@ cooked_event_edit = Modifier
 cooked_event_save = Enregistrer
 cooked_event_delete = Supprimer
 cooked_event_delete_confirm = Supprimer cette entrée du journal de cuisine ? Cette action est irréversible.
-cooked_event_view_version = Voir la version cuisinée
 cooked_event_log_heading = Journal de cuisine
 cooked_event_log_hint = Toutes les recettes que vous avez cuisinées, les plus récentes en premier.
 cooked_event_log_empty = Vous n'avez encore enregistré aucune recette cuisinée.

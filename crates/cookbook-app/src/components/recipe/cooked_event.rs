@@ -1,8 +1,9 @@
-use chrono::{Local, NaiveDate};
+use chrono::{Datelike, Local, NaiveDate};
 use cookbook_domain::recipe::models::{MAX_COOKED_RECIPE_NOTE_CHARS, RecipeCookedEvent};
 use topcoat::{
     Result,
     context::Cx,
+    icon::icon,
     router::href,
     view::{View, attributes, class, component, element_id, view},
 };
@@ -10,12 +11,12 @@ use topcoat::{
 use crate::{
     app::{
         cooked::{CookedEventId, delete_cooked_event, update_cooked_event},
-        recipe::view::recipe_detail,
-        recipes::RecipeId,
+        recipes::{RecipeId, RevisionId, recipe_revision},
     },
     components::base::{
         button::{ButtonSize, ButtonVariant, button, button_variants},
         card::{card, card_content, card_header, card_title},
+        icons::{DELETE, EDIT},
     },
     t,
 };
@@ -24,6 +25,17 @@ const TEXTAREA_CLASS: &str = "min-h-24 w-full rounded-lg border border-border bg
 
 fn format_cooked_on(date: NaiveDate) -> String {
     date.format("%Y-%m-%d").to_string()
+}
+
+fn format_display_date(cx: &Cx, date: NaiveDate) -> String {
+    t!(
+        cooked_event_date_display,
+        month = date.month(),
+        day = date.day(),
+        year = date.year().to_string(),
+    )
+    .resolve(cx)
+    .into_owned()
 }
 
 fn today() -> String {
@@ -38,8 +50,13 @@ fn delete_action(cx: &Cx, event_id: &str) -> String {
     href!(delete_cooked_event, CookedEventId(event_id)).resolve(cx)
 }
 
-fn recipe_href(cx: &Cx, recipe_id: &str) -> String {
-    href!(recipe_detail, RecipeId(recipe_id)).resolve(cx)
+fn recipe_revision_href(cx: &Cx, recipe_id: &str, revision_id: &str) -> String {
+    href!(
+        recipe_revision,
+        RecipeId(recipe_id),
+        RevisionId(revision_id)
+    )
+    .resolve(cx)
 }
 
 /// A date and optional note form shared by creating and editing an event.
@@ -108,17 +125,21 @@ pub async fn cooked_event_actions(
 
     Ok(view! {
         cx =>
-        <div class="mt-2 flex flex-wrap items-center gap-2">
-            <details class="inline-block">
+        <div class="flex items-center gap-1">
+            <details class="relative">
                 <summary
                     class=(class!(
-                        button_variants(ButtonVariant::Ghost, ButtonSize::Sm),
+                        button_variants(ButtonVariant::Ghost, ButtonSize::Icon),
                         "cursor-pointer list-none [&::-webkit-details-marker]:hidden",
                     ))
+                    aria-label=(t!(cooked_event_edit))
+                    title=(t!(cooked_event_edit))
                 >
-                    (t!(cooked_event_edit))
+                    icon(data: EDIT, size: 16)
                 </summary>
-                <div class="mt-2 rounded-lg border border-border bg-card p-3">
+                <div
+                    class="absolute right-0 z-10 mt-1 w-72 rounded-lg border border-border bg-card p-3 shadow-md"
+                >
                     cooked_event_form(
                         action: update_action,
                         cooked_on: format_cooked_on(event.cooked_on()),
@@ -134,15 +155,17 @@ pub async fn cooked_event_actions(
                 onsubmit=(format!("return confirm({delete_confirm:?})"))
             >
                 <input type="hidden" name="next" value=(next)>
-                button(
-                    variant: ButtonVariant::Ghost,
-                    size: ButtonSize::Sm,
-                    attrs: attributes! {
-                        type="submit"
-                        class="text-destructive hover:bg-destructive/10"
-                    },
-                    (t!(cooked_event_delete))
-                )
+                <button
+                    type="submit"
+                    class=(class!(
+                        button_variants(ButtonVariant::Ghost, ButtonSize::Icon),
+                        "text-destructive hover:bg-destructive/10",
+                    ))
+                    aria-label=(t!(cooked_event_delete))
+                    title=(t!(cooked_event_delete))
+                >
+                    icon(data: DELETE, size: 16)
+                </button>
             </form>
         </div>
     })
@@ -185,34 +208,20 @@ pub async fn recipe_cooked_events(
                     #[key(event.id().as_str())]
                     for event in events {
                         <li class="rounded-lg border border-border px-3 py-3 text-sm">
-                            <div
-                                class="flex flex-wrap items-baseline justify-between gap-2"
-                            >
+                            <div class="flex flex-wrap items-center gap-2">
                                 <time
                                     datetime=(format_cooked_on(event.cooked_on()))
                                     class="font-medium"
                                 >
-                                    (format_cooked_on(event.cooked_on()))
+                                    (format_display_date(cx, event.cooked_on()))
                                 </time>
-                                <a
-                                    class="text-sm text-muted-foreground underline underline-offset-4"
-                                    href=(href!(
-                                        crate::app::recipes::recipe_revision,
-                                        RecipeId(recipe_id),
-                                        crate::app::recipes::RevisionId(
-                                            event.snapshot().revision_id().as_str(),
-                                        ),
-                                    ))
-                                >
-                                    (t!(cooked_event_view_version))
-                                </a>
+                                cooked_event_actions(event: event, next: next.as_str())
                             </div>
                             if !event.note().as_str().is_empty() {
                                 <p class="mt-1 whitespace-pre-line">
                                     (event.note().as_str())
                                 </p>
                             }
-                            cooked_event_actions(event: event, next: next.as_str())
                         </li>
                     }
                 </ul>
@@ -237,7 +246,11 @@ pub async fn cooked_event_log_entry(
                     if let Some(link) = entry.recipe_link() {
                         <a
                             class="font-medium underline underline-offset-4"
-                            href=(recipe_href(cx, link.recipe_id().as_str()))
+                            href=(recipe_revision_href(
+                                cx,
+                                link.recipe_id().as_str(),
+                                link.revision_id().as_str(),
+                            ))
                         >
                             (entry.display_title().as_str())
                         </a>
@@ -256,31 +269,19 @@ pub async fn cooked_event_log_entry(
                         </span>
                     }
                 </div>
-                <div class="flex flex-wrap items-baseline justify-end gap-3">
-                    if let Some(link) = entry.recipe_link() {
-                        <a
-                            class="text-sm text-muted-foreground underline underline-offset-4"
-                            href=(href!(
-                                crate::app::recipes::recipe_revision,
-                                RecipeId(link.recipe_id().as_str()),
-                                crate::app::recipes::RevisionId(link.revision_id().as_str()),
-                            ))
-                        >
-                            (t!(cooked_event_view_version))
-                        </a>
-                    }
+                <div class="flex flex-wrap items-center justify-end gap-2">
                     <time
                         datetime=(format_cooked_on(event.cooked_on()))
                         class="text-muted-foreground"
                     >
-                        (format_cooked_on(event.cooked_on()))
+                        (format_display_date(cx, event.cooked_on()))
                     </time>
+                    cooked_event_actions(event: event, next: next)
                 </div>
             </div>
             if !event.note().as_str().is_empty() {
                 <p class="mt-1 whitespace-pre-line">(event.note().as_str())</p>
             }
-            cooked_event_actions(event: event, next: next)
         </li>
     })
 }
