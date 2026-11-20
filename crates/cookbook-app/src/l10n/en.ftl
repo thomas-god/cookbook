@@ -152,6 +152,7 @@ cooked_event_note = Note (optional)
 cooked_event_note_placeholder = How did it turn out? Any changes you made?
 cooked_event_add = Log this cook
 cooked_event_edit = Edit
+cooked_event_close = Close
 cooked_event_save = Save
 cooked_event_delete = Delete
 cooked_event_delete_confirm = Delete this cooking log entry? This cannot be undone.

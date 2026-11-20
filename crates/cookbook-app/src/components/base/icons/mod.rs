@@ -2,6 +2,7 @@ use topcoat::icon::{IconData, iconify::iconify_icon};
 
 pub const BACK_ARROW: IconData = iconify_icon!("si:arrow-left-line");
 pub const CHECK: IconData = iconify_icon!("si:check-line");
+pub const CLOSE: IconData = iconify_icon!("si:close-line");
 pub const COPY: IconData = iconify_icon!("si:copy-line");
 pub const DELETE: IconData = iconify_icon!("si:bin-line");
 pub const DOCUMENT: IconData = iconify_icon!("si:release-notes-line");

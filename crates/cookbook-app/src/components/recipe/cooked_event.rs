@@ -16,7 +16,7 @@ use crate::{
     components::base::{
         button::{ButtonSize, ButtonVariant, button, button_variants},
         card::{card, card_content, card_header, card_title},
-        icons::{DELETE, EDIT},
+        icons::{CLOSE, DELETE, EDIT},
     },
     t,
 };
@@ -126,7 +126,7 @@ pub async fn cooked_event_actions(
     Ok(view! {
         cx =>
         <div class="flex items-center gap-1">
-            <details class="relative">
+            <details class="relative" data-menu="">
                 <summary
                     class=(class!(
                         button_variants(ButtonVariant::Ghost, ButtonSize::Icon),
@@ -138,8 +138,23 @@ pub async fn cooked_event_actions(
                     icon(data: EDIT, size: 16)
                 </summary>
                 <div
-                    class="absolute right-0 z-10 mt-1 w-72 rounded-lg border border-border bg-card p-3 shadow-md"
+                    class="fixed inset-x-4 top-1/2 z-50 max-h-[calc(100dvh-2rem)] -translate-y-1/2 overflow-y-auto rounded-lg border border-border bg-card p-3 shadow-md sm:absolute sm:inset-x-auto sm:top-full sm:right-0 sm:mt-1 sm:max-h-none sm:w-72 sm:translate-y-0"
                 >
+                    <div class="mb-2 flex items-center justify-between">
+                        <span class="text-sm font-medium">(t!(cooked_event_edit))</span>
+                        <button
+                            type="button"
+                            class=(class!(
+                                button_variants(ButtonVariant::Ghost, ButtonSize::Icon),
+                                "-mr-1 -mt-1",
+                            ))
+                            onclick="this.closest('details').open = false"
+                            aria-label=(t!(cooked_event_close))
+                            title=(t!(cooked_event_close))
+                        >
+                            icon(data: CLOSE, size: 16)
+                        </button>
+                    </div>
                     cooked_event_form(
                         action: update_action,
                         cooked_on: format_cooked_on(event.cooked_on()),

@@ -152,6 +152,7 @@ cooked_event_note = Note (facultative)
 cooked_event_note_placeholder = Comment était le résultat ? Avez-vous fait des changements ?
 cooked_event_add = Ajouter
 cooked_event_edit = Modifier
+cooked_event_close = Fermer
 cooked_event_save = Enregistrer
 cooked_event_delete = Supprimer
 cooked_event_delete_confirm = Supprimer cette entrée du journal de cuisine ? Cette action est irréversible.
