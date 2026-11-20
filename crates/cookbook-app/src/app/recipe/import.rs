@@ -2,9 +2,9 @@ use cookbook_domain::recipe::ports::RecipeService;
 use cookbook_vision::{SourceDocument, VisionClient, VisionError};
 use topcoat::{
     Result,
-    context::{Cx, app_context},
+    context::{Cx, context},
     router::{
-        StatusCode,
+        BodyLimit, StatusCode,
         content::multipart::Multipart,
         error::{not_found, see_other},
         href, page,
@@ -15,7 +15,7 @@ use topcoat::{
 use crate::{
     app::{
         AppRecipeService, auth,
-        recipes::{RecipeId, edit_recipe},
+        recipes::{edit_recipe, recipe_id},
         vision::VisionSettings,
     },
     components::base::{
@@ -40,7 +40,7 @@ enum ImportError {
     SaveFailed,
 }
 
-#[page]
+#[page(with(BodyLimit::max(MAX_UPLOAD_BYTES)))]
 pub async fn page(cx: &Cx) -> Result<impl View> {
     auth::require_user(cx)?;
     require_enabled(cx)?;
@@ -48,7 +48,7 @@ pub async fn page(cx: &Cx) -> Result<impl View> {
     import_page(cx, None)
 }
 
-#[page(POST)]
+#[page(POST, with(BodyLimit::max(MAX_UPLOAD_BYTES)))]
 pub async fn create(cx: &Cx, mut multipart: Multipart) -> Result<impl View> {
     let user = auth::require_user(cx)?;
     require_enabled(cx)?;
@@ -62,7 +62,7 @@ pub async fn create(cx: &Cx, mut multipart: Multipart) -> Result<impl View> {
         return import_page(cx, Some(ImportError::Empty));
     }
 
-    let client: &VisionClient = app_context(cx);
+    let client: &VisionClient = context(cx);
     let vision_recipe = match client.parse_recipe(documents).await {
         Ok(recipe) => recipe,
         Err(
@@ -85,13 +85,13 @@ pub async fn create(cx: &Cx, mut multipart: Multipart) -> Result<impl View> {
     };
 
     let request = vision_recipe.into_create_request(user.id().clone());
-    let recipe_service: &AppRecipeService = app_context(cx);
+    let recipe_service: &AppRecipeService = context(cx);
     let recipe = match recipe_service.create_imported_recipe(request).await {
         Ok(recipe) => recipe,
         Err(_) => return import_page(cx, Some(ImportError::SaveFailed)),
     };
 
-    Err(see_other(href!(edit_recipe, RecipeId(recipe.id().as_str())).resolve(cx)).into())
+    Err(see_other(href!(edit_recipe, recipe_id: recipe.id().as_str()).resolve(cx)).into())
 }
 
 fn import_page(cx: &Cx, error: Option<ImportError>) -> Result<impl View> {
@@ -99,7 +99,6 @@ fn import_page(cx: &Cx, error: Option<ImportError>) -> Result<impl View> {
     let has_error = error.is_some();
 
     Ok(view! {
-        cx =>
         card(
             card_header(card_title((t!(recipe_import_heading))))
             card_content(
@@ -188,7 +187,7 @@ async fn read_documents(multipart: &mut Multipart) -> Result<Vec<SourceDocument>
 }
 
 fn require_enabled(cx: &Cx) -> Result<()> {
-    let settings: &VisionSettings = app_context(cx);
+    let settings: &VisionSettings = context(cx);
 
     if settings.enabled() {
         Ok(())

@@ -19,7 +19,6 @@ use crate::{
 #[component]
 pub async fn user_menu(cx: &Cx, user: &AuthenticatedUser) -> Result<impl View> {
     Ok(view! {
-        cx =>
         <details class="relative" data-menu="">
             <summary
                 class=(class!(

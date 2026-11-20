@@ -7,7 +7,7 @@ use topcoat::{
 };
 
 use crate::{
-    app::recipes::{ImageId, RecipeId, recipe_image},
+    app::recipes::{image_id, recipe_id, recipe_image},
     t,
 };
 
@@ -35,8 +35,8 @@ pub async fn recipe_image_gallery(
         .map(|image| ImageView {
             url: href!(
                 recipe_image,
-                RecipeId(recipe_id),
-                ImageId(image.id().as_str())
+                recipe_id: recipe_id,
+                image_id: image.id().as_str()
             )
             .resolve(cx),
             alt: fallback_alt.clone(),
@@ -44,7 +44,6 @@ pub async fn recipe_image_gallery(
         .collect::<Vec<_>>();
 
     Ok(view! {
-        cx =>
         if !images.is_empty() {
             <section>
                 <h3 class="mb-3 text-lg font-semibold">(t!(recipe_images_heading))</h3>

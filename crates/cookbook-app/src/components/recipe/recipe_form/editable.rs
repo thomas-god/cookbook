@@ -19,6 +19,7 @@ use crate::{
 /// A visually distinct group of related form fields.
 #[component]
 pub(super) async fn form_section(
+    cx: &Cx,
     #[into] heading: Option<String>,
     #[default] child: Child<'_>,
 ) -> Result<impl View> {
@@ -37,7 +38,7 @@ pub(super) async fn form_section(
 /// A pencil button that switches a field or row into edit mode, and a check
 /// button that switches it back.
 #[component]
-async fn edit_toggle_icons(editing: Signal<bool>) -> Result<impl View> {
+async fn edit_toggle_icons(cx: &Cx, editing: Signal<bool>) -> Result<impl View> {
     Ok(view! {
         <span :hidden=$(editing.get())>icon(data: EDIT, size: 16)</span>
         <span :hidden=$(!editing.get())>icon(data: CHECK, size: 16)</span>
@@ -51,12 +52,10 @@ pub(super) async fn edit_toggle_button(
     editing: Signal<bool>,
     #[into] field: String,
 ) -> Result<impl View> {
-    let edit_label = t!(form_edit_field, field = field.clone())
+    let edit_label = t!(form_edit_field, field: field.clone())
         .resolve(cx)
         .into_owned();
-    let done_label = t!(form_done_editing, field = field)
-        .resolve(cx)
-        .into_owned();
+    let done_label = t!(form_done_editing, field: field).resolve(cx).into_owned();
 
     Ok(view! {
         <button
@@ -105,12 +104,10 @@ pub(super) async fn edit_toggle_guarded_button(
     #[into] field: String,
     value: Signal<String>,
 ) -> Result<impl View> {
-    let edit_label = t!(form_edit_field, field = field.clone())
+    let edit_label = t!(form_edit_field, field: field.clone())
         .resolve(cx)
         .into_owned();
-    let done_label = t!(form_done_editing, field = field)
-        .resolve(cx)
-        .into_owned();
+    let done_label = t!(form_done_editing, field: field).resolve(cx).into_owned();
 
     Ok(view! {
         <button

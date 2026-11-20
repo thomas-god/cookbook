@@ -13,7 +13,7 @@ use crate::{
     app::{
         cooked::recipe_cook_journal,
         recipe::view::recipe_detail,
-        recipes::{ImageId, RecipeId, recipe_image},
+        recipes::{image_id, recipe_id, recipe_image},
     },
     components::{
         base::button::{ButtonSize, ButtonVariant, button, button_variants},
@@ -84,8 +84,8 @@ fn cook_step(
         .map(|image| CookStepImage {
             url: href!(
                 recipe_image,
-                RecipeId(recipe_id),
-                ImageId(image.id().as_str())
+                recipe_id: recipe_id,
+                image_id: image.id().as_str()
             )
             .resolve(cx),
             alt: fallback_alt.to_string(),
@@ -158,8 +158,8 @@ pub async fn cook_recipe_view(
     }
 
     let total_steps = steps.len();
-    let recipe_href = href!(recipe_detail, RecipeId(recipe_id)).resolve(cx);
-    let cooked_href = href!(recipe_cook_journal, RecipeId(recipe_id)).resolve(cx);
+    let recipe_href = href!(recipe_detail, recipe_id: recipe_id).resolve(cx);
+    let cooked_href = href!(recipe_cook_journal, recipe_id: recipe_id).resolve(cx);
 
     Ok(view! {
         <div class="fixed inset-0 z-50 flex flex-col bg-background text-foreground">
@@ -363,8 +363,8 @@ pub async fn cook_recipe_view(
                                             " · "
                                             (t!(
                                                 cook_part_progress,
-                                                current = part.part_index,
-                                                total = part.part_count,
+                                                current: part.part_index,
+                                                total: part.part_count,
                                             ))
                                         </p>
                                     }
@@ -373,14 +373,14 @@ pub async fn cook_recipe_view(
                                             if let Some(part) = &step.part {
                                                 (t!(
                                                     cook_step_progress,
-                                                    current = part.step_index,
-                                                    total = part.step_count,
+                                                    current: part.step_index,
+                                                    total: part.step_count,
                                                 ))
                                             } else {
                                                 (t!(
                                                     cook_step_progress,
-                                                    current = step_index.get() + 1,
-                                                    total = total_steps,
+                                                    current: step_index.get() + 1,
+                                                    total: total_steps,
                                                 ))
                                             }
                                         </span>

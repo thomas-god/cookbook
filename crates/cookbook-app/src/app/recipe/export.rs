@@ -13,12 +13,12 @@ use cookbook_export::{
 };
 use topcoat::{
     Result,
-    context::{Cx, app_context},
+    context::{Cx, context},
     router::{
         Body,
         content::Form,
         error::{RouterErrorExt, bad_request, internal_server_error},
-        href, page, path_param, query_params,
+        href, page, query_params,
         response::Response,
         route,
     },
@@ -29,7 +29,7 @@ use crate::app::recipe::view::recipe_detail;
 use crate::{
     app::{
         AppRecipeService, auth,
-        recipes::{RecipeId, display_name, format_timestamp, servings_label},
+        recipes::{display_name, format_timestamp, recipe_id, servings_label},
     },
     components::{
         base::{
@@ -106,16 +106,16 @@ fn parse_checkbox(key: &str, value: &str) -> topcoat::Result<bool> {
 pub async fn export_recipe(cx: &Cx) -> Result<impl View> {
     let user = auth::require_user(cx)?;
     let query = query_params::<ExportQuery>(cx)?;
-    let recipe_id = path_param::<RecipeId>(cx).to_string();
-    let recipe_service: &AppRecipeService = app_context(cx);
+    let recipe_id = recipe_id(cx).to_string();
+    let recipe_service: &AppRecipeService = context(cx);
     let recipe = recipe_service
         .get_recipe(RecipeIdValue::new(recipe_id.clone()), user.id().clone())
         .await?
         .ok_or_not_found()?;
     let revision = select_revision(cx, user.id(), &recipe, query.revision.as_deref()).await?;
 
-    let action = href!(export_recipe, RecipeId(recipe_id.as_str())).resolve(cx);
-    let back = href!(recipe_detail, RecipeId(recipe_id.as_str())).resolve(cx);
+    let action = href!(export_recipe, recipe_id: recipe_id.as_str()).resolve(cx);
+    let back = href!(recipe_detail, recipe_id: recipe_id.as_str()).resolve(cx);
     let title = revision.content().title().as_str().to_string();
     let timestamp = format_timestamp(revision.edited_at());
     let revision_value =
@@ -145,7 +145,7 @@ pub async fn export_recipe(cx: &Cx) -> Result<impl View> {
                         <div class="flex flex-col gap-1">
                             <p class="font-medium">(title)</p>
                             <p class="text-sm text-muted-foreground">
-                                (t!(recipe_export_revision_info, timestamp = timestamp))
+                                (t!(recipe_export_revision_info, timestamp: timestamp))
                             </p>
                         </div>
                         if let Some(revision) = revision_value {
@@ -209,8 +209,8 @@ pub async fn export_recipe_pdf(
     let user = auth::require_user(cx)?;
     let form = ExportForm::parse(form)?;
     let options = form.options();
-    let recipe_id = path_param::<RecipeId>(cx).to_string();
-    let recipe_service: &AppRecipeService = app_context(cx);
+    let recipe_id = recipe_id(cx).to_string();
+    let recipe_service: &AppRecipeService = context(cx);
     let recipe = recipe_service
         .get_recipe(RecipeIdValue::new(recipe_id), user.id().clone())
         .await?
@@ -246,7 +246,7 @@ async fn select_revision(
         return Ok(recipe.revision().clone());
     };
 
-    let recipe_service: &AppRecipeService = app_context(cx);
+    let recipe_service: &AppRecipeService = context(cx);
     let revisions = recipe_service
         .get_recipe_history(recipe.id().clone(), viewer.clone())
         .await?;

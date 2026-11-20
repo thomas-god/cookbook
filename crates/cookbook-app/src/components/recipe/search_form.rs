@@ -31,7 +31,6 @@ pub async fn recipe_search_form(
     favorites_only: Signal<bool>,
 ) -> Result<impl View> {
     Ok(view! {
-        cx =>
         <div role="search" class="flex flex-col gap-2">
             <div class="flex flex-row items-stretch gap-2">
                 <div class="min-w-0 flex-1">
@@ -150,6 +149,7 @@ async fn category_chip(
 
 #[component]
 async fn filter_toggle(
+    cx: &Cx,
     #[into] label: String,
     selected: Signal<bool>,
     page: Signal<String>,
@@ -178,7 +178,6 @@ mod tests {
     #[component]
     async fn test_form(cx: &Cx) -> Result<impl View> {
         Ok(view! {
-            cx =>
             recipe_search_form(
                 query: signal(cx, String::new),
                 page: signal(cx, || "1".to_string()),
@@ -204,11 +203,7 @@ mod tests {
     #[tokio::test]
     async fn renders_the_filters_collapsed_with_the_initial_selection() {
         let cx = &Cx::default();
-        let html = view! { cx => test_form() }
-            .single()
-            .await
-            .unwrap()
-            .render(cx);
+        let html = view! { test_form() }.single().await.unwrap().render(cx);
 
         assert!(html.contains("id=\"recipe-search-filters\""), "{html}");
         assert!(html.contains("hidden"), "{html}");

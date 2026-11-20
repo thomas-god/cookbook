@@ -26,7 +26,7 @@ pub async fn write_issued_session(cx: &Cx, issued: &IssuedSession) -> Result<()>
     if let Some(previous) = previous {
         let previous = SessionTokenHash::new(*previous);
         if &previous != issued.token_hash() {
-            let auth: &AppAuthService = topcoat::context::app_context(cx);
+            let auth: &AppAuthService = topcoat::context::context(cx);
             auth.delete_session(previous).await?;
         }
     }
@@ -40,7 +40,7 @@ pub async fn stop_user_session(cx: &Cx) -> Result<()> {
         return Ok(());
     };
 
-    let auth: &AppAuthService = topcoat::context::app_context(cx);
+    let auth: &AppAuthService = topcoat::context::context(cx);
     auth.delete_session(SessionTokenHash::new(*hash)).await?;
 
     Ok(())

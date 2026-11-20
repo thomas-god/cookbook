@@ -21,7 +21,6 @@ pub async fn add_recipe_dialog(cx: &Cx, import_enabled: bool) -> Result<impl Vie
     let title_id = element_id(cx);
 
     Ok(view! {
-        cx =>
         <div class="contents">
             <a
                 href=(href!(new_recipe::page))

@@ -13,7 +13,7 @@ use cookbook_domain::recipe::{
 };
 use topcoat::{
     Result,
-    context::{Cx, app_context},
+    context::{Cx, context},
     runtime::shard,
     view::{View, component, view},
 };
@@ -83,7 +83,6 @@ pub async fn recipe_form(cx: &Cx, mode: RecipeFormMode) -> Result<impl View> {
     };
 
     Ok(view! {
-        cx =>
         recipe_form_fields(
             action: action,
             recipe_id: recipe_id,
@@ -112,7 +111,7 @@ async fn recipe_form_fields(
     let user = auth::require_user(cx)?;
     let current = load_current_recipe(cx, &recipe_id, user.id()).await?;
     let images = if current.is_some() {
-        let recipe_service: &AppRecipeService = app_context(cx);
+        let recipe_service: &AppRecipeService = context(cx);
         recipe_service
             .get_recipe_images(RecipeIdValue::new(recipe_id.clone()), user.id().clone())
             .await?

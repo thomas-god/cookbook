@@ -3,7 +3,7 @@ use std::time::Duration;
 use cookbook_infra::auth::models::SessionPolicy;
 use topcoat::router::segment;
 
-segment!(kind = Group);
+segment!(kind: Group);
 
 pub const SESSION_POLICY: SessionPolicy = SessionPolicy::new(
     Duration::from_secs(60 * 60 * 24 * 30),

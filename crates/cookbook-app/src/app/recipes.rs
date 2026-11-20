@@ -20,9 +20,9 @@ use cookbook_vision::detect_source_document_content_type;
 use topcoat::icon::icon;
 use topcoat::{
     Result,
-    context::{Cx, app_context},
+    context::{Cx, context},
     router::{
-        Body,
+        Body, BodyLimit,
         content::{Form, multipart::Multipart},
         error::{RouterErrorExt, SeeOther, bad_request, forbidden, not_found, see_other},
         href, page, path_param, query_params,
@@ -293,7 +293,7 @@ impl SearchParams {
     }
 }
 
-#[page]
+#[page(with(BodyLimit::max(MAX_UPLOAD_BYTES)))]
 pub async fn page(cx: &Cx) -> Result<impl View> {
     auth::require_user(cx)?;
 
@@ -352,7 +352,6 @@ pub async fn page(cx: &Cx) -> Result<impl View> {
     let current_page = signal(cx, || params.page.to_string());
 
     Ok(view! {
-        cx =>
         <h2 class="mb-4 text-2xl font-semibold">(t!(recipes_list_heading))</h2>
 
         recipe_search_form(
@@ -407,7 +406,7 @@ async fn recipe_search_results(
     };
     let has_filters = params.has_filters();
 
-    let recipe_service: &AppRecipeService = app_context(cx);
+    let recipe_service: &AppRecipeService = context(cx);
     let mut result = recipe_service
         .search_recipes(params.search_query(params.page), user.id().clone())
         .await?;
@@ -446,7 +445,7 @@ async fn recipe_search_results(
                     <a
                         href=(href!(
                             recipe_detail,
-                            RecipeId(recipe.recipe().id().as_str()),
+                            recipe_id: recipe.recipe().id().as_str(),
                         ))
                     >
                         <div
@@ -499,8 +498,8 @@ async fn recipe_search_results(
                 <span class="text-muted-foreground">
                     (t!(
                         recipe_search_page,
-                        current = page_number.to_string(),
-                        total = total_pages.to_string(),
+                        current: page_number.to_string(),
+                        total: total_pages.to_string(),
                     ))
                 </span>
                 if let Some(next) = next_page {
@@ -522,10 +521,10 @@ path_param!(pub image_id);
 
 pub(crate) fn servings_label(cx: &Cx, servings: &Servings) -> String {
     match servings {
-        Servings::People(count) if *count == 1 => t!(serving_person, count = count.to_string())
+        Servings::People(count) if *count == 1 => t!(serving_person, count: count.to_string())
             .resolve(cx)
             .into_owned(),
-        Servings::People(count) => t!(serving_people, count = count.to_string())
+        Servings::People(count) => t!(serving_people, count: count.to_string())
             .resolve(cx)
             .into_owned(),
         Servings::Portions {
@@ -536,12 +535,12 @@ pub(crate) fn servings_label(cx: &Cx, servings: &Servings) -> String {
     }
 }
 
-#[page("/recipe/{recipe_id}/edit")]
+#[page("/recipe/{recipe_id}/edit", with(BodyLimit::max(MAX_UPLOAD_BYTES)))]
 pub async fn edit_recipe(cx: &Cx) -> Result<impl View> {
     let user = auth::require_user(cx)?;
 
-    let recipe_id = path_param::<RecipeId>(cx).to_string();
-    let recipe_service: &AppRecipeService = app_context(cx);
+    let recipe_id = recipe_id(cx).to_string();
+    let recipe_service: &AppRecipeService = context(cx);
     let recipe = recipe_service
         .get_recipe(RecipeIdValue::new(recipe_id.clone()), user.id().clone())
         .await?
@@ -569,13 +568,13 @@ pub async fn edit_recipe(cx: &Cx) -> Result<impl View> {
     let (conversion_action, conversion_label, recipe_type_label) =
         if recipe.content().is_multipart() {
             (
-                href!(convert_recipe_to_simple, RecipeId(recipe_id.as_str())).resolve(cx),
+                href!(convert_recipe_to_simple, recipe_id: recipe_id.as_str()).resolve(cx),
                 t!(form_convert_to_simple).resolve(cx).into_owned(),
                 t!(form_recipe_type_multipart).resolve(cx).into_owned(),
             )
         } else {
             (
-                href!(convert_recipe_to_multipart, RecipeId(recipe_id.as_str())).resolve(cx),
+                href!(convert_recipe_to_multipart, recipe_id: recipe_id.as_str()).resolve(cx),
                 t!(form_convert_to_multipart).resolve(cx).into_owned(),
                 t!(form_recipe_type_simple).resolve(cx).into_owned(),
             )
@@ -588,7 +587,7 @@ pub async fn edit_recipe(cx: &Cx) -> Result<impl View> {
         <div class="flex flex-col gap-6">
             <a
                 class="text-sm text-muted-foreground underline-offset-4 hover:underline italic opacity-80 flex items-center gap-1.5"
-                href=(href!(recipe_detail, RecipeId(recipe_id.clone())))
+                href=(href!(recipe_detail, recipe_id: recipe_id.clone()))
             >
                 icon(data: BACK_ARROW)
                 (t!(recipe_back_to_recipe))
@@ -637,11 +636,11 @@ pub async fn edit_recipe(cx: &Cx) -> Result<impl View> {
     })
 }
 
-#[route(POST "/recipe/{recipe_id}/edit")]
+#[route(POST "/recipe/{recipe_id}/edit", with(BodyLimit::max(MAX_UPLOAD_BYTES)))]
 pub async fn update_recipe(cx: &Cx, mut multipart: Multipart) -> Result<SeeOther> {
     let user = auth::require_user(cx)?;
-    let recipe_id = path_param::<RecipeId>(cx).to_string();
-    let recipe_service: &AppRecipeService = app_context(cx);
+    let recipe_id = recipe_id(cx).to_string();
+    let recipe_service: &AppRecipeService = context(cx);
     let submission = read_recipe_form(&mut multipart).await?;
     let request = crate::components::recipe::recipe_form::update_recipe_request(
         submission,
@@ -651,7 +650,7 @@ pub async fn update_recipe(cx: &Cx, mut multipart: Multipart) -> Result<SeeOther
 
     match recipe_service.update_recipe(request).await {
         Ok(_) => Ok(see_other(
-            href!(recipe_detail, RecipeId(recipe_id.as_str())).resolve(cx),
+            href!(recipe_detail, recipe_id: recipe_id.as_str()).resolve(cx),
         )),
         Err(UpdateRecipeError::Conflict) => {
             Err(bad_request(t!(recipe_conflict).resolve(cx)).into())
@@ -665,7 +664,7 @@ pub async fn update_recipe(cx: &Cx, mut multipart: Multipart) -> Result<SeeOther
     }
 }
 
-#[route(POST "/recipe/{recipe_id}/convert-to-multipart")]
+#[route(POST "/recipe/{recipe_id}/convert-to-multipart", with(BodyLimit::max(MAX_UPLOAD_BYTES)))]
 pub async fn convert_recipe_to_multipart(
     cx: &Cx,
     Form(form): Form<Vec<(String, String)>>,
@@ -673,7 +672,7 @@ pub async fn convert_recipe_to_multipart(
     convert_recipe_type(cx, form, true).await
 }
 
-#[route(POST "/recipe/{recipe_id}/convert-to-simple")]
+#[route(POST "/recipe/{recipe_id}/convert-to-simple", with(BodyLimit::max(MAX_UPLOAD_BYTES)))]
 pub async fn convert_recipe_to_simple(
     cx: &Cx,
     Form(form): Form<Vec<(String, String)>>,
@@ -687,9 +686,9 @@ async fn convert_recipe_type(
     multipart: bool,
 ) -> Result<SeeOther> {
     let user = auth::require_user(cx)?;
-    let recipe_id = path_param::<RecipeId>(cx).to_string();
+    let recipe_id = recipe_id(cx).to_string();
     let latest_revision = parse_latest_revision_form(form)?;
-    let recipe_service: &AppRecipeService = app_context(cx);
+    let recipe_service: &AppRecipeService = context(cx);
     let recipe = recipe_service
         .get_recipe(RecipeIdValue::new(recipe_id.clone()), user.id().clone())
         .await?
@@ -715,7 +714,7 @@ async fn convert_recipe_type(
         .await
     {
         Ok(_) => Ok(see_other(
-            href!(edit_recipe, RecipeId(recipe_id.as_str())).resolve(cx),
+            href!(edit_recipe, recipe_id: recipe_id.as_str()).resolve(cx),
         )),
         Err(UpdateRecipeError::Conflict) => {
             Err(bad_request(t!(recipe_conflict).resolve(cx)).into())
@@ -776,16 +775,16 @@ fn parse_revision_message_form(pairs: Vec<(String, String)>) -> Result<Option<Re
         .map_err(|error| bad_request(error.to_string()).into())
 }
 
-#[route(POST "/recipe/{recipe_id}/history/{revision_id}/restore")]
+#[route(POST "/recipe/{recipe_id}/history/{revision_id}/restore", with(BodyLimit::max(MAX_UPLOAD_BYTES)))]
 pub async fn restore_recipe_revision(
     cx: &Cx,
     Form(form): Form<Vec<(String, String)>>,
 ) -> Result<SeeOther> {
     let user = auth::require_user(cx)?;
-    let recipe_id = path_param::<RecipeId>(cx).to_string();
-    let revision_id = path_param::<RevisionId>(cx).to_string();
+    let recipe_id = recipe_id(cx).to_string();
+    let revision_id = revision_id(cx).to_string();
     let latest_revision = parse_latest_revision_form(form)?;
-    let recipe_service: &AppRecipeService = app_context(cx);
+    let recipe_service: &AppRecipeService = context(cx);
 
     match recipe_service
         .restore_recipe_revision(RestoreRecipeRevisionRequest {
@@ -797,7 +796,7 @@ pub async fn restore_recipe_revision(
         .await
     {
         Ok(_) => Ok(see_other(
-            href!(recipe_detail, RecipeId(recipe_id.as_str())).resolve(cx),
+            href!(recipe_detail, recipe_id: recipe_id.as_str()).resolve(cx),
         )),
         Err(RestoreRecipeRevisionError::Conflict) => {
             Err(bad_request(t!(recipe_conflict).resolve(cx)).into())
@@ -808,16 +807,16 @@ pub async fn restore_recipe_revision(
     }
 }
 
-#[route(POST "/recipe/{recipe_id}/history/{revision_id}/message")]
+#[route(POST "/recipe/{recipe_id}/history/{revision_id}/message", with(BodyLimit::max(MAX_UPLOAD_BYTES)))]
 pub async fn update_recipe_revision_message(
     cx: &Cx,
     Form(form): Form<Vec<(String, String)>>,
 ) -> Result<SeeOther> {
     let user = auth::require_user(cx)?;
-    let recipe_id = path_param::<RecipeId>(cx).to_string();
-    let revision_id = path_param::<RevisionId>(cx).to_string();
+    let recipe_id = recipe_id(cx).to_string();
+    let revision_id = revision_id(cx).to_string();
     let message = parse_revision_message_form(form)?;
-    let recipe_service: &AppRecipeService = app_context(cx);
+    let recipe_service: &AppRecipeService = context(cx);
 
     match recipe_service
         .update_recipe_revision_message(UpdateRecipeRevisionMessageRequest {
@@ -831,8 +830,8 @@ pub async fn update_recipe_revision_message(
         Ok(_) => Ok(see_other(
             href!(
                 recipe_revision,
-                RecipeId(recipe_id.as_str()),
-                RevisionId(revision_id.as_str()),
+                recipe_id: recipe_id.as_str(),
+                revision_id: revision_id.as_str(),
             )
             .resolve(cx),
         )),
@@ -845,15 +844,15 @@ pub async fn update_recipe_revision_message(
     }
 }
 
-#[route(POST "/recipe/{recipe_id}/scope")]
+#[route(POST "/recipe/{recipe_id}/scope", with(BodyLimit::max(MAX_UPLOAD_BYTES)))]
 pub async fn update_recipe_scope(
     cx: &Cx,
     Form(form): Form<Vec<(String, String)>>,
 ) -> Result<SeeOther> {
     let user = auth::require_user(cx)?;
-    let recipe_id = path_param::<RecipeId>(cx).to_string();
+    let recipe_id = recipe_id(cx).to_string();
     let scope = parse_scope_form(form)?;
-    let recipe_service: &AppRecipeService = app_context(cx);
+    let recipe_service: &AppRecipeService = context(cx);
 
     match recipe_service
         .update_recipe_scope(UpdateRecipeScopeRequest {
@@ -864,7 +863,7 @@ pub async fn update_recipe_scope(
         .await
     {
         Ok(_) => Ok(see_other(
-            href!(recipe_detail, RecipeId(recipe_id.as_str())).resolve(cx),
+            href!(recipe_detail, recipe_id: recipe_id.as_str()).resolve(cx),
         )),
         Err(UpdateRecipeScopeError::NotFound) => Err(not_found().into()),
         Err(UpdateRecipeScopeError::Forbidden) => Err(forbidden().into()),
@@ -873,11 +872,11 @@ pub async fn update_recipe_scope(
 }
 
 // Not DELETE since its driven by an HTTP form that can only use POST
-#[route(POST "/recipe/{recipe_id}/delete")]
+#[route(POST "/recipe/{recipe_id}/delete", with(BodyLimit::max(MAX_UPLOAD_BYTES)))]
 pub async fn delete_recipe(cx: &Cx) -> Result<SeeOther> {
     let user = auth::require_user(cx)?;
-    let recipe_id = path_param::<RecipeId>(cx).to_string();
-    let recipe_service: &AppRecipeService = app_context(cx);
+    let recipe_id = recipe_id(cx).to_string();
+    let recipe_service: &AppRecipeService = context(cx);
 
     match recipe_service
         .delete_recipe(RecipeIdValue::new(recipe_id), user.id().clone())
@@ -890,13 +889,13 @@ pub async fn delete_recipe(cx: &Cx) -> Result<SeeOther> {
     }
 }
 
-#[route(GET "/recipe/{recipe_id}/source-documents/{source_document_id}")]
+#[route(GET "/recipe/{recipe_id}/source-documents/{source_document_id}", with(BodyLimit::max(MAX_UPLOAD_BYTES)))]
 pub async fn source_document(cx: &Cx) -> Result<Response> {
     let user = auth::require_user(cx)?;
 
-    let recipe_id = path_param::<RecipeId>(cx).to_string();
-    let document_id = path_param::<SourceDocumentId>(cx).to_string();
-    let recipe_service: &AppRecipeService = app_context(cx);
+    let recipe_id = recipe_id(cx).to_string();
+    let document_id = source_document_id(cx).to_string();
+    let recipe_service: &AppRecipeService = context(cx);
     let document = recipe_service
         .get_source_document(
             RecipeIdValue::new(recipe_id),
@@ -939,13 +938,13 @@ fn inline_file_name(original_name: Option<&str>) -> String {
     format!("inline; filename=\"{sanitized}\"")
 }
 
-#[route(GET "/recipe/{recipe_id}/images/{image_id}")]
+#[route(GET "/recipe/{recipe_id}/images/{image_id}", with(BodyLimit::max(MAX_UPLOAD_BYTES)))]
 pub async fn recipe_image(cx: &Cx) -> Result<Response> {
     let user = auth::require_user(cx)?;
 
-    let recipe_id = path_param::<RecipeId>(cx).to_string();
-    let image_id = path_param::<ImageId>(cx).to_string();
-    let recipe_service: &AppRecipeService = app_context(cx);
+    let recipe_id = recipe_id(cx).to_string();
+    let image_id = image_id(cx).to_string();
+    let recipe_service: &AppRecipeService = context(cx);
     let image = recipe_service
         .get_recipe_image(
             RecipeIdValue::new(recipe_id),
@@ -962,10 +961,10 @@ pub async fn recipe_image(cx: &Cx) -> Result<Response> {
         .body(Body::from(image.bytes().to_vec()))?)
 }
 
-#[route(POST "/recipe/{recipe_id}/source-documents")]
+#[route(POST "/recipe/{recipe_id}/source-documents", with(BodyLimit::max(MAX_UPLOAD_BYTES)))]
 pub async fn upload_source_documents(cx: &Cx, mut multipart: Multipart) -> Result<SeeOther> {
     let user = auth::require_user(cx)?;
-    let recipe_id = path_param::<RecipeId>(cx).to_string();
+    let recipe_id = recipe_id(cx).to_string();
     let mut documents = Vec::new();
 
     while let Some(part) = multipart.next_field().await? {
@@ -990,7 +989,7 @@ pub async fn upload_source_documents(cx: &Cx, mut multipart: Multipart) -> Resul
         return Err(bad_request(t!(source_documents_upload_empty).resolve(cx)).into());
     }
 
-    let recipe_service: &AppRecipeService = app_context(cx);
+    let recipe_service: &AppRecipeService = context(cx);
 
     match recipe_service
         .add_source_documents(AddRecipeSourceDocumentsRequest {
@@ -1001,7 +1000,7 @@ pub async fn upload_source_documents(cx: &Cx, mut multipart: Multipart) -> Resul
         .await
     {
         Ok(_) => Ok(see_other(
-            href!(edit_recipe, RecipeId(recipe_id.as_str())).resolve(cx),
+            href!(edit_recipe, recipe_id: recipe_id.as_str()).resolve(cx),
         )),
         Err(AddRecipeSourceDocumentsError::RecipeNotFound) => Err(not_found().into()),
         Err(AddRecipeSourceDocumentsError::Forbidden) => Err(forbidden().into()),
@@ -1010,13 +1009,13 @@ pub async fn upload_source_documents(cx: &Cx, mut multipart: Multipart) -> Resul
 }
 
 // Not DELETE since its driven by an HTTP form that can only use POST
-#[route(POST "/recipe/{recipe_id}/source-documents/{source_document_id}/delete")]
+#[route(POST "/recipe/{recipe_id}/source-documents/{source_document_id}/delete", with(BodyLimit::max(MAX_UPLOAD_BYTES)))]
 pub async fn delete_source_document(cx: &Cx) -> Result<SeeOther> {
     let user = auth::require_user(cx)?;
 
-    let recipe_id = path_param::<RecipeId>(cx).to_string();
-    let document_id = path_param::<SourceDocumentId>(cx).to_string();
-    let recipe_service: &AppRecipeService = app_context(cx);
+    let recipe_id = recipe_id(cx).to_string();
+    let document_id = source_document_id(cx).to_string();
+    let recipe_service: &AppRecipeService = context(cx);
 
     match recipe_service
         .delete_source_document(
@@ -1027,7 +1026,7 @@ pub async fn delete_source_document(cx: &Cx) -> Result<SeeOther> {
         .await
     {
         Ok(_) => Ok(see_other(
-            href!(edit_recipe, RecipeId(recipe_id.as_str())).resolve(cx),
+            href!(edit_recipe, recipe_id: recipe_id.as_str()).resolve(cx),
         )),
         Err(DeleteRecipeSourceDocumentError::NotFound) => Err(not_found().into()),
         Err(DeleteRecipeSourceDocumentError::Forbidden) => Err(forbidden().into()),
@@ -1059,7 +1058,7 @@ fn revision_nature_label(cx: &Cx, origin: &RevisionOrigin, revisions: &[RecipeRe
             .map(|source| {
                 t!(
                     recipe_history_restored,
-                    timestamp = format_timestamp(source.edited_at())
+                    timestamp: format_timestamp(source.edited_at())
                 )
                 .resolve(cx)
                 .into_owned()
@@ -1079,12 +1078,12 @@ fn user_edit_message(origin: &RevisionOrigin) -> Option<Option<&RevisionMessage>
     }
 }
 
-#[page("/recipe/{recipe_id}/history")]
+#[page("/recipe/{recipe_id}/history", with(BodyLimit::max(MAX_UPLOAD_BYTES)))]
 pub async fn recipe_history(cx: &Cx) -> Result<impl View> {
     let user = auth::require_user(cx)?;
 
-    let recipe_id = path_param::<RecipeId>(cx).to_string();
-    let recipe_service: &AppRecipeService = app_context(cx);
+    let recipe_id = recipe_id(cx).to_string();
+    let recipe_service: &AppRecipeService = context(cx);
     let recipe = recipe_service
         .get_recipe(RecipeIdValue::new(recipe_id.clone()), user.id().clone())
         .await?
@@ -1106,7 +1105,7 @@ pub async fn recipe_history(cx: &Cx) -> Result<impl View> {
         <div class="flex flex-col gap-6">
             <a
                 class="text-sm text-muted-foreground underline-offset-4 hover:underline italic opacity-80 flex items-center gap-1.5"
-                href=(href!(recipe_detail, RecipeId(recipe_id.as_str())))
+                href=(href!(recipe_detail, recipe_id: recipe_id.as_str()))
             >
                 icon(data: BACK_ARROW)
                 (t!(recipe_back_to_recipe))
@@ -1181,8 +1180,8 @@ pub async fn recipe_history(cx: &Cx) -> Result<impl View> {
                                     class="underline underline-offset-4"
                                     href=(href!(
                                         recipe_revision,
-                                        RecipeId(recipe_id.as_str()),
-                                        RevisionId(entry.revision.id().as_str()),
+                                        recipe_id: recipe_id.as_str(),
+                                        revision_id: entry.revision.id().as_str(),
                                     ))
                                 >
                                     (t!(recipe_history_view))
@@ -1196,13 +1195,16 @@ pub async fn recipe_history(cx: &Cx) -> Result<impl View> {
     })
 }
 
-#[page("/recipe/{recipe_id}/history/{revision_id}")]
+#[page(
+    "/recipe/{recipe_id}/history/{revision_id}",
+    with(BodyLimit::max(MAX_UPLOAD_BYTES))
+)]
 pub async fn recipe_revision(cx: &Cx) -> Result<impl View> {
     let user = auth::require_user(cx)?;
 
-    let recipe_id = path_param::<RecipeId>(cx).to_string();
-    let revision_id = path_param::<RevisionId>(cx).to_string();
-    let recipe_service: &AppRecipeService = app_context(cx);
+    let recipe_id = recipe_id(cx).to_string();
+    let revision_id = revision_id(cx).to_string();
+    let recipe_service: &AppRecipeService = context(cx);
     let recipe = recipe_service
         .get_recipe(RecipeIdValue::new(recipe_id.clone()), user.id().clone())
         .await?
@@ -1227,21 +1229,21 @@ pub async fn recipe_revision(cx: &Cx) -> Result<impl View> {
     let latest_revision = recipe.revision().id().as_str().to_string();
     let restore_action = href!(
         restore_recipe_revision,
-        RecipeId(recipe_id.as_str()),
-        RevisionId(revision.id().as_str()),
+        recipe_id: recipe_id.as_str(),
+        revision_id: revision.id().as_str(),
     )
     .resolve(cx);
     let update_message_action = href!(
         update_recipe_revision_message,
-        RecipeId(recipe_id.as_str()),
-        RevisionId(revision.id().as_str()),
+        recipe_id: recipe_id.as_str(),
+        revision_id: revision.id().as_str(),
     )
     .resolve(cx);
     let user_edit_note = user_edit_message(revision.origin())
         .map(|message| message.map(|message| message.as_str().to_owned()));
     let export_action = format!(
         "{}?revision={}",
-        href!(export_recipe, RecipeId(recipe_id.as_str())).resolve(cx),
+        href!(export_recipe, recipe_id: recipe_id.as_str()).resolve(cx),
         revision.id().as_str(),
     );
 
@@ -1250,7 +1252,7 @@ pub async fn recipe_revision(cx: &Cx) -> Result<impl View> {
             <div>
                 <a
                     class="text-sm text-muted-foreground underline-offset-4 hover:underline"
-                    href=(href!(recipe_history, RecipeId(recipe_id.as_str())))
+                    href=(href!(recipe_history, recipe_id: recipe_id.as_str()))
                 >
                     (t!(recipe_back_to_history))
                 </a>
@@ -1385,7 +1387,7 @@ pub async fn recipe_revision(cx: &Cx) -> Result<impl View> {
                 <p class="mt-4 flex items-center gap-4 text-sm">
                     <a
                         class="underline underline-offset-4"
-                        href=(href!(recipe_detail, RecipeId(recipe_id.as_str())))
+                        href=(href!(recipe_detail, recipe_id: recipe_id.as_str()))
                     >
                         (t!(recipe_view_current))
                     </a>
@@ -1451,7 +1453,7 @@ fn parse_scope_form(pairs: Vec<(String, String)>) -> Result<RecipeScope> {
 }
 
 pub(crate) async fn display_name(cx: &Cx, user_id: &UserId) -> Result<String> {
-    let user_repository: &AppUserRepository = app_context(cx);
+    let user_repository: &AppUserRepository = context(cx);
 
     Ok(match user_repository.find_by_id(user_id).await? {
         Some(user) => user

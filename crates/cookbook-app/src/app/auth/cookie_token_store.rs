@@ -104,7 +104,7 @@ impl TokenStore for ForwardedProtoCookieTokenStore {
 #[cfg(test)]
 mod tests {
     use topcoat::{
-        context::CxTestBuilder,
+        context::Cx,
         cookie::CookieJarCell,
         router::{HeaderMap, header::SET_COOKIE, request::Request},
     };
@@ -118,10 +118,7 @@ mod tests {
         }
         let (parts, ()) = builder.body(()).unwrap().into_parts();
 
-        CxTestBuilder::new()
-            .request_context(parts)
-            .request_context(CookieJarCell::new())
-            .build()
+        Cx::new().with_many((parts, CookieJarCell::new()))
     }
 
     fn set_cookies(cx: &Cx) -> Vec<String> {

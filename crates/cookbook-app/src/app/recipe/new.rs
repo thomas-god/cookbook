@@ -1,7 +1,7 @@
 use cookbook_domain::recipe::ports::RecipeService;
 use topcoat::{
     Result,
-    context::{Cx, app_context},
+    context::{Cx, context},
     router::{
         content::multipart::Multipart,
         error::{SeeOther, see_other},
@@ -46,7 +46,7 @@ pub async fn page(cx: &Cx) -> Result<impl View> {
 pub async fn create(cx: &Cx, mut multipart: Multipart) -> Result<SeeOther> {
     let user = auth::require_user(cx)?;
 
-    let recipe_service: &AppRecipeService = app_context(cx);
+    let recipe_service: &AppRecipeService = context(cx);
     let submission = read_recipe_form(&mut multipart).await?;
 
     recipe_service
@@ -79,7 +79,7 @@ pub async fn page_multipart(cx: &Cx) -> Result<impl View> {
 pub async fn create_multipart(cx: &Cx, mut multipart: Multipart) -> Result<SeeOther> {
     let user = auth::require_user(cx)?;
 
-    let recipe_service: &AppRecipeService = app_context(cx);
+    let recipe_service: &AppRecipeService = context(cx);
     let submission = read_recipe_form(&mut multipart).await?;
 
     recipe_service

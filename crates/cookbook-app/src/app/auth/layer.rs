@@ -4,7 +4,7 @@ use cookbook_infra::auth::{
 };
 use topcoat::{
     Result,
-    context::{Cx, app_context, try_request_context},
+    context::{Cx, context, try_context},
     router::{
         Body, Layer, LayerFuture, Next, Path,
         error::{forbidden, see_other},
@@ -15,7 +15,7 @@ use topcoat::{
 use crate::app::AppAuthService;
 
 pub fn current_user(cx: &Cx) -> Option<&AuthenticatedUser> {
-    try_request_context::<AuthenticatedUser>(cx)
+    try_context::<AuthenticatedUser>(cx)
 }
 
 /// Returns the authenticated user, or redirects to the login page.
@@ -50,7 +50,7 @@ impl Layer for AuthenticationLayer {
                 return next.run(cx, body).await;
             };
 
-            let auth: &AppAuthService = app_context(cx);
+            let auth: &AppAuthService = context(cx);
             let token_hash = SessionTokenHash::new(*hash);
 
             let Some((user, expires_at)) = auth.authenticate_session(token_hash.clone()).await?
